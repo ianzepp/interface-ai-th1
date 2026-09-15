@@ -36,46 +36,46 @@ import type { ActionRisk, SurfaceAction } from "../surfaces/surface-driver.js";
  * on.
  */
 export interface PolicyConfiguration {
-  allowedOrigins: readonly string[];
-  allowedActionTypes: readonly SurfaceAction["type"][];
-  riskyActionMode: "block" | "require-confirmation";
+    allowedOrigins: readonly string[];
+    allowedActionTypes: readonly SurfaceAction["type"][];
+    riskyActionMode: "block" | "require-confirmation";
 }
 
 /** The verdict for one action, with the reason a denial carries forward. */
 export type PolicyDecision =
-  | { type: "allow" }
-  | { type: "block"; reason: string }
-  | { type: "require-confirmation"; reason: string };
+    | { type: "allow" }
+    | { type: "block"; reason: string }
+    | { type: "require-confirmation"; reason: string };
 
 export class ArtifactPolicy {
-  public constructor(public readonly configuration: PolicyConfiguration) {}
+    public constructor(public readonly configuration: PolicyConfiguration) {}
 
-  /**
-   * Decide whether an action may run.
-   *
-   * Action type is checked before risk, so a disallowed verb is refused even
-   * when the caller marks it safe.
-   */
-  public evaluate(
-    action: SurfaceAction,
-    risk: ActionRisk = "safe",
-  ): PolicyDecision {
-    if (!this.configuration.allowedActionTypes.includes(action.type)) {
-      return {
-        type: "block",
-        reason: `Action type ${action.type} is not allowlisted`,
-      };
+    /**
+     * Decide whether an action may run.
+     *
+     * Action type is checked before risk, so a disallowed verb is refused even
+     * when the caller marks it safe.
+     */
+    public evaluate(
+        action: SurfaceAction,
+        risk: ActionRisk = "safe",
+    ): PolicyDecision {
+        if (!this.configuration.allowedActionTypes.includes(action.type)) {
+            return {
+                type: "block",
+                reason: `Action type ${action.type} is not allowlisted`,
+            };
+        }
+
+        if (risk === "irreversible") {
+            return this.configuration.riskyActionMode === "block"
+                ? { type: "block", reason: "Irreversible actions are blocked" }
+                : {
+                      type: "require-confirmation",
+                      reason: "Irreversible action requires human confirmation",
+                  };
+        }
+
+        return { type: "allow" };
     }
-
-    if (risk === "irreversible") {
-      return this.configuration.riskyActionMode === "block"
-        ? { type: "block", reason: "Irreversible actions are blocked" }
-        : {
-            type: "require-confirmation",
-            reason: "Irreversible action requires human confirmation",
-          };
-    }
-
-    return { type: "allow" };
-  }
 }

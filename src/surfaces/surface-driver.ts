@@ -30,11 +30,11 @@
  * has to be recorded from a run that actually resolved it.
  */
 export type LocatorCandidate =
-  | { kind: "role"; role: string; name: string }
-  | { kind: "label"; text: string }
-  | { kind: "text"; text: string; exact: boolean }
-  | { kind: "css"; selector: string }
-  | { kind: "relative"; anchor: string; relation: string };
+    | { kind: "role"; role: string; name: string }
+    | { kind: "label"; text: string }
+    | { kind: "text"; text: string; exact: boolean }
+    | { kind: "css"; selector: string }
+    | { kind: "relative"; anchor: string; relation: string };
 
 /**
  * How a stage names the control it acts on.
@@ -44,8 +44,8 @@ export type LocatorCandidate =
  * replay non-deterministic.
  */
 export interface TargetDescriptor {
-  candidates: readonly LocatorCandidate[];
-  require: "exactly-one";
+    candidates: readonly LocatorCandidate[];
+    require: "exactly-one";
 }
 
 /**
@@ -64,11 +64,11 @@ export type ActionRisk = "safe" | "reversible" | "irreversible";
  * to consider.
  */
 export type SurfaceAction =
-  | { type: "navigate"; url: string }
-  | { type: "activate"; target: TargetDescriptor }
-  | { type: "fill"; target: TargetDescriptor; value: string }
-  | { type: "select"; target: TargetDescriptor; value: string }
-  | { type: "press"; key: string };
+    | { type: "navigate"; url: string }
+    | { type: "activate"; target: TargetDescriptor }
+    | { type: "fill"; target: TargetDescriptor; value: string }
+    | { type: "select"; target: TargetDescriptor; value: string }
+    | { type: "press"; key: string };
 
 /**
  * Which observation signals a caller wants back.
@@ -77,8 +77,8 @@ export type SurfaceAction =
  * only needs the URL does not pay for a screenshot.
  */
 export interface ObservationRequest {
-  includeAccessibility: boolean;
-  includeScreenshot: boolean;
+    includeAccessibility: boolean;
+    includeScreenshot: boolean;
 }
 
 /**
@@ -90,10 +90,10 @@ export interface ObservationRequest {
  * a decision.
  */
 export interface Observation {
-  url: string;
-  title: string;
-  accessibility?: unknown;
-  screenshotPath?: string;
+    url: string;
+    title: string;
+    accessibility?: unknown;
+    screenshotPath?: string;
 }
 
 /**
@@ -101,14 +101,14 @@ export interface Observation {
  * candidate matched and how many elements competed for it.
  */
 export interface TargetResolution {
-  candidateIndex: number;
-  matchCount: number;
-  description: string;
+    candidateIndex: number;
+    matchCount: number;
+    description: string;
 }
 
 export interface ActionResult {
-  completed: boolean;
-  observation: Observation;
+    completed: boolean;
+    observation: Observation;
 }
 
 /**
@@ -118,11 +118,11 @@ export interface ActionResult {
  * itself a recognized condition that a stage can route on.
  */
 export type DetectorSignal =
-  | { kind: "url"; pattern: string }
-  | { kind: "text"; value: string; exact: boolean }
-  | { kind: "role"; role: string; name: string }
-  | { kind: "response-status"; status: number }
-  | { kind: "timeout" };
+    | { kind: "url"; pattern: string }
+    | { kind: "text"; value: string; exact: boolean }
+    | { kind: "role"; role: string; name: string }
+    | { kind: "response-status"; status: number }
+    | { kind: "timeout" };
 
 /**
  * A named state the system can recognize.
@@ -135,15 +135,15 @@ export type DetectorSignal =
  * re-recording it.
  */
 export interface StateDetector {
-  id: string;
-  description: string;
-  scope: "runtime" | "target" | "capability";
-  signals: readonly DetectorSignal[];
+    id: string;
+    description: string;
+    scope: "runtime" | "target" | "capability";
+    signals: readonly DetectorSignal[];
 }
 
 export interface StateMatch {
-  detectorId: string;
-  observedAt: string;
+    detectorId: string;
+    observedAt: string;
 }
 
 /**
@@ -154,9 +154,9 @@ export interface StateMatch {
  * string that has to be re-parsed downstream.
  */
 export interface ExtractionSpec {
-  name: string;
-  type: "string" | "number" | "money" | "boolean";
-  target: TargetDescriptor;
+    name: string;
+    type: "string" | "number" | "money" | "boolean";
+    target: TargetDescriptor;
 }
 
 /**
@@ -167,9 +167,9 @@ export interface ExtractionSpec {
  * sensitive survived".
  */
 export interface EvidenceReference {
-  kind: "screenshot" | "trace" | "snapshot" | "log";
-  path: string;
-  redacted: boolean;
+    kind: "screenshot" | "trace" | "snapshot" | "log";
+    path: string;
+    redacted: boolean;
 }
 
 /**
@@ -182,13 +182,13 @@ export interface EvidenceReference {
  * a human reads when something went wrong.
  */
 export interface SurfaceDriver {
-  observe(request: ObservationRequest): Promise<Observation>;
-  locate(target: TargetDescriptor): Promise<TargetResolution>;
-  act(action: SurfaceAction): Promise<ActionResult>;
-  waitFor(
-    detectors: readonly StateDetector[],
-    timeoutMs: number,
-  ): Promise<StateMatch | null>;
-  extract(spec: ExtractionSpec): Promise<unknown>;
-  captureEvidence(reason: string): Promise<EvidenceReference>;
+    observe(request: ObservationRequest): Promise<Observation>;
+    locate(target: TargetDescriptor): Promise<TargetResolution>;
+    act(action: SurfaceAction): Promise<ActionResult>;
+    waitFor(
+        detectors: readonly StateDetector[],
+        timeoutMs: number,
+    ): Promise<StateMatch | null>;
+    extract(spec: ExtractionSpec): Promise<unknown>;
+    captureEvidence(reason: string): Promise<EvidenceReference>;
 }

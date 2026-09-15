@@ -15,18 +15,18 @@ import type { Observation } from "../surfaces/surface-driver.js";
 
 /** The state a run expects to find, and what the session actually shows. */
 export interface ResumeCheckpoint {
-  expectedState: string;
-  observation: Observation;
+    expectedState: string;
+    observation: Observation;
 }
 
 /** The three answers: continue at a stage, finish, or decline to continue. */
 export type ResumeDecision =
-  | { type: "resume"; stageId: string }
-  | { type: "complete" }
-  | { type: "reject"; reason: string };
+    | { type: "resume"; stageId: string }
+    | { type: "complete" }
+    | { type: "reject"; reason: string };
 
 export function evaluateResume(
-  _checkpoint: ResumeCheckpoint,
+    _checkpoint: ResumeCheckpoint,
 ): Promise<ResumeDecision> {
-  return Promise.reject(new Error("evaluateResume is not implemented"));
+    return Promise.reject(new Error("evaluateResume is not implemented"));
 }

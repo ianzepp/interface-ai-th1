@@ -15,15 +15,15 @@ import type { FileTestRunRecorder, TestRunOutcome } from "./run-recorder.js";
 
 /** The trace settings this system records with. */
 export interface TraceStartOptions {
-  screenshots: true;
-  snapshots: true;
-  sources: false;
-  title: string;
+    screenshots: true;
+    snapshots: true;
+    sources: false;
+    title: string;
 }
 
 /** Where the trace is written when the run ends. */
 export interface TraceStopOptions {
-  path: string;
+    path: string;
 }
 
 /**
@@ -34,69 +34,69 @@ export interface TraceStopOptions {
  * without changing this file.
  */
 export interface TraceController {
-  start(options: TraceStartOptions): Promise<void>;
-  stop(options: TraceStopOptions): Promise<void>;
+    start(options: TraceStartOptions): Promise<void>;
+    stop(options: TraceStopOptions): Promise<void>;
 }
 
 export class PlaywrightTestRunCapture {
-  #finished = false;
+    #finished = false;
 
-  private constructor(
-    public readonly tracing: TraceController,
-    public readonly recorder: FileTestRunRecorder,
-  ) {}
+    private constructor(
+        public readonly tracing: TraceController,
+        public readonly recorder: FileTestRunRecorder,
+    ) {}
 
-  /** Start tracing for a run, or close the run as failed if that is impossible. */
-  public static async start(
-    tracing: TraceController,
-    recorder: FileTestRunRecorder,
-  ): Promise<PlaywrightTestRunCapture> {
-    try {
-      await tracing.start({
-        screenshots: true,
-        snapshots: true,
-        sources: false,
-        title: recorder.directory,
-      });
-    } catch (error) {
-      await recorder.finalize({
-        status: "error",
-        code: "trace-start-failed",
-        summary: describeError(error),
-      });
-      throw error;
+    /** Start tracing for a run, or close the run as failed if that is impossible. */
+    public static async start(
+        tracing: TraceController,
+        recorder: FileTestRunRecorder,
+    ): Promise<PlaywrightTestRunCapture> {
+        try {
+            await tracing.start({
+                screenshots: true,
+                snapshots: true,
+                sources: false,
+                title: recorder.directory,
+            });
+        } catch (error) {
+            await recorder.finalize({
+                status: "error",
+                code: "trace-start-failed",
+                summary: describeError(error),
+            });
+            throw error;
+        }
+
+        return new PlaywrightTestRunCapture(tracing, recorder);
     }
 
-    return new PlaywrightTestRunCapture(tracing, recorder);
-  }
+    /**
+     * Stop tracing and close the run with the outcome it earned.
+     *
+     * A trace that fails to stop replaces the run's outcome with the capture
+     * error, because the artifact a reviewer is meant to inspect is missing.
+     */
+    public async finish(outcome: TestRunOutcome): Promise<void> {
+        if (this.#finished) {
+            throw new Error("Playwright test run capture is already finished");
+        }
+        this.#finished = true;
 
-  /**
-   * Stop tracing and close the run with the outcome it earned.
-   *
-   * A trace that fails to stop replaces the run's outcome with the capture
-   * error, because the artifact a reviewer is meant to inspect is missing.
-   */
-  public async finish(outcome: TestRunOutcome): Promise<void> {
-    if (this.#finished) {
-      throw new Error("Playwright test run capture is already finished");
+        try {
+            await this.tracing.stop({ path: this.recorder.tracePath });
+        } catch (error) {
+            await this.recorder.finalize({
+                status: "error",
+                code: "trace-stop-failed",
+                summary: describeError(error),
+            });
+            throw error;
+        }
+
+        await this.recorder.finalize(outcome);
     }
-    this.#finished = true;
-
-    try {
-      await this.tracing.stop({ path: this.recorder.tracePath });
-    } catch (error) {
-      await this.recorder.finalize({
-        status: "error",
-        code: "trace-stop-failed",
-        summary: describeError(error),
-      });
-      throw error;
-    }
-
-    await this.recorder.finalize(outcome);
-  }
 }
 
 function describeError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+    return error instanceof Error ? error.message : String(error);
 }

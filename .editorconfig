@@ -6,6 +6,11 @@ end_of_line = lf
 insert_final_newline = true
 trim_trailing_whitespace = true
 indent_style = space
+indent_size = 4
+
+# Data and prose keep two spaces: npm rewrites package.json at two, and a
+# formatter that disagrees with npm fights it on every install.
+[*.{json,jsonc,yml,yaml,md}]
 indent_size = 2
 
 [*.md]

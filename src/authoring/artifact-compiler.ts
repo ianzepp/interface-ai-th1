@@ -16,15 +16,15 @@ import type { DiscoveryEvent } from "./event-recorder.js";
 
 /** Compiles an event ledger into a versioned artifact. */
 export interface ArtifactCompiler {
-  compile(events: readonly DiscoveryEvent[]): Promise<CapabilityArtifact>;
+    compile(events: readonly DiscoveryEvent[]): Promise<CapabilityArtifact>;
 }
 
 export class GroundedArtifactCompiler implements ArtifactCompiler {
-  public compile(
-    _events: readonly DiscoveryEvent[],
-  ): Promise<CapabilityArtifact> {
-    return Promise.reject(
-      new Error("GroundedArtifactCompiler.compile is not implemented"),
-    );
-  }
+    public compile(
+        _events: readonly DiscoveryEvent[],
+    ): Promise<CapabilityArtifact> {
+        return Promise.reject(
+            new Error("GroundedArtifactCompiler.compile is not implemented"),
+        );
+    }
 }

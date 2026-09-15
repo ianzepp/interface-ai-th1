@@ -16,37 +16,37 @@
 export type Controller = "automation" | "human";
 
 export interface ControlLeaseState {
-  controller: Controller;
-  epoch: number;
+    controller: Controller;
+    epoch: number;
 }
 
 export class ControlLease {
-  #state: ControlLeaseState = { controller: "automation", epoch: 0 };
+    #state: ControlLeaseState = { controller: "automation", epoch: 0 };
 
-  public current(): ControlLeaseState {
-    return { ...this.#state };
-  }
-
-  /**
-   * Hand control from `expected` to `next`.
-   *
-   * Both failures are deliberate. Transferring from the wrong holder means the
-   * caller's view of the session is stale, and transferring to the holder that
-   * already owns control is a no-op that would inflate the epoch and mask that
-   * staleness.
-   */
-  public transfer(expected: Controller, next: Controller): ControlLeaseState {
-    if (this.#state.controller !== expected) {
-      throw new Error(
-        `Control is owned by ${this.#state.controller}, not ${expected}`,
-      );
+    public current(): ControlLeaseState {
+        return { ...this.#state };
     }
 
-    if (expected === next) {
-      throw new Error(`Control is already owned by ${next}`);
-    }
+    /**
+     * Hand control from `expected` to `next`.
+     *
+     * Both failures are deliberate. Transferring from the wrong holder means the
+     * caller's view of the session is stale, and transferring to the holder that
+     * already owns control is a no-op that would inflate the epoch and mask that
+     * staleness.
+     */
+    public transfer(expected: Controller, next: Controller): ControlLeaseState {
+        if (this.#state.controller !== expected) {
+            throw new Error(
+                `Control is owned by ${this.#state.controller}, not ${expected}`,
+            );
+        }
 
-    this.#state = { controller: next, epoch: this.#state.epoch + 1 };
-    return this.current();
-  }
+        if (expected === next) {
+            throw new Error(`Control is already owned by ${next}`);
+        }
+
+        this.#state = { controller: next, epoch: this.#state.epoch + 1 };
+        return this.current();
+    }
 }

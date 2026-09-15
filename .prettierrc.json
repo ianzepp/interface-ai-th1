@@ -1,6 +1,6 @@
 {
   "printWidth": 80,
-  "tabWidth": 2,
+  "tabWidth": 4,
   "useTabs": false,
   "semi": true,
   "singleQuote": false,
@@ -9,5 +9,11 @@
   "bracketSpacing": true,
   "arrowParens": "always",
   "endOfLine": "lf",
-  "proseWrap": "preserve"
+  "proseWrap": "preserve",
+  "overrides": [
+    {
+      "files": ["*.json", "*.jsonc", "*.yml", "*.yaml", "*.md"],
+      "options": { "tabWidth": 2 }
+    }
+  ]
 }

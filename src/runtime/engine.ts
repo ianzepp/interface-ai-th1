@@ -24,22 +24,22 @@ import type { CapabilityArtifact } from "./state-machine.js";
 
 /** One call: which capability, and the values for its declared inputs. */
 export interface CapabilityInvocation {
-  capabilityId: string;
-  inputs: Record<string, unknown>;
+    capabilityId: string;
+    inputs: Record<string, unknown>;
 }
 
 export class DeterministicEngine {
-  public constructor(
-    public readonly driver: SurfaceDriver,
-    public readonly policy: ArtifactPolicy,
-  ) {}
+    public constructor(
+        public readonly driver: SurfaceDriver,
+        public readonly policy: ArtifactPolicy,
+    ) {}
 
-  public run(
-    _artifact: CapabilityArtifact,
-    _invocation: CapabilityInvocation,
-  ): Promise<RunResult> {
-    return Promise.reject(
-      new Error("DeterministicEngine.run is not implemented"),
-    );
-  }
+    public run(
+        _artifact: CapabilityArtifact,
+        _invocation: CapabilityInvocation,
+    ): Promise<RunResult> {
+        return Promise.reject(
+            new Error("DeterministicEngine.run is not implemented"),
+        );
+    }
 }
