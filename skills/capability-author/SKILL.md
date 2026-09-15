@@ -32,6 +32,13 @@ Keep knowledge in the correct layer:
 - Put application and version knowledge in target profiles and capability
   artifacts, not in the generic engine.
 
+Keep the _what_ and _why_ of evidence here and the _how_ in the harness. This
+skill is meant to remain usable with a different harness, so it states what must
+be recorded, when, and why — not which library starts the recording or who calls
+it. Where a harness does something automatically, an instruction to the operator
+to do it by hand is unactionable, and the underlying requirement is what has to
+survive.
+
 When target work reveals a generally useful lesson, update this skill before
 moving on. Examples include a mismatch between the locator recorded and the one
 actually executed, a hidden transition signal, an ambiguous checkpoint, an
@@ -147,9 +154,8 @@ scripts/target reset <ledgersmb|dolibarr> <snapshot-name>
 
 Use `<target>/<snapshot-name>` as the run's fixture identifier. A successful
 reset writes `tmp/targets/<target>/last-reset.json`; treat that receipt and the
-snapshot manifest as the evidence that reset completed. Start a new isolated
-Playwright browser context only after the target is healthy and the receipt
-exists.
+snapshot manifest as the evidence that reset completed. Begin the run in a fresh,
+isolated browser context only after the target is healthy and the receipt exists.
 
 Visible controls and state markers have different wait semantics. A hidden
 field, metadata node, URL change, or response can prove that the application
@@ -178,8 +184,9 @@ the intended stage. Do not make a generic dismissal action that could hide an
 unknown warning.
 
 `fresh` and `reset` delete only the selected target's current Docker volumes.
-Never run them during an active capture. Use `up` and `stop` when the current
-working state must be preserved.
+Never run a fixture operation during an active capture; the target script refuses
+one while a session is live. Use `up` and `stop` when the current working state
+must be preserved.
 
 ### Choosing Snapshot Boundaries
 
@@ -207,10 +214,17 @@ post-action state merely to avoid determining whether the action committed.
 
 ## Exploratory Setup and Learning Loop
 
-Fixture authoring is an exploratory phase before recorded test runs. Do not
-start Playwright tracing merely because an agent is learning the application or
-arranging seed data. Explore manually, inspect persisted state when useful, and
-record durable lessons in this skill and in snapshot documentation.
+Fixture authoring is an exploratory phase before recorded test runs. Exploration
+is not evidence: work done to learn the application, arrange seed data, or
+establish a fixture precondition must not be retained as, cited as, or counted
+with the runs that ground a capability. Explore freely, inspect persisted state
+when useful, and record durable lessons in this skill and in snapshot
+documentation.
+
+If you control recording, prefer not to record exploration at all. If the harness
+records every browser session automatically, treat exploratory sessions as
+disposable: do not promote them, do not cite them, and do not let them stand in
+for a run that grounds a branch.
 
 Treat visible labels as hypotheses, not semantics. A control labeled `Save`,
 `Post`, `Approve`, `Receive`, or similar may update several independent kinds
@@ -291,7 +305,8 @@ state.
 1. Reset the target fixture.
 2. Create the run directory before the first model decision or browser action.
 3. Write the initial `run.json`, `README.md`, and empty `events.jsonl`.
-4. Start Playwright tracing with screenshots and DOM snapshots enabled.
+4. Begin recording the run's browser activity at full fidelity — imagery and
+   DOM snapshots — before the first action.
 5. Observe the current UI.
 6. Ask the LLM for one bounded action through the typed computer-use interface.
 7. Record the proposed action, rationale, and policy decision before execution
@@ -302,18 +317,17 @@ state.
    screenshot and pair its evidence reference with a concise named checkpoint.
 10. Repeat observe, decide, act, record, and capture proof until a terminal
     condition occurs.
-11. Capture the final visible proof point, stop the trace into `trace.zip`, and
-    finalize the manifest and README.
+11. Capture the final visible proof point, close the recording into its retained
+    artifact, and finalize the manifest and README.
 
 A retry after another reset is a new run with a new run identifier. Never append
 a retry to the prior run.
 
 ### LLM-Selected Screenshot Proof Points
 
-Playwright tracing continuously preserves browser imagery and DOM snapshots,
-but deliberate screenshots serve a different purpose: they are the small set
-of human-readable exhibits that prove why the operating LLM classified a state
-or ended a run.
+Continuous recording preserves browser imagery and DOM snapshots, but deliberate
+screenshots serve a different purpose: they are the small set of human-readable
+exhibits that prove why the operating LLM classified a state or ended a run.
 
 The operating LLM decides when a screenshot is materially useful. The harness
 must expose screenshot capture during the live browser session; it must not
@@ -336,7 +350,8 @@ Capture a screenshot when it materially proves one of these conditions:
 Do not capture screenshots merely because another action completed. Do not
 capture login forms containing populated credentials, secret-bearing dialogs,
 tokens, customer data outside the declared fixture, or other material that
-should not enter durable evidence. Authenticate before tracing when possible.
+should not enter durable evidence. Authenticate before recording begins when
+possible.
 
 For each deliberate screenshot:
 
