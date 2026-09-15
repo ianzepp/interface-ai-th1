@@ -502,6 +502,28 @@ require_lane_port_free() {
     require_free_port "${LANE_PORT}"
 }
 
+# Refuse to mutate the fixture while a discovery session holds it.
+#
+# The rule is not "never touch the fixture" but "never during an active capture",
+# and it is checked here rather than left to the model's discipline. A session
+# publishes its pid in its state file, so its liveness is decidable, and a guard
+# that fails closed is the same pattern as the origin allowlist: enforced, not
+# instructed.
+require_no_live_session() {
+    local lane_label="${LANE_NAME:-default}"
+    local state_path="${ROOT_DIRECTORY}/tmp/session/${lane_label}.json"
+    [[ -f "${state_path}" ]] || return 0
+
+    local session_pid
+    session_pid="$(sed -n 's/.*"pid": *\([0-9][0-9]*\).*/\1/p' "${state_path}" |
+        head -1)"
+    [[ -n "${session_pid}" ]] || return 0
+
+    if kill -0 "${session_pid}" 2>/dev/null; then
+        fail "a discovery session is live on lane '${lane_label}' (pid ${session_pid}); finish or stop it before touching the fixture"
+    fi
+}
+
 case "${command}" in
     url)
         [[ $# -eq 2 ]] || fail "url accepts exactly one target"
@@ -542,6 +564,7 @@ case "${command}" in
     destroy)
         [[ $# -eq 2 ]] || fail "destroy accepts exactly one target"
         require_docker
+        require_no_live_session
         compose down --volumes --remove-orphans
         printf '%s containers and persistent volumes were deleted\n' \
             "${TARGET_DISPLAY_NAME}"
@@ -550,6 +573,7 @@ case "${command}" in
         [[ $# -eq 2 ]] || fail "fresh accepts exactly one target"
         require_docker
         require_lane_port_free
+        require_no_live_session
         ensure_target_images
         compose config --quiet
         compose down --volumes --remove-orphans
@@ -563,6 +587,7 @@ case "${command}" in
         snapshot_name="$3"
         validate_snapshot_name "${snapshot_name}"
         require_docker
+        require_no_live_session
         require_command node
         ensure_image "${SNAPSHOT_HELPER_IMAGE}"
 
@@ -619,6 +644,7 @@ case "${command}" in
         require_docker
         require_command node
         require_lane_port_free
+        require_no_live_session
 
         source_directory="${SNAPSHOTS_DIRECTORY}/${TARGET_ID}/${snapshot_name}"
         [[ -d "${source_directory}" ]] || fail "snapshot does not exist: ${TARGET_ID}/${snapshot_name}"
