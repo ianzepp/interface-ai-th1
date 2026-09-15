@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://interface-ai.local/schemas/capability.schema.json",
+  "title": "Computer-use capability artifact",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "capabilityVersion",
+    "id",
+    "title",
+    "targetProfile",
+    "contract",
+    "entryStageId",
+    "stages",
+    "policy",
+    "provenance"
+  ],
+  "properties": {
+    "schemaVersion": { "type": "string", "const": "1" },
+    "capabilityVersion": { "type": "string", "minLength": 1 },
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9.-]*$" },
+    "title": { "type": "string", "minLength": 1 },
+    "targetProfile": { "type": "string", "minLength": 1 },
+    "contract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["goal", "inputs", "outputs", "successCondition"],
+      "properties": {
+        "goal": { "type": "string", "minLength": 1 },
+        "inputs": { "type": "object" },
+        "outputs": { "type": "object" },
+        "successCondition": { "type": "string", "minLength": 1 }
+      }
+    },
+    "entryStageId": { "type": "string", "minLength": 1 },
+    "stages": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/stage" }
+    },
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["allowedOrigins", "allowedActionTypes", "riskyActionMode"],
+      "properties": {
+        "allowedOrigins": {
+          "type": "array",
+          "items": { "type": "string", "format": "uri" }
+        },
+        "allowedActionTypes": {
+          "type": "array",
+          "items": { "type": "string" },
+          "uniqueItems": true
+        },
+        "riskyActionMode": {
+          "enum": ["block", "require-confirmation"]
+        }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["discoveryRunId", "createdAt"],
+      "properties": {
+        "discoveryRunId": { "type": "string", "minLength": 1 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "validatedRunIds": {
+          "type": "array",
+          "items": { "type": "string" },
+          "uniqueItems": true
+        }
+      }
+    }
+  },
+  "$defs": {
+    "stage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "description",
+        "risk",
+        "detectors",
+        "transitions",
+        "otherwise",
+        "extractions"
+      ],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "description": { "type": "string", "minLength": 1 },
+        "risk": { "enum": ["safe", "reversible", "irreversible"] },
+        "action": { "type": "object" },
+        "detectors": { "type": "array", "items": { "type": "object" } },
+        "transitions": { "type": "array", "items": { "type": "object" } },
+        "otherwise": { "type": "object" },
+        "extractions": { "type": "array", "items": { "type": "object" } }
+      }
+    }
+  }
+}

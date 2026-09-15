@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://interface-ai.local/schemas/result.schema.json",
+  "title": "Capability run result",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "outputs"],
+      "properties": {
+        "type": { "const": "success" },
+        "outputs": { "type": "object" }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "code", "details"],
+      "properties": {
+        "type": { "const": "business-outcome" },
+        "code": { "type": "string" },
+        "details": { "type": "object" }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "requestId", "code"],
+      "properties": {
+        "type": { "const": "intervention-required" },
+        "requestId": { "type": "string" },
+        "code": { "type": "string" }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "code", "detail"],
+      "properties": {
+        "type": { "const": "failure" },
+        "code": { "type": "string" },
+        "detail": { "type": "object" }
+      }
+    }
+  ]
+}

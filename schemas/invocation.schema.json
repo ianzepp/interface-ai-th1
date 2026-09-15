@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://interface-ai.local/schemas/invocation.schema.json",
+  "title": "Capability invocation",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["capabilityId", "inputs"],
+  "properties": {
+    "capabilityId": { "type": "string", "minLength": 1 },
+    "inputs": { "type": "object" }
+  }
+}

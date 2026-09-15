@@ -18,16 +18,22 @@ The required vertical slice is:
 
 ## Current State
 
-The assignment has been reviewed. The target will be a locally hosted,
-browser-based finance, banking, or accounting application. The concrete target,
-implementation stack, and architecture remain open decisions.
+The assignment has been reviewed. The repository now contains the initial
+TypeScript architecture skeleton: a capability-authoring skill and event ledger,
+versioned JSON schemas, a deterministic runtime, a Playwright surface adapter,
+target profiles, and human-control seams.
 
-The original assignment PDF is intentionally kept outside this repository.
+LedgerSMB and Dolibarr are both first-class local browser targets. Their versions,
+detectors, fixtures, and representative workflows remain to be grounded through
+live inspection.
+
+The original assignment PDF is available locally as `assignment.pdf` and is
+intentionally ignored by Git.
 
 ## Next Actions
 
-- Evaluate LedgerSMB, Mifos X, and Dolibarr as target applications.
-- Select and pin the target application version.
+- Select and pin LedgerSMB and Dolibarr versions.
+- Launch both applications and replace target-profile stubs with observed facts.
 - Define the smallest representative workflow and exceptional states.
-- Choose the implementation stack and capability-artifact schema.
+- Harden the draft graph semantics before implementing the compiler and engine.
 - Turn every must-have requirement into an executable acceptance check.

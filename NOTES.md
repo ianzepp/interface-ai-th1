@@ -27,4 +27,36 @@ fallback.
 
 - LedgerSMB version and local deployment method.
 - Representative workflow and seeded fixture data.
-- Concrete threshold for invoking the Dolibarr fallback.
+
+## 2026-09-15 — Authoring and execution architecture
+
+### Decision
+
+Separate the probabilistic capability-authoring plane from the deterministic
+execution plane.
+
+- A dense authoring skill guides LLM discovery, exception authoring, and artifact
+  revision.
+- A typed event ledger records actions and observations that actually occurred.
+- An artifact compiler produces a versioned state graph from grounded evidence.
+- A deterministic engine interprets approved artifacts without an LLM in its
+  decision loop.
+- Playwright is the first surface adapter rather than an engine dependency.
+- Target-wide state knowledge lives in application profiles.
+- Session ownership and human intervention live behind explicit control-transfer
+  types.
+
+### Scope amendment
+
+Develop LedgerSMB and Dolibarr as first-class targets at the same time. LedgerSMB
+remains the primary domain narrative, while Dolibarr validates that the
+architecture is not accidentally coupled to one application. Dolibarr is no
+longer only a dormant fallback.
+
+### Still open
+
+- Exact capability schema and graph semantics.
+- Model provider and structured decision protocol.
+- Persistent event-ledger format.
+- Artifact validation and approval mechanism.
+- Target versions, fixtures, and workflows.
