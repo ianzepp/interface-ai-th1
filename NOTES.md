@@ -512,6 +512,36 @@ loop. Tying the host to Codex therefore does not tie the architecture to Codex:
 replacing the host means writing a different process that drives the same session
 commands.
 
+### Why lanes were built anyway
+
+The assignment asked for essentially one worked example: at least one genuine
+LLM-driven run against a live surface, with its evidence, and it says outright that
+a single successful run is not an expensive thing to produce. It did not ask for
+parallelization. Lanes were built regardless, for two reasons.
+
+- **Evaluation is what needs volume.** The authoring skill's own approval
+  conditions are corpus-level: two corroborating captures, a risk-ranked exception
+  matrix, and a replay that has succeeded more than once. Hardening that process
+  means running it repeatedly — different goals, different fixtures, different
+  reasoning settings — and comparing the results. Doing that one lane at a time is
+  the difference between a process that can be improved and one that is never
+  exercised often enough to improve.
+- **It was cheap.** A lane needed a Compose project, a volume prefix, a host port
+  derived from the lane name, and a git worktree. The Compose files already pinned
+  image digests, so parameterizing them with defaults left the single-instance path
+  byte-for-byte unchanged. The expensive part of a lane is not the isolation; it is
+  the authoring session that runs inside it, and that cost is paid either way.
+
+The rejection of speculative generality above is not in tension with this. The test
+is not "is this minimal" but "does this harden the process for what it costs". A
+provider-neutral agent host failed that test; lane isolation passes it.
+
+Parallelism is additive scope, so it must not displace what was asked for. The
+required deliverable remains one real run with its evidence, and
+[`assignment-proof.md`](assignment-proof.md) stays the authority on whether that
+exists. The extra examples harden the process; they do not substitute for the run
+that is required.
+
 ### Boundary
 
 This does not amend the boundary ruling above. That ruling forbids an embedded
