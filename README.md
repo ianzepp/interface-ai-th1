@@ -56,18 +56,14 @@ npm ci
 
 ### TypeScript version
 
-This project compiles with TypeScript 7 (the native compiler) but lints through
-the TypeScript 6 API. TypeScript 7 does not ship a programmatic compiler API yet,
-so `typescript-eslint` refuses to load it. `package.json` installs both:
+Pinned to TypeScript 6. TypeScript 7 is the native compiler and is faster, but it
+ships no programmatic compiler API yet, so `typescript-eslint` cannot load it and
+type-aware linting would be impossible. Compile speed is not a constraint here:
+this system spends its time driving browser surfaces, not building. One compiler
+serves both the build and the linter, so the two can never disagree.
 
-- `@typescript/native` — a TypeScript 7 alias providing the `tsc` binary used by
-  `build` and `check`.
-- `typescript` — TypeScript 6, providing the compiler API that `typescript-eslint`
-  and ESLint's type-aware rules resolve.
-
-The code typechecks cleanly under both. This affects tooling only, not runtime
-code, and goes away once TypeScript 7.1 ships an API that `typescript-eslint`
-supports.
+When TypeScript 7.1 ships an API that `typescript-eslint` supports, this pin moves
+to 7 in a single dependency bump.
 
 ## Next Actions
 
