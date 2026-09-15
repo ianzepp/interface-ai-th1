@@ -542,6 +542,39 @@ required deliverable remains one real run with its evidence, and
 exists. The extra examples harden the process; they do not substitute for the run
 that is required.
 
+### The harness prompt mirrors the skill's loop
+
+A harness prompt that summarizes the authoring loop instead of mirroring it will
+silently drop phases. The first version of `scripts/author`'s prompt compressed the
+skill's twelve-step loop into six happy-path steps: establish the fixture, capture
+two successes, extract a draft, write the artifact, validate, revise. It omitted
+failure discovery and recovery authoring entirely — the phases the skill says are
+_not_ deferred — and capped the session at two runs, which makes a failure matrix
+arithmetically impossible.
+
+The result was predictable in hindsight and visible in the evidence: the
+lane-authored capability has no exception branch, its most obvious business outcome
+(a duplicate name on a create) was never looked for, and two earlier artifacts have
+no recovery branch either. The model did exactly what the prompt asked.
+
+The prompt now mirrors the loop phase by phase and states the failure-matrix
+candidate classes the skill names.
+
+### Fixture mutation is enforced, not instructed
+
+The repository rule is "no `fresh`, `reset`, `snapshot`, or `destroy` during an
+active browser capture", not "never touch the fixture". The first prompt dropped
+the qualifier and forbade `snapshot` outright, which denied the model the one tool
+the skill's method needs for a failure that depends on persisted rather than
+reachable state — a deliberately broken snapshot the scenario cannot construct.
+
+The corrected split: `reset` and `snapshot` are the author's; `fresh` and `destroy`
+belong to the launcher, since they are lane lifecycle. To keep that boundary from
+depending on the model's discipline, `scripts/target` now refuses all four while a
+session is live, using the pid the session publishes in its state file. That is the
+same fail-closed shape as the origin allowlist: checked by the system rather than
+requested in a prompt.
+
 ### Boundary
 
 This does not amend the boundary ruling above. That ruling forbids an embedded
