@@ -18,9 +18,8 @@ The required vertical slice is:
 
 ## Current State
 
-The assignment has been reviewed. The repository contains the initial
-architecture skeleton, but current implementation work is intentionally focused
-on the capture-only authoring loop.
+The assignment has been reviewed. The repository now contains both the capture
+loop and the first deterministic vertical slice for LedgerSMB initialization.
 
 Every reset-to-terminal discovery attempt is saved as one test run. A run has a
 brief README, structured manifest, sanitized event ledger, and Playwright trace.
@@ -57,8 +56,11 @@ Named snapshots live under `snapshots/<target>/<name>/`, include a checksummed
 manifest, and are ignored by Git. Run `scripts/target --help` for non-destructive
 start, stop, status, URL, and snapshot-listing commands.
 
-Stage-graph synthesis and deterministic replay are explicitly deferred until the
-capture corpus is useful.
+Two repeated discovery captures produced a reviewed state graph for LedgerSMB
+company initialization. The Playwright surface driver and deterministic engine
+now replay that artifact without an LLM, enforce exact target resolution and
+origin/action policy, bind invocation inputs, route on screen detectors, and
+save successful or failed replay runs in the same evidence shape as discovery.
 
 The original assignment PDF is available locally as `assignment.pdf` and is
 intentionally ignored by Git.
@@ -107,6 +109,20 @@ fixture separately:
 scripts/target snapshot ledgersmb initialized-company
 ```
 
+### LedgerSMB initialization replay pilot
+
+Build the deterministic artifact and engine, replace the current LedgerSMB
+volumes with a fresh install, then replay the reviewed initialization graph:
+
+```sh
+npm run replay:ledgersmb:initialize
+```
+
+The command records the replay under `runs/` and leaves the verified initialized
+target running. It does not overwrite an existing snapshot. After reviewing the
+run and persisted-state assertions, snapshot it under an intentional name with
+`scripts/target snapshot ledgersmb <snapshot-name>`.
+
 ## Development
 
 Requires Node 24 or newer.
@@ -141,9 +157,8 @@ to 7 in a single dependency bump.
 
 ## Next Actions
 
-- Launch both applications and replace target-profile detector stubs with observed facts.
-- Create and inspect the first named baseline snapshot for each target.
-- Select the smallest capture scenario against each grounded baseline.
-- Wire the model-driven computer-use loop to the run recorder.
-- Capture happy-path and deliberate error runs for both targets.
-- Turn every must-have requirement into an executable acceptance check.
+- Capture the `create-trading-partners` phase twice from `initialized-company`.
+- Annotate its stable targets and post-action detectors from the repeated traces.
+- Add a deliberate replay breakage and preserve the typed failure run.
+- Generalize artifact construction only after the second capability exposes the
+  first genuinely repeated pattern.

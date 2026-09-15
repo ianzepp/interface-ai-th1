@@ -1,4 +1,9 @@
-import type { BrowserContext, Page } from "playwright";
+import { mkdir } from "node:fs/promises";
+import { join } from "node:path";
+
+import type { BrowserContext, Locator, Page } from "playwright";
+
+type AriaRole = Parameters<Page["getByRole"]>[0];
 
 import type {
     ActionResult,
@@ -17,11 +22,7 @@ import type {
 /**
  * The first `SurfaceDriver`: a browser page driven through Playwright.
  *
- * STATUS: no method is implemented yet. The class exists to fix the adapter
- * shape early, so the surface vocabulary can be reviewed without Playwright's
- * API leaking into it.
- *
- * Once implemented, Playwright supplies locating, waiting, extraction, and
+ * Playwright supplies locating, waiting, extraction, and
  * tracing, and this adapter translates in both directions between that API and
  * the surface-neutral vocabulary. Nothing in the artifact schema names
  * Playwright, so adding a second surface changes no recorded flow.
@@ -31,40 +32,202 @@ export class PlaywrightBrowserDriver implements SurfaceDriver {
     public constructor(
         public readonly context: BrowserContext,
         public readonly page: Page,
+        public readonly evidenceDirectory?: string,
     ) {}
 
-    public observe(_request: ObservationRequest): Promise<Observation> {
-        return this.notImplemented("observe");
+    public async observe(request: ObservationRequest): Promise<Observation> {
+        const observation: Observation = {
+            url: this.page.url(),
+            title: await this.page.title(),
+        };
+        if (request.includeAccessibility) {
+            observation.accessibility = {
+                text: (await this.page.locator("body").innerText()).slice(
+                    0,
+                    4_000,
+                ),
+            };
+        }
+        if (request.includeScreenshot && this.evidenceDirectory !== undefined) {
+            const reference = await this.captureEvidence("observation");
+            observation.screenshotPath = reference.path;
+        }
+        return observation;
     }
 
-    public locate(_target: TargetDescriptor): Promise<TargetResolution> {
-        return this.notImplemented("locate");
+    public async locate(target: TargetDescriptor): Promise<TargetResolution> {
+        for (const [candidateIndex, candidate] of target.candidates.entries()) {
+            const locator = this.locatorFor(candidate);
+            const matchCount = await locator.count();
+            if (matchCount === 1) {
+                return {
+                    candidateIndex,
+                    matchCount,
+                    description: JSON.stringify(candidate),
+                };
+            }
+            if (matchCount > 1) {
+                throw new Error(
+                    `Ambiguous target ${JSON.stringify(candidate)} matched ${String(matchCount)} elements`,
+                );
+            }
+        }
+        throw new Error(`Missing target ${JSON.stringify(target.candidates)}`);
     }
 
-    public act(_action: SurfaceAction): Promise<ActionResult> {
-        return this.notImplemented("act");
+    public async act(action: SurfaceAction): Promise<ActionResult> {
+        switch (action.type) {
+            case "navigate":
+                await this.page.goto(action.url);
+                break;
+            case "activate":
+                await (await this.resolve(action.target)).click();
+                break;
+            case "fill":
+                await (await this.resolve(action.target)).fill(action.value);
+                break;
+            case "select":
+                await (
+                    await this.resolve(action.target)
+                ).selectOption(action.value);
+                break;
+            case "press":
+                await this.page.keyboard.press(action.key);
+                break;
+        }
+        return {
+            completed: true,
+            observation: await this.observe({
+                includeAccessibility: true,
+                includeScreenshot: false,
+            }),
+        };
     }
 
-    public waitFor(
-        _detectors: readonly StateDetector[],
-        _timeoutMs: number,
+    public async waitFor(
+        detectors: readonly StateDetector[],
+        timeoutMs: number,
     ): Promise<StateMatch | null> {
-        return this.notImplemented("waitFor");
-    }
-
-    public extract(_spec: ExtractionSpec): Promise<unknown> {
-        return this.notImplemented("extract");
-    }
-
-    public captureEvidence(_reason: string): Promise<EvidenceReference> {
-        return this.notImplemented("captureEvidence");
-    }
-
-    private notImplemented(operation: string): Promise<never> {
-        return Promise.reject(
-            new Error(
-                `PlaywrightBrowserDriver.${operation} is not implemented`,
-            ),
+        const deadline = Date.now() + timeoutMs;
+        while (Date.now() < deadline) {
+            for (const detector of detectors) {
+                if (await this.matches(detector)) {
+                    return {
+                        detectorId: detector.id,
+                        observedAt: new Date().toISOString(),
+                    };
+                }
+            }
+            await this.page.waitForTimeout(100);
+        }
+        const timeout = detectors.find((detector) =>
+            detector.signals.some((signal) => signal.kind === "timeout"),
         );
+        return timeout === undefined
+            ? null
+            : { detectorId: timeout.id, observedAt: new Date().toISOString() };
+    }
+
+    public async extract(spec: ExtractionSpec): Promise<unknown> {
+        const text = (
+            await (await this.resolve(spec.target)).innerText()
+        ).trim();
+        switch (spec.type) {
+            case "string":
+                return text;
+            case "number":
+                return Number(text.replaceAll(",", ""));
+            case "money":
+                return Number(text.replaceAll(/[^0-9.-]/g, ""));
+            case "boolean":
+                return /^(true|yes|1)$/i.test(text);
+        }
+    }
+
+    public async captureEvidence(reason: string): Promise<EvidenceReference> {
+        if (this.evidenceDirectory === undefined) {
+            throw new Error(
+                "No evidence directory configured for Playwright driver",
+            );
+        }
+        await mkdir(this.evidenceDirectory, { recursive: true });
+        const filename = `${String(Date.now())}-${reason.replaceAll(/[^a-z0-9]+/gi, "-").toLowerCase()}.png`;
+        const path = join(this.evidenceDirectory, filename);
+        await this.page.screenshot({ path, fullPage: true });
+        return {
+            kind: "screenshot",
+            path: join("screenshots", filename),
+            redacted: false,
+        };
+    }
+
+    private async resolve(target: TargetDescriptor): Promise<Locator> {
+        const resolution = await this.locate(target);
+        const candidate = target.candidates[resolution.candidateIndex];
+        if (candidate === undefined)
+            throw new Error("Resolved target candidate is missing");
+        return this.locatorFor(candidate);
+    }
+
+    private locatorFor(
+        candidate: TargetDescriptor["candidates"][number],
+    ): Locator {
+        switch (candidate.kind) {
+            case "role":
+                return this.page.getByRole(candidate.role as AriaRole, {
+                    name: candidate.name,
+                    exact: true,
+                });
+            case "label":
+                return this.page.getByLabel(candidate.text, { exact: true });
+            case "text":
+                return this.page.getByText(candidate.text, {
+                    exact: candidate.exact,
+                });
+            case "css":
+                return this.page.locator(candidate.selector);
+            case "relative":
+                throw new Error(
+                    `Relative locator is not implemented: ${candidate.anchor} ${candidate.relation}`,
+                );
+        }
+    }
+
+    private async matches(detector: StateDetector): Promise<boolean> {
+        for (const signal of detector.signals) {
+            switch (signal.kind) {
+                case "url":
+                    if (new RegExp(signal.pattern).test(this.page.url()))
+                        return true;
+                    break;
+                case "text":
+                    if (
+                        await this.page
+                            .getByText(signal.value, { exact: signal.exact })
+                            .first()
+                            .isVisible()
+                            .catch(() => false)
+                    )
+                        return true;
+                    break;
+                case "role":
+                    if (
+                        await this.page
+                            .getByRole(signal.role as AriaRole, {
+                                name: signal.name,
+                                exact: true,
+                            })
+                            .first()
+                            .isVisible()
+                            .catch(() => false)
+                    )
+                        return true;
+                    break;
+                case "response-status":
+                case "timeout":
+                    break;
+            }
+        }
+        return false;
     }
 }

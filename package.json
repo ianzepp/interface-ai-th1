@@ -6,6 +6,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "capture:ledgersmb:initialize": "npm run build && scripts/target fresh ledgersmb && node dist/src/authoring/ledgersmb-initialize-pilot.js",
+    "replay:ledgersmb:initialize": "npm run build && scripts/target fresh ledgersmb && node dist/src/runtime/ledgersmb-initialize-replay.js",
     "check": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",

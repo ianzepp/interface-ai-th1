@@ -221,3 +221,40 @@ the browser stage graph. Browser authentication is part of `initialize-company`
 because it proves the created account works. Later capabilities should use a
 small authentication bootstrap or validated browser storage state rather than
 recording login as part of every business workflow.
+
+## 2026-09-15 — First deterministic replay slice
+
+### Decision
+
+Use the two successful `initialize-company` discovery runs to create the first
+reviewed state graph and execute it with no model in the replay loop.
+
+- Discovery source: `20260915162457450-f9c72fa6`
+- Repeated discovery corroboration: `20260915162602665-abdeb328`
+- Useful failed replay: `20260915170332042-8b83c035`
+- Successful replay validations: `20260915170358856-fe344f46` and
+  `20260915170434612-2d03545d`
+
+The failed replay exposed a recorder-integrity issue: the event said the login
+button was `form button`, while the discovery code actually found a button by
+role inside the form. Exact target resolution rejected the false CSS locator.
+The reviewed artifact now uses the role and accessible name that the discovery
+actually exercised.
+
+### Verified boundary
+
+Both successful replays started from fresh Docker volumes and reached the
+authenticated LedgerSMB home screen. The first replay was independently checked
+for one application user, 136 LedgerSMB roles, and zero AR records, AP records,
+parts, or entity credit accounts.
+
+### Architecture learned
+
+- Recorded actions ground the artifact, but stable detectors are reviewed
+  annotations derived from repeated traces.
+- The engine owns traversal, input binding, policy, and typed outcomes.
+- The Playwright driver owns exact location, browser actions, state detection,
+  extraction, and failure screenshots.
+- Replay uses the same run evidence layout as discovery.
+- Do not overwrite the existing `initialized-company` snapshot implicitly;
+  snapshot creation remains an intentional post-verification harness action.

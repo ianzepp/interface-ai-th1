@@ -14,12 +14,9 @@ import type { ActionRisk, SurfaceAction } from "../surfaces/surface-driver.js";
  * - This constrains action types and risk, not intent. A permitted fill can
  *   still carry a wrong value, and a permitted navigation can still reach a page
  *   nobody intended to reach.
- * - `allowedOrigins` is declared and recorded but not yet checked. `evaluate`
- *   inspects the action type and the risk only, so origin membership is
- *   currently documentation rather than enforcement.
- * - Nothing binds replay to the policy recorded in the artifact: the engine
- *   applies whatever `ArtifactPolicy` it is constructed with. Honouring the
- *   recorded policy is replay's job, and replay is not implemented.
+ * - `evaluate` inspects action type and risk. The engine separately checks the
+ *   current or destination browser origin and rejects a runtime policy that
+ *   differs from the policy recorded in the artifact.
  * - Requests are denied, not sanitized. An action outside the allowlist is
  *   blocked rather than rewritten into something permitted, because silently
  *   altering an action would make replay diverge from the reviewed artifact.

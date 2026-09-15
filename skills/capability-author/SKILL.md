@@ -1,14 +1,15 @@
 ---
 name: capability-author
-description: Run bounded computer-use discovery scenarios against reset local browser fixtures and preserve every attempt as a Playwright-backed test-run record. Use for capture and exploration; deterministic artifact generation and replay are deliberately deferred.
+description: Capture bounded computer-use scenarios against reset browser fixtures, turn repeated runs into reviewed state-graph artifacts, and validate deterministic replay without a model in the execution loop.
 ---
 
 # Capability Author
 
 Capture what actually happens while an LLM explores an allowlisted browser
-surface. The current phase produces evidence, not a deterministic capability.
+surface, then turn stable recorded behavior into a reviewed deterministic
+capability.
 
-## Current Boundary
+## Capture Boundary
 
 - Start from a freshly reset fixture for every attempt.
 - Treat the complete reset-to-terminal attempt as one test run.
@@ -16,8 +17,8 @@ surface. The current phase produces evidence, not a deterministic capability.
   reaches an error.
 - Save the run even when it fails, stalls, takes a wrong turn, or exposes an
   unknown UI state.
-- Do not compile a stage graph, generate a replay artifact, or repair an existing
-  artifact during this phase.
+- Do not compile a stage graph during an individual capture attempt. Finish and
+  preserve the run before comparing it with the corpus or editing an artifact.
 
 ## Required Run Contract
 
@@ -273,6 +274,46 @@ an exception appears, record:
 Do not speculate that an unseen exception exists. Exercise deliberate red paths
 only through fixture data or actions allowed by the run contract.
 
+## Artifact and Replay Loop
+
+Begin artifact work only after at least two successful captures agree on the
+important action sequence and terminal checkpoint. A recorded action is
+evidence that an action occurred; it is not automatically proof that the
+serialized locator accurately describes the locator the browser library
+resolved. Compare the recorder implementation, trace, and repeated observations
+before approving every target.
+
+Build the smallest reviewed state graph that covers the demonstrated path:
+
+1. Copy only actions that occurred in the successful corpus.
+2. Replace literal invocation values with typed input bindings.
+3. Annotate each action with a stable post-action detector observed in the
+   traces. Do not guess detectors from arbitrary page text.
+4. Give every stage an explicit fallback terminal outcome.
+5. Enforce the artifact's origin and action allowlists before acting.
+6. Require exactly one target match. Zero or multiple matches end the stage.
+7. Preserve every replay, including failures, in the same run-directory shape
+   as discovery captures.
+8. Reset the fixture and replay again. One success is not validation.
+9. Add successful replay run IDs to artifact provenance only after checking the
+   checkpoint and persisted-state assertions.
+
+The engine owns graph traversal, input binding, policy evaluation, target
+resolution, detector matching, extraction, and typed terminal results. The
+surface driver owns browser-specific location, action, waiting, observation,
+and evidence capture. The artifact owns application-specific actions and
+states. Keep those responsibilities separate.
+
+A replay failure is useful evidence. First decide whether it reveals an
+application state, a weak detector, a weak target, or dishonest recording. A
+strict replay should expose a serialized locator that differs from the locator
+actually exercised during discovery rather than silently choosing a nearby
+element.
+
+Docker reset and snapshot operations remain outside the browser graph. Create
+or replace a named ending snapshot only after the browser checkpoint and
+independent persisted-state assertions pass.
+
 ## Data Safety
 
 - Redact passwords, tokens, cookies, authorization values, credentials, and
@@ -285,7 +326,7 @@ only through fixture data or actions allowed by the run contract.
 
 ## Deferred Work
 
-Stage-graph synthesis, deterministic artifact compilation, artifact approval,
-replay, and recovery validation begin only after the capture corpus is useful.
-Do not let those future concerns make the capture loop more elaborate than the
-evidence requires today.
+Automatic graph synthesis, a formal artifact approval workflow, generalized
+recovery graphs, and broad exception coverage remain deferred. Do not let those
+future concerns make either the capture loop or the first reviewed replay more
+elaborate than its evidence requires.

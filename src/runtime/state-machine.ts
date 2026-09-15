@@ -9,11 +9,9 @@ import type { PolicyConfiguration } from "./policy.js";
 /**
  * The capability artifact: what a discovered flow becomes.
  *
- * STATUS: this is the designed shape, not a working model. The capability-author
- * skill defers stage-graph synthesis and artifact compilation until a capture
- * corpus exists, so nothing here compiles, approves, or replays an artifact yet.
- * `selectDestination` is implemented and is the one piece of graph logic that
- * runs today.
+ * The first reviewed artifact uses this shape and the deterministic engine now
+ * walks it. Automatic synthesis and formal approval remain future work;
+ * artifacts are currently reviewed TypeScript values grounded in run evidence.
  *
  * An artifact is a state graph, not a transcript. Each stage says what it
  * intends to do, which states count as success or trouble, and where control
@@ -95,8 +93,8 @@ export interface CapabilityContract {
  * `discoveryRunId` is the run that proved the flow works. `validatedRunIds` is
  * reserved for replays that confirm it afterwards, which is the difference
  * between a draft recorded once and a capability worth trusting unattended.
- * Nothing populates it yet: validation belongs to the phase after replay
- * exists.
+ * Only successful replays whose terminal and persisted state were checked
+ * belong in this list.
  */
 export interface ArtifactProvenance {
     discoveryRunId: string;
