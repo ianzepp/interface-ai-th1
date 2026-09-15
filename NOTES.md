@@ -1,5 +1,56 @@
 # Decision Notes
 
+## 2026-09-15 — Product and learning objective
+
+### Decision
+
+The LedgerSMB and Dolibarr work is a development laboratory, not the product
+boundary. The durable product is a skill-guided authoring system that enables a
+fresh LLM to take an unfamiliar application from no prior knowledge to a
+reviewable deterministic capability.
+
+The intended lifecycle is:
+
+1. A fresh LLM loads the capability-author skill and receives a goal and target.
+2. It establishes a reproducible environment and explores the application from
+   known starting states.
+3. It records each reset-to-terminal attempt, including successful and failed
+   runs, as grounded browser evidence.
+4. It uses repeated runs to distinguish stable application behavior from
+   incidental values, timing, and UI state.
+5. It constructs or revises a typed state-graph artifact using only grounded
+   actions and explicitly reviewed detectors and recovery branches.
+6. It executes that artifact through the generic deterministic engine without
+   an LLM in the replay decision loop.
+7. It resets and repeats replay, deliberately exercises useful failure states,
+   and feeds every architectural lesson back into the skill and generic tooling.
+
+### Development method
+
+Everything learned while working through the selected target applications must
+improve one of three durable layers:
+
+- the capability-author skill, which tells a future LLM how to explore, record,
+  reason about evidence, construct artifacts, test replay, and classify failures;
+- generic scripts and interfaces for fixture lifecycle, capture, compilation,
+  deterministic execution, evidence, policy, and handoff; or
+- target-specific profiles and artifacts that contain application knowledge
+  without leaking that knowledge into the generic engine.
+
+Do not optimize merely for completing the four LedgerSMB scenarios. Use those
+scenarios to discover the minimum general process, data model, and runtime a new
+application will need. When an experiment exposes a weak locator, missing event,
+ambiguous state transition, unsafe assumption, or awkward manual step, preserve
+the run and update the skill with the general lesson before moving on.
+
+### Success boundary
+
+The project succeeds when the repository demonstrates one complete vertical
+slice and the skill explains how to repeat the method on a new application. The
+four LedgerSMB phases provide progressively richer training cases for building
+that method. Dolibarr checks that the resulting architecture and instructions
+are not accidentally LedgerSMB-specific.
+
 ## 2026-09-15 — Target application
 
 ### Decision

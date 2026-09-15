@@ -9,6 +9,35 @@ Capture what actually happens while an LLM explores an allowlisted browser
 surface, then turn stable recorded behavior into a reviewed deterministic
 capability.
 
+## Mission
+
+Use this skill as the operating method for taking an unfamiliar application
+from no prior knowledge to a reusable deterministic capability. The target
+application is a learning environment; completing one target-specific workflow
+is not the whole job. Every run should either produce grounded evidence or
+improve the general authoring method.
+
+Keep knowledge in the correct layer:
+
+- Put exploration, recording, artifact-authoring, replay-validation, and failure
+  classification instructions in this skill.
+- Put reusable mechanics in generic fixture, capture, compiler, policy, engine,
+  evidence, and handoff code.
+- Put application and version knowledge in target profiles and capability
+  artifacts, not in the generic engine.
+
+When target work reveals a generally useful lesson, update this skill before
+moving on. Examples include a mismatch between the locator recorded and the one
+actually executed, a hidden transition signal, an ambiguous checkpoint, an
+unrecorded human action, or an application mutation that occurs earlier than
+its label suggests. Keep specific selectors, fixture identifiers, credentials,
+and vendor error codes out of the general lesson.
+
+The desired end state is that a fresh LLM can load this skill, establish a
+reproducible target, explore it through bounded recorded runs, build a grounded
+state graph, and prove deterministic replay without needing undocumented
+knowledge from the original authoring session.
+
 ## Capture Boundary
 
 - Start from a freshly reset fixture for every attempt.
