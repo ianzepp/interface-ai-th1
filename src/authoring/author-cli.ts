@@ -1,7 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import process from "node:process";
-import { spawn, type ChildProcess } from "node:child_process";
+import { runCodexSession } from "./codex-run.js";
 
 import { getTargetProfile } from "../targets/index.js";
 import { buildAuthorPrompt } from "./author-prompt.js";
@@ -160,27 +160,13 @@ async function run(options: AuthorRunOptions): Promise<void> {
     print(`timeout: ${String(timeoutMs)}ms`);
     print("");
 
-    const args = [
-        "exec",
-        "--cd",
-        repoRoot,
-        "--sandbox",
-        sandbox,
-        "--output-last-message",
-        lastMessagePath,
-    ];
     // Model and reasoning effort are passed only when asked for. Leaving them out
-    // means codex resolves them from the operator's global configuration, which is
-    // why the resolved values are written to the lane metadata below: the same goal
-    // on a machine with a different config would otherwise produce different work
-    // with nothing in the evidence saying so.
+    // lets codex resolve them from the operator's global configuration, which is why
+    // the resolved values are recorded below: the same goal on a machine with a
+    // different config would otherwise produce different work with nothing in the
+    // evidence saying so.
     const model = flags.get("model");
-    if (model !== undefined) args.push("--model", model);
     const reasoningEffort = flags.get("reasoning-effort");
-    if (reasoningEffort !== undefined) {
-        args.push("-c", `model_reasoning_effort=${reasoningEffort}`);
-    }
-    args.push(prompt);
 
     await writeFile(
         join(laneDirectory, "session-metadata.json"),
@@ -204,11 +190,15 @@ async function run(options: AuthorRunOptions): Promise<void> {
         "utf8",
     );
 
-    const child = spawn("codex", args, {
-        stdio: "inherit",
-        env: process.env,
+    const outcome = await runCodexSession({
+        prompt,
+        workingDirectory: repoRoot,
+        outputPath: lastMessagePath,
+        sandbox,
+        model,
+        reasoningEffort,
+        timeoutMs,
     });
-    const outcome = await waitForExit(child, timeoutMs);
 
     if (outcome === "timeout") {
         print("");
@@ -223,7 +213,7 @@ async function run(options: AuthorRunOptions): Promise<void> {
     }
 
     print("");
-    print(`codex exit status: ${String(child.exitCode ?? "signal")}`);
+    print(`codex status: ${outcome}`);
     print(`final message: ${lastMessagePath}`);
     print("");
     print(await tail(lastMessagePath, 60));
@@ -265,27 +255,6 @@ function buildPreflightPrompt(
         "socket is unreachable, say so plainly — that is the result this check exists",
         "to produce.",
     ].join("\n");
-}
-
-function waitForExit(
-    child: ChildProcess,
-    timeoutMs: number,
-): Promise<"exited" | "timeout" | "failed"> {
-    return new Promise((resolve) => {
-        const timer = setTimeout(() => {
-            child.kill("SIGTERM");
-            resolve("timeout");
-        }, timeoutMs);
-
-        child.on("error", () => {
-            clearTimeout(timer);
-            resolve("failed");
-        });
-        child.on("exit", () => {
-            clearTimeout(timer);
-            resolve("exited");
-        });
-    });
 }
 
 async function readIfPresent(path: string): Promise<string | null> {
