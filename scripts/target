@@ -115,7 +115,7 @@ port_is_free() {
 # The lock directory is under the system temporary directory rather than the
 # repository, because ports belong to the machine while lanes each have their own
 # worktree: a lock inside one lane's tree could not exclude another lane.
-claim_lane_port() {
+reserve_lane_port() {
     local lane_name="$1" start_offset="$2"
     local lock_directory="${LANE_PORT_LOCK_DIRECTORY}"
     local offset candidate
@@ -475,7 +475,10 @@ list_snapshots_for_target() {
 # handling, which leaves the existing command grammar untouched.
 LANE_NAME=""
 LANE_PORT=""
-LANE_OWNER_PID="$$"
+# The reservation must outlive this process. A wrapper that owns the lane's whole
+# lifetime exports its own pid; without that the lock would name a script that has
+# already exited, look stale on the next call, and protect nothing.
+LANE_OWNER_PID="${LANE_OWNER_PID:-$$}"
 LANE_PORT_LOCK_DIRECTORY="${TMPDIR:-/tmp}/interface-ai-lane-ports"
 lane_requested=""
 port_requested=""
@@ -545,8 +548,7 @@ if [[ -n "${lane_requested}" ]]; then
             fail "--port must be a number (received '${port_requested}')"
         LANE_PORT="${port_requested}"
     else
-        LANE_PORT="$(claim_lane_port "${lane_requested}" \
-            "$(lane_port_offset "${lane_requested}")")"
+        LANE_PORT="$((TARGET_DEFAULT_PORT + $(lane_port_offset "${lane_requested}")))"
     fi
     apply_lane "${lane_requested}" "${LANE_PORT}"
 fi
@@ -591,6 +593,15 @@ case "${command}" in
         else
             printf '%s\n' "${TARGET_DEFAULT_PORT}"
         fi
+        ;;
+    reserve-port)
+        # Allocate this lane's host port and hold it, once. A wrapper takes the
+        # reservation here and then passes --port to every later command, so the
+        # port cannot move under a caller that already recorded it.
+        [[ $# -eq 2 ]] || fail "reserve-port accepts exactly one target"
+        [[ -n "${LANE_NAME}" ]] || fail "reserve-port requires --lane"
+        reserve_lane_port "${LANE_NAME}" "$(lane_port_offset "${LANE_NAME}")"
+        printf '\n'
         ;;
     config)
         [[ $# -eq 2 ]] || fail "config accepts exactly one target"

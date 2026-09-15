@@ -185,20 +185,24 @@ fi
 # The lane's port comes from scripts/target so the port arithmetic lives in one
 # place. Resolving it before provisioning keeps the origin passed to the author
 # consistent with the instance that actually starts.
-port_arguments=()
 if [[ -n "${lane_port}" ]]; then
-    port_arguments=(--port "${lane_port}")
+    : # an explicit --port is already the reservation
+else
+    lane_port="$(scripts/target reserve-port --lane "${lane_name}" "${target_name}")"
 fi
-lane_port="$(scripts/target port --lane "${lane_name}" \
-    ${port_arguments[@]+"${port_arguments[@]}"} "${target_name}")"
 origin="http://127.0.0.1:${lane_port}"
+
+# This process owns the lane for its whole life, so it is the one whose pid makes
+# the port reservation meaningful rather than looking stale immediately.
+export LANE_OWNER_PID="$$"
 
 # Registered before provisioning, and before the workspace exists, so a failure
 # in either one still cleans up the Docker instance.
 lane_teardown() {
     local status=$?
     printf '\nTearing down lane %s\n' "${lane_name}"
-    if ! scripts/target destroy --lane "${lane_name}" "${target_name}"; then
+    if ! scripts/target destroy --lane "${lane_name}" \
+        --port "${lane_port}" "${target_name}"; then
         printf 'warning: lane %s teardown failed; inspect it with:\n' "${lane_name}" >&2
         printf '  scripts/target status --lane %s %s\n' "${lane_name}" "${target_name}" >&2
     fi
@@ -296,8 +300,8 @@ cd "${workspace}"
 
 # Provisioning is the checkpoint restore, so the lane starts from exactly the
 # named state rather than from whatever the previous scenario left behind.
-scripts/target reset --lane "${lane_name}" \
-    ${port_arguments[@]+"${port_arguments[@]}"} "${target_name}" "${fixture_name}"
+scripts/target reset --lane "${lane_name}" --port "${lane_port}" \
+    "${target_name}" "${fixture_name}"
 
 if ((run_author == 0)); then
     printf '\nSkipping the authoring session (--no-author).\n'
