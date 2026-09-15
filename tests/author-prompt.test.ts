@@ -48,7 +48,14 @@ test("tells the model which origin this lane answers on", () => {
 test("restates the caps so a model cannot infer its own limits", () => {
     assert.match(prompt, /At most 3 recorded runs in total\./);
     assert.match(prompt, /At most 45 browser actions in any one run\./);
-    assert.match(prompt, /budget for the happy path plus the experiments/);
+});
+
+test("reserves validation runs instead of leaving them to compete with experiments", () => {
+    // The sweep showed higher effort spending its whole budget on exploration and
+    // reaching validation with nothing left, so the reserve is stated explicitly.
+    mentions("Reserve at least two of them for validation");
+    mentions("Those runs are not available for experiments");
+    mentions("A capability with no successful replay is not validated");
 });
 
 test("makes the session CLI the only permitted browser mechanism", () => {

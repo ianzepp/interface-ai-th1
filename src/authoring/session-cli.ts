@@ -219,6 +219,30 @@ async function stop(): Promise<void> {
         return;
     }
 
+    // Finalize the run *before* signalling the process.
+    //
+    // A SIGTERM tears the browser down under Playwright's own exit handling, so by
+    // the time the session tries to stop tracing the context is already gone and
+    // the run finalizes as `trace-stop-failed` — a capture failure that says
+    // nothing about what happened. Declaring the abandonment while the browser is
+    // alive stops the trace cleanly and records the honest reason instead.
+    const response = await requestSessionControl(state.socketPath, {
+        type: "finish",
+        outcome: {
+            status: "error",
+            code: "controller-disconnected",
+            summary:
+                "The controller stopped this run without declaring an outcome.",
+        },
+    });
+    if (response.ok) {
+        print("run finalized: controller-disconnected");
+    } else if (!response.error.includes("already finalized")) {
+        print(
+            `note: the session did not accept the final outcome: ${response.error}`,
+        );
+    }
+
     try {
         process.kill(state.pid, "SIGTERM");
     } catch {

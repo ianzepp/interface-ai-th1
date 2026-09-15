@@ -56,7 +56,7 @@ async function author(): Promise<void> {
     const target = requireFlag(flags, "target");
     const fixtureName = requireFlag(flags, "fixture");
     const lane = flags.get("lane") ?? `author-${String(Date.now())}`;
-    const maxRuns = Number(flags.get("max-runs") ?? 8);
+    const maxRuns = Number(flags.get("max-runs") ?? 12);
     const maxActions = Number(flags.get("max-actions") ?? 60);
     const repoRoot = process.cwd();
 
@@ -287,8 +287,9 @@ Options:
   --target <name>            ledgersmb or dolibarr. Required.
   --fixture <snapshot>       Starting fixture snapshot name. Required.
   --lane <name>              Lane name. Defaults to a timestamped value.
-  --max-runs <n>             Recorded runs allowed in total. Defaults to 8, which
-                             leaves room for the happy path plus a failure matrix.
+  --max-runs <n>             Recorded runs allowed in total. Defaults to 12, which
+                             leaves room for the happy path, a failure matrix, and the
+                             two validation runs the method reserves.
   --max-actions <n>          Browser actions allowed per run. Defaults to 60.
   --timeout <ms>             Whole-session budget. Defaults to 3600000.
   --origin <url>             Origin this lane answers on. Defaults to the
