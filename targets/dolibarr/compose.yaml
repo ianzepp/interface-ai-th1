@@ -36,12 +36,12 @@ services:
       DOLI_INIT_DEMO: "1"
       DOLI_INSTALL_AUTO: "1"
       DOLI_INSTANCE_UNIQUE_ID: interface-ai-take-home-fixture
-      DOLI_URL_ROOT: http://127.0.0.1:8080
+      DOLI_URL_ROOT: http://127.0.0.1:${DOLIBARR_PORT:-8080}
     networks:
       - default
       - internal
     ports:
-      - "127.0.0.1:8080:80"
+      - "127.0.0.1:${DOLIBARR_PORT:-8080}:80"
     volumes:
       - documents:/var/www/documents
       - custom:/var/www/html/custom
@@ -52,8 +52,8 @@ networks:
 
 volumes:
   mariadb-data:
-    name: interface-ai-dolibarr-mariadb-data
+    name: ${DOLIBARR_VOLUME_PREFIX:-interface-ai-dolibarr}-mariadb-data
   documents:
-    name: interface-ai-dolibarr-documents
+    name: ${DOLIBARR_VOLUME_PREFIX:-interface-ai-dolibarr}-documents
   custom:
-    name: interface-ai-dolibarr-custom
+    name: ${DOLIBARR_VOLUME_PREFIX:-interface-ai-dolibarr}-custom

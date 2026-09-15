@@ -1,0 +1,307 @@
+#!/usr/bin/env bash
+# Run one authoring session against its own private copy of a target AND its own
+# private copy of the repository.
+#
+# This is the outer lifecycle, not the authoring loop. It provisions an isolated
+# Docker instance at a named checkpoint and an isolated workspace, hands the goal
+# to scripts/author, then tears the Docker instance down. Every decision about
+# *how* to author stays inside the Codex session that scripts/author launches.
+#
+# Two kinds of isolation, because a lane needs both:
+#
+# - **Target isolation.** A target's default Compose project, volume names, and
+#   host port are pinned, so two default instances cannot coexist. A lane gets its
+#   own project, volumes, and port.
+# - **Workspace isolation.** Several agents in one working tree collide on
+#   everything they produce: the same goal yields the same capability id, so they
+#   write the same file; they build into the same `dist/`; they append to the same
+#   `package.json`; and each one's `git status` shows the others' edits as changes
+#   it did not make. A lane therefore gets its own copy of the tree.
+#
+# The workspace copy carries `.git` and is committed to a clean baseline before
+# the session starts. Two things follow: the agent's `git status` shows only its
+# own work, instead of reading the harness's uncommitted files as foreign, and
+# `git diff` against that baseline is exactly the lane's output, which is what
+# makes two lanes comparable.
+#
+# Teardown is aggressive about Docker because of the target isolation: `destroy`
+# removes the lane's volumes, and nothing else can be holding them. The workspace
+# is deliberately kept, because it holds the artifact.
+
+set -Eeuo pipefail
+
+ROOT_DIRECTORY="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "${ROOT_DIRECTORY}"
+
+usage() {
+    cat <<'EOF'
+Usage:
+  scripts/author-lane --lane <name> --target <ledgersmb|dolibarr> \
+                      --fixture <snapshot> --goal <text> [options]
+
+Provisions an isolated Docker instance and an isolated workspace for the lane,
+runs one authoring session with Codex against them, then tears the instance down.
+
+Required:
+  --lane <name>        Lane name. Lowercase letters, digits, and hyphens.
+  --target <name>      ledgersmb or dolibarr.
+  --fixture <snapshot> Snapshot to start from, without the target prefix.
+  --goal <text>        The capability goal.
+
+Isolation:
+  --workspace <path>   Worktree for this lane. Defaults to
+                       worktrees/<lane>.
+  --no-isolation       Run against the shared working tree instead. Only safe
+                       when no other lane is running.
+  --port <n>           Host port for this lane. Defaults to a port derived from
+                       the lane name.
+  --keep               Leave the Docker instance running afterwards, and print
+                       how to inspect or remove it.
+  --no-author          Provision and tear down without running a session.
+
+Forwarded to scripts/author:
+  --model <model>      Model passed to codex exec.
+  --reasoning-effort <level>  low, medium, high, xhigh, ultra, or max.
+  --max-runs <n>       Recorded runs allowed in total.
+  --max-actions <n>    Browser actions allowed per run.
+  --timeout <ms>       Whole-session budget.
+  --codex-sandbox <m>  read-only, workspace-write, or danger-full-access.
+  --preflight          Verify the session transport only.
+
+Afterwards:
+  The lane's worktree holds the artifact and its runs, and the baseline commit it
+  is measured against is printed as it is created. Inspect the lane's own work
+  with `git -C <workspace> status --short` and `git -C <workspace> diff`.
+
+Examples:
+  scripts/author-lane --lane lookup --target dolibarr \
+    --fixture demo-install-smoke --goal "Look up a third party by exact name."
+
+  scripts/author-lane --lane effort-high --target dolibarr \
+    --fixture demo-install-smoke --reasoning-effort high --goal "..."
+EOF
+}
+
+fail() {
+    printf 'error: %s\n' "$*" >&2
+    exit 1
+}
+
+lane_name=""
+target_name=""
+fixture_name=""
+goal_text=""
+lane_port=""
+workspace=""
+keep_instance=0
+run_author=1
+forwarded_arguments=()
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --lane)
+            [[ $# -ge 2 ]] || fail "--lane requires a name"
+            lane_name="$2"
+            shift 2
+            ;;
+        --target)
+            [[ $# -ge 2 ]] || fail "--target requires a name"
+            target_name="$2"
+            shift 2
+            ;;
+        --fixture)
+            [[ $# -ge 2 ]] || fail "--fixture requires a snapshot name"
+            fixture_name="$2"
+            shift 2
+            ;;
+        --goal)
+            [[ $# -ge 2 ]] || fail "--goal requires text"
+            goal_text="$2"
+            shift 2
+            ;;
+        --port)
+            [[ $# -ge 2 ]] || fail "--port requires a number"
+            lane_port="$2"
+            shift 2
+            ;;
+        --workspace)
+            [[ $# -ge 2 ]] || fail "--workspace requires a path"
+            workspace="$2"
+            shift 2
+            ;;
+        --keep)
+            keep_instance=1
+            shift
+            ;;
+        --no-author)
+            run_author=0
+            shift
+            ;;
+        --no-isolation)
+            workspace="${ROOT_DIRECTORY}"
+            shift
+            ;;
+        help | --help | -h)
+            usage
+            exit 0
+            ;;
+        --model | --reasoning-effort | --max-runs | --max-actions | --timeout | --codex-sandbox)
+            [[ $# -ge 2 ]] || fail "$1 requires a value"
+            forwarded_arguments+=("$1" "$2")
+            shift 2
+            ;;
+        --preflight)
+            forwarded_arguments+=("$1")
+            shift
+            ;;
+        *)
+            fail "unknown option '$1' (run scripts/author-lane --help)"
+            ;;
+    esac
+done
+
+[[ -n "${lane_name}" ]] || fail "--lane is required"
+[[ -n "${target_name}" ]] || fail "--target is required"
+[[ -n "${fixture_name}" ]] || fail "--fixture is required"
+if ((run_author == 1)); then
+    [[ -n "${goal_text}" ]] || fail "--goal is required"
+fi
+[[ -n "${workspace}" ]] || workspace="${ROOT_DIRECTORY}/worktrees/${lane_name}"
+
+# The lane's port comes from scripts/target so the port arithmetic lives in one
+# place. Resolving it before provisioning keeps the origin passed to the author
+# consistent with the instance that actually starts.
+port_arguments=()
+if [[ -n "${lane_port}" ]]; then
+    port_arguments=(--port "${lane_port}")
+fi
+lane_port="$(scripts/target port --lane "${lane_name}" \
+    ${port_arguments[@]+"${port_arguments[@]}"} "${target_name}")"
+origin="http://127.0.0.1:${lane_port}"
+
+# Registered before provisioning, and before the workspace exists, so a failure
+# in either one still cleans up the Docker instance.
+lane_teardown() {
+    local status=$?
+    printf '\nTearing down lane %s\n' "${lane_name}"
+    if ! scripts/target destroy --lane "${lane_name}" "${target_name}"; then
+        printf 'warning: lane %s teardown failed; inspect it with:\n' "${lane_name}" >&2
+        printf '  scripts/target status --lane %s %s\n' "${lane_name}" "${target_name}" >&2
+    fi
+    return "${status}"
+}
+
+# Build the lane's private tree as a git worktree.
+#
+# A worktree is the right mechanism rather than a source copy: git shares the
+# object store, so a lane costs a checkout instead of a duplicated .git, and
+# `git worktree remove` retires it cleanly instead of leaving a stray directory
+# that git still believes is a checkout.
+#
+# A worktree can be created off HEAD even though the working tree is dirty, but
+# HEAD alone is not enough here: the harness itself is uncommitted, so a bare HEAD
+# worktree would have no way to drive a browser. The working state is therefore
+# copied in and committed *inside the worktree*. That commit is safe because the
+# lane has its own HEAD and its own index; the shared tree's index and refs are
+# never touched, which is what a lane cannot be allowed to do.
+prepare_workspace() {
+    if [[ "${workspace}" == "${ROOT_DIRECTORY}" ]]; then
+        printf 'Using the shared working tree (isolation disabled)\n'
+        return 0
+    fi
+
+    # A previous lane's workspace is moved to the trash rather than deleted, so a
+    # mistaken lane name cannot destroy the artifact of a run still worth reading.
+    command -v trash >/dev/null 2>&1 ||
+        fail "the 'trash' command is required to replace an existing lane workspace"
+    if [[ -e "${workspace}" ]]; then
+        trash "${workspace}" ||
+            fail "could not move the previous workspace aside"
+        git worktree prune
+    fi
+    mkdir -p "$(dirname "${workspace}")"
+
+    git worktree add --detach "${workspace}" HEAD >/dev/null ||
+        fail "could not create the lane worktree at ${workspace}"
+
+    tar -C "${ROOT_DIRECTORY}" \
+        --exclude ./node_modules \
+        --exclude ./dist \
+        --exclude ./runs \
+        --exclude ./tmp \
+        --exclude ./.git \
+        --exclude ./snapshots \
+        --exclude ./worktrees \
+        -cf - . | tar -C "${workspace}" -xf -
+
+    # Ignored state a lane still needs: dependencies (large, read only), the
+    # snapshot archives (Docker bind-mounts into this path, so it is a copy rather
+    # than a symlink), and its own run and temporary roots.
+    ln -sfn "${ROOT_DIRECTORY}/node_modules" "${workspace}/node_modules"
+    cp -a "${ROOT_DIRECTORY}/snapshots" "${workspace}/snapshots"
+    mkdir -p "${workspace}/runs" "${workspace}/tmp"
+
+    # Commit the copied state inside the lane, so the lane starts clean and
+    # everything the agent produces afterwards is unambiguously its own.
+    git -C "${workspace}" add -A >/dev/null
+    git -C "${workspace}" \
+        -c user.name="author-lane" \
+        -c user.email="author-lane@localhost" \
+        commit -q --no-verify -m "lane ${lane_name}: baseline" ||
+        fail "could not create the lane baseline commit"
+    LANE_BASE_COMMIT="$(git -C "${workspace}" rev-parse HEAD)"
+
+    printf 'Workspace: %s (worktree, baseline %s)\n' \
+        "${workspace}" "${LANE_BASE_COMMIT:0:12}"
+}
+
+printf 'Lane %s: %s on port %s\n' "${lane_name}" "${target_name}" "${lane_port}"
+
+if ((keep_instance == 0)); then
+    trap lane_teardown EXIT INT TERM
+fi
+
+prepare_workspace
+
+# Everything below runs inside the lane's workspace, so the fixture receipt, the
+# build output, the run directories, and the session state all land there rather
+# than in the shared tree.
+cd "${workspace}"
+
+# Provisioning is the checkpoint restore, so the lane starts from exactly the
+# named state rather than from whatever the previous scenario left behind.
+scripts/target reset --lane "${lane_name}" \
+    ${port_arguments[@]+"${port_arguments[@]}"} "${target_name}" "${fixture_name}"
+
+if ((run_author == 0)); then
+    printf '\nSkipping the authoring session (--no-author).\n'
+    printf 'Lane is live at %s\n' "${origin}"
+    exit 0
+fi
+
+if ((keep_instance == 1)); then
+    printf '\nLeaving the lane running (--keep). Inspect or remove it with:\n'
+    printf '  scripts/target status --lane %s %s\n' "${lane_name}" "${target_name}"
+    printf '  scripts/target destroy --lane %s %s\n' "${lane_name}" "${target_name}"
+fi
+
+npm run build --silent
+
+node dist/src/authoring/author-cli.js \
+    --goal "${goal_text}" \
+    --target "${target_name}" \
+    --fixture "${fixture_name}" \
+    --lane "${lane_name}" \
+    --origin "${origin}" \
+    ${forwarded_arguments[@]+"${forwarded_arguments[@]}"}
+
+# The workspace is kept because it holds the artifact and the runs. Report the
+# lane's own work, which is everything the agent changed since its baseline.
+if [[ "${workspace}" != "${ROOT_DIRECTORY}" ]]; then
+    printf '\n--- lane %s workspace ---\n' "${lane_name}"
+    printf 'path: %s\n' "${workspace}"
+    printf 'changed files:\n'
+    git -C "${workspace}" status --short | sed 's/^/  /' || true
+    printf 'diffstat:\n'
+    git -C "${workspace}" diff HEAD --stat | sed 's/^/  /' || true
+fi

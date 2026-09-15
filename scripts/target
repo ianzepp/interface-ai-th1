@@ -22,6 +22,9 @@ Usage:
   scripts/target list [ledgersmb|dolibarr]
   scripts/target destroy <ledgersmb|dolibarr>
 
+  Any command above accepts --lane <name> and --port <n>.
+  scripts/target port <ledgersmb|dolibarr> [--lane <name>]
+
 Commands:
   fresh     Delete only this target's current volumes and create a clean install.
   up        Start or resume the current target state.
@@ -36,6 +39,18 @@ Commands:
 
 Snapshot names must start with a lowercase letter or digit and may contain only
 lowercase letters, digits, dots, underscores, and hyphens.
+
+Lanes:
+
+  A target without --lane is the default instance and keeps the pinned Compose
+  project, volume names, and host port. With --lane <name>, the target runs as a
+  fully isolated instance: its own Compose project, its own volumes, and its own
+  host port. Lane volumes are never shared with the default instance or with
+  another lane, so several scenarios can run side by side.
+
+  The lane port is the target's base port plus a stable offset derived from the
+  lane name. Pass --port to place a lane somewhere else. Snapshots are shared
+  across lanes because a snapshot archives volume contents, not volumes.
 EOF
 }
 
@@ -60,6 +75,59 @@ validate_snapshot_name() {
     local snapshot_name="$1"
     [[ "${snapshot_name}" =~ ^[a-z0-9][a-z0-9._-]*$ ]] ||
         fail "invalid snapshot name '${snapshot_name}'"
+}
+
+validate_lane_name() {
+    local lane_name="$1"
+    [[ "${lane_name}" =~ ^[a-z0-9][a-z0-9-]*$ ]] ||
+        fail "invalid lane name '${lane_name}' (lowercase letters, digits, and hyphens only)"
+}
+
+# A stable offset in 1..99 derived from the lane name, so a lane's port is
+# reproducible from its name alone and two lanes rarely collide. A collision is
+# reported before anything starts rather than being discovered as a bind error.
+lane_port_offset() {
+    local lane_name="$1" total=0 index character
+    for ((index = 0; index < ${#lane_name}; index++)); do
+        printf -v character '%d' "'${lane_name:index:1}"
+        total=$((total + character))
+    done
+    printf '%d' "$(((total % 99) + 1))"
+}
+
+# Refuse to start on a port something already answers on, so the failure names
+# the cause instead of surfacing as a Compose bind error.
+require_free_port() {
+    local port="$1"
+    if (exec 3<>"/dev/tcp/127.0.0.1/${port}") 2>/dev/null; then
+        exec 3>&- 2>/dev/null || true
+        fail "port ${port} is already in use; pass --port to place this lane elsewhere"
+    fi
+}
+
+apply_lane() {
+    local lane_name="$1"
+    local lane_port="$2"
+
+    [[ -n "${TARGET_DEFAULT_PORT:-}" ]] ||
+        fail "target ${TARGET_ID} does not declare a base port for lanes"
+
+    export "${TARGET_PORT_VARIABLE}=${lane_port}"
+    export "${TARGET_VOLUME_PREFIX_VARIABLE}=${TARGET_VOLUME_BASE}-${lane_name}"
+
+    COMPOSE_PROJECT="${TARGET_VOLUME_BASE}-${lane_name}"
+    TARGET_URL="${TARGET_URL_SCHEME}://127.0.0.1:${lane_port}"
+    TARGET_HEALTH_URL="${TARGET_HEALTH_PATH:+${TARGET_URL}${TARGET_HEALTH_PATH}}"
+    [[ -n "${TARGET_HEALTH_URL}" ]] || TARGET_HEALTH_URL="${TARGET_URL}/"
+
+    LANE_NAME="${lane_name}"
+    LANE_PORT="${lane_port}"
+    RUNTIME_DIRECTORY="${RUNTIME_DIRECTORY}/${lane_name}"
+
+    local index
+    for index in "${!VOLUME_KEYS[@]}"; do
+        VOLUME_NAMES[$index]="${TARGET_VOLUME_BASE}-${lane_name}-${VOLUME_KEYS[$index]}"
+    done
 }
 
 require_command() {
@@ -277,7 +345,6 @@ function assertEqual(actual, expected, label) {
         );
     }
 }
-
 assertEqual(manifest.schemaVersion, 1, "schema version");
 assertEqual(manifest.target, expectedTarget, "target");
 assertEqual(manifest.targetVersion, expectedVersion, "target version");
@@ -296,12 +363,16 @@ assertEqual(
     expectedHelper,
     "snapshot helper image",
 );
+// Compare the archive set, not the volume set. A snapshot archives volume
+// *contents*, so the volume it was taken from is provenance while the archive is
+// the thing being restored. Requiring the names to match would make a snapshot
+// restorable only into the exact instance that produced it, which is precisely
+// what a lane is not. The target and version assertions above still reject a
+// snapshot taken from a different application.
 assertEqual(
-    JSON.stringify(
-        manifest.volumes.map(({ volume, archive }) => ({ volume, archive })),
-    ),
-    JSON.stringify(expectedVolumes),
-    "volume set",
+    JSON.stringify(manifest.volumes.map(({ archive }) => archive)),
+    JSON.stringify(expectedVolumes.map(({ archive }) => archive)),
+    "volume archive set",
 );
 
 for (const entry of manifest.volumes) {
@@ -348,6 +419,46 @@ list_snapshots_for_target() {
         -exec basename {} \; | sort | sed "s#^#${requested_target}/#"
 }
 
+# Lane flags are accepted anywhere so every command can be lane-scoped without
+# each command re-implementing the parsing. They are removed before positional
+# handling, which leaves the existing command grammar untouched.
+LANE_NAME=""
+LANE_PORT=""
+lane_requested=""
+port_requested=""
+filtered_arguments=()
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --lane)
+            [[ $# -ge 2 ]] || fail "--lane requires a name"
+            lane_requested="$2"
+            shift 2
+            ;;
+        --lane=*)
+            lane_requested="${1#--lane=}"
+            shift
+            ;;
+        --port)
+            [[ $# -ge 2 ]] || fail "--port requires a number"
+            port_requested="$2"
+            shift 2
+            ;;
+        --port=*)
+            port_requested="${1#--port=}"
+            shift
+            ;;
+        *)
+            filtered_arguments+=("$1")
+            shift
+            ;;
+    esac
+done
+if [[ ${#filtered_arguments[@]} -gt 0 ]]; then
+    set -- "${filtered_arguments[@]}"
+else
+    set --
+fi
+
 command="${1:-help}"
 case "${command}" in
     help | --help | -h)
@@ -372,10 +483,37 @@ esac
 [[ $# -ge 2 ]] || fail "${command} requires a target"
 load_target "$2"
 
+# Resolve the lane after the target is loaded, because the lane's project name,
+# volume names, and port are all derived from that target's pinned base values.
+if [[ -n "${lane_requested}" ]]; then
+    validate_lane_name "${lane_requested}"
+    if [[ -n "${port_requested}" ]]; then
+        [[ "${port_requested}" =~ ^[0-9]+$ ]] ||
+            fail "--port must be a number (received '${port_requested}')"
+        LANE_PORT="${port_requested}"
+    else
+        LANE_PORT="$((TARGET_DEFAULT_PORT + $(lane_port_offset "${lane_requested}")))"
+    fi
+    apply_lane "${lane_requested}" "${LANE_PORT}"
+fi
+
+require_lane_port_free() {
+    [[ -n "${LANE_NAME}" ]] || return 0
+    require_free_port "${LANE_PORT}"
+}
+
 case "${command}" in
     url)
         [[ $# -eq 2 ]] || fail "url accepts exactly one target"
         printf '%s\n' "${TARGET_URL}"
+        ;;
+    port)
+        [[ $# -eq 2 ]] || fail "port accepts exactly one target"
+        if [[ -n "${LANE_NAME}" ]]; then
+            printf '%s\n' "${LANE_PORT}"
+        else
+            printf '%s\n' "${TARGET_DEFAULT_PORT}"
+        fi
         ;;
     config)
         [[ $# -eq 2 ]] || fail "config accepts exactly one target"
@@ -391,6 +529,7 @@ case "${command}" in
     up)
         [[ $# -eq 2 ]] || fail "up accepts exactly one target"
         require_docker
+        require_lane_port_free
         ensure_target_images
         compose up --detach --remove-orphans
         wait_until_ready
@@ -410,6 +549,7 @@ case "${command}" in
     fresh)
         [[ $# -eq 2 ]] || fail "fresh accepts exactly one target"
         require_docker
+        require_lane_port_free
         ensure_target_images
         compose config --quiet
         compose down --volumes --remove-orphans
@@ -478,6 +618,7 @@ case "${command}" in
         validate_snapshot_name "${snapshot_name}"
         require_docker
         require_command node
+        require_lane_port_free
 
         source_directory="${SNAPSHOTS_DIRECTORY}/${TARGET_ID}/${snapshot_name}"
         [[ -d "${source_directory}" ]] || fail "snapshot does not exist: ${TARGET_ID}/${snapshot_name}"

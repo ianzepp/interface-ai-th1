@@ -26,7 +26,7 @@ services:
       - default
       - internal
     ports:
-      - "127.0.0.1:5762:80"
+      - "127.0.0.1:${LEDGERSMB_PORT:-5762}:80"
 
 networks:
   internal:
@@ -34,4 +34,4 @@ networks:
 
 volumes:
   postgres-data:
-    name: interface-ai-ledgersmb-postgres-data
+    name: ${LEDGERSMB_VOLUME_PREFIX:-interface-ai-ledgersmb}-postgres-data
