@@ -91,7 +91,151 @@ scripts/target reset dolibarr demo-baseline
 ```
 
 Use `ledgersmb` in place of `dolibarr` for the other target. The script also
-provides `up`, `stop`, `status`, `config`, `url`, `list`, and `destroy` commands.
+provides `up`, `stop`, `status`, `config`, `url`, `port`, `list`, and `destroy`
+commands, and every command accepts `--lane <name>` and `--port <n>` to operate
+on an isolated instance instead of the default one. See
+[`scripts/author-lane`](#scriptsauthor-lane--one-authoring-session-against-one-private-instance)
+for when that matters.
+
+### `scripts/author-lane` — one authoring session against one private instance
+
+Runs the whole lifecycle around an authoring session: provision an isolated
+Docker instance at a named checkpoint, hand the goal to `scripts/author`, then
+tear the instance down.
+
+```sh
+scripts/author-lane \
+  --lane lookup \
+  --target dolibarr \
+  --fixture demo-install-smoke \
+  --goal "Look up a Dolibarr third party by exact name and return its account profile."
+```
+
+| Option                                                                                  | Meaning                                                            |
+| --------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| `--lane <name>`                                                                         | Lane name. Lowercase letters, digits, and hyphens. Required.       |
+| `--target <name>`                                                                       | `ledgersmb` or `dolibarr`. Required.                               |
+| `--fixture <snapshot>`                                                                  | Snapshot to start from, without the target prefix. Required.       |
+| `--goal <text>`                                                                         | The capability goal. Required.                                     |
+| `--port <n>`                                                                            | Host port. Defaults to one derived from the lane name.             |
+| `--keep`                                                                                | Leave the instance running, and print how to inspect or remove it. |
+| `--no-author`                                                                           | Provision and tear down without an authoring session.              |
+| `--model`, `--max-runs`, `--max-actions`, `--timeout`, `--codex-sandbox`, `--preflight` | Forwarded to `scripts/author`.                                     |
+
+Teardown runs even when the session fails or is interrupted, so a failed lane
+cannot keep a database and a port claimed. Use `--keep` when you want to inspect
+a failure instead.
+
+#### Why a lane at all
+
+A target's default Compose project, volume names, and host port are pinned, so
+two default instances cannot coexist. A lane gets its own project name, its own
+volumes, and its own host port, which lets several scenarios run side by side
+without sharing a database. The snapshot itself is shared: a snapshot archives
+volume _contents_, so the same checkpoint restores into any lane.
+
+Lanes are independent of the default instance too, so a lane can be added while
+the default instance keeps running:
+
+```sh
+scripts/author-lane --lane alpha --target dolibarr \
+  --fixture demo-install-smoke --no-author --keep
+scripts/author-lane --lane beta --target dolibarr \
+  --fixture demo-install-smoke --no-author --keep
+
+scripts/target port --lane alpha dolibarr
+scripts/target destroy --lane alpha dolibarr
+```
+
+Every `scripts/target` command accepts `--lane <name>` and `--port <n>`. Without
+`--lane`, a target behaves exactly as before: the pinned project, volumes, and
+port are untouched.
+
+A lane's session is also given its own origin, because the session's allowlist
+holds exactly one origin and a lane answers on a different port. The allowlist is
+not widened — a session on a lane refuses the default instance's port as firmly
+as it refuses any other.
+
+### `scripts/author` — scripted discovery with an external host
+
+Runs one self-contained authoring session. The script writes a prompt, launches
+the Codex CLI once, and reports what came back. Every decision inside that
+session — which fixture to reset, how many runs to capture, whether an observed
+exception is a business outcome, what the artifact should say — is made by the
+model following
+[`skills/capability-author/SKILL.md`](skills/capability-author/SKILL.md).
+
+```sh
+scripts/author \
+  --goal "Look up a Dolibarr third party by exact name and return its account profile." \
+  --target dolibarr \
+  --fixture demo-install-smoke
+```
+
+The launcher owns nothing about the work. It has no browser, no fixture
+operation, and no socket of its own, which is what makes concurrency possible:
+because a session is one self-contained execution rather than a sequence the
+launcher steps through, several can run at once, each on its own lane.
+
+| Option                   | Meaning                                                  |
+| ------------------------ | -------------------------------------------------------- |
+| `--goal <text>`          | The capability goal. Required.                           |
+| `--target <name>`        | `ledgersmb` or `dolibarr`. Required.                     |
+| `--fixture <snapshot>`   | Starting fixture snapshot name. Required.                |
+| `--lane <name>`          | Lane name; defaults to a timestamped value.              |
+| `--max-runs <n>`         | Recorded runs allowed in total. Defaults to 4.           |
+| `--max-actions <n>`      | Browser actions allowed per run. Defaults to 60.         |
+| `--timeout <ms>`         | Whole-session budget. Defaults to one hour.              |
+| `--model <model>`        | Model passed to `codex exec`.                            |
+| `--codex-sandbox <mode>` | `read-only`, `workspace-write`, or `danger-full-access`. |
+| `--preflight`            | Verify the transport only, without authoring anything.   |
+| `--print-prompt`         | Print the prompt and exit.                               |
+
+Each session writes its prompt, its final message, and its report under
+`tmp/discovery/<lane>/`, so what the model was asked is part of the record.
+
+**Sandbox.** Codex runs with full access by default, because the harness needs
+it: resetting a fixture invokes Docker, and driving the browser means connecting
+to a Unix socket. Both fail inside a restricted sandbox. The trade-off is that
+the model has this machine's permissions inside this repository, so review the
+diff before committing. The prompt forbids committing, and `--codex-sandbox`
+narrows the permissions when a flow does not need Docker.
+
+Start with `--preflight`. It asks the model for one round trip against the
+session and exits, so a transport problem is diagnosed in seconds instead of
+being inferred from a long run that never got anywhere.
+
+### `scripts/session` — the browser hand
+
+The long-lived side of discovery. A session holds one Playwright context, the run
+recorder, the policy gate, and the trace, so it cannot be restarted per action;
+this CLI is how a caller reaches the session that is already running.
+
+```sh
+scripts/session start --target dolibarr --fixture demo-install-smoke --goal "<goal>"
+scripts/session observe [--screenshot]
+scripts/session act --type navigate --url <url> --rationale "<why>"
+scripts/session act --type activate --role button --name Create --rationale "<why>"
+scripts/session act --type fill --css '#username' --value <value> --rationale "<why>"
+scripts/session checkpoint --name <name> [--satisfied true|false]
+scripts/session finish --status satisfied --summary "<what happened>" --checkpoint <name>
+scripts/session finish --status error --summary "<what happened>" --code <code>
+scripts/session status
+scripts/session stop
+```
+
+Targets are given as flags rather than as JSON, because a model composing JSON in
+a shell has to escape selectors and quotes by hand, and one mistake costs a turn.
+Output is rendered rather than echoed as JSON, for the same reason.
+
+Zero exit status means the session answered, including when it answered
+`rejected`; a refusal is an outcome to reason about, not a broken tool. Non-zero
+means the command could not be delivered at all.
+
+The session enforces the target's origin and action allowlists and records a
+proposal before every action, so a refused action leaves evidence rather than a
+gap. Authentication happens before tracing starts, so a fixture credential
+reaches neither the trace nor the ledger.
 
 ### `scripts/promote-run`
 
