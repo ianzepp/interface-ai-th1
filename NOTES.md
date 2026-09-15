@@ -99,3 +99,35 @@ explicitly marked as submission evidence by copying it, unchanged, to
 - Existing evidence is never overwritten implicitly.
 - The run must be reviewed for secrets and unintended customer data first,
   especially inside the Playwright trace.
+
+## 2026-09-15 — Repeatable target fixtures
+
+### Decision
+
+Use one target lifecycle for LedgerSMB and Dolibarr: `fresh`, `up`, `snapshot`,
+`reset`, `stop`, and `destroy`. A named snapshot is a cold archive of every
+persistent Docker volume plus a checksummed manifest.
+
+- LedgerSMB 1.13.7 is pinned with PostgreSQL 15.14.
+- Dolibarr 23.0.4 is pinned with MariaDB 11.4.8 and starts with its official demo
+  data option enabled.
+- Application, database, and snapshot-helper images are pinned by multi-platform
+  digest.
+- LedgerSMB snapshots its PostgreSQL volume.
+- Dolibarr snapshots MariaDB, documents, and custom-module volumes.
+- Every reset validates the snapshot before replacing current state and writes a
+  reset receipt for the later capture loop.
+- Raw snapshots remain local and Git-ignored.
+
+### Rationale
+
+The assignment needs a scalable demonstration, not exhaustive exception
+coverage. Stable named starting points let us run a small, deliberate matrix of
+happy and red scenarios without coupling the capture loop to one application's
+storage layout.
+
+### Still open
+
+- The first reviewed baseline snapshot for each target.
+- Exact synthetic entities and transactions in those baselines.
+- The representative prompt matrix for exploration and evidence capture.

@@ -1,0 +1,59 @@
+services:
+  mariadb:
+    image: mariadb:11.4.8@sha256:bc474f00629f0123c10f9e1bca193a45d18af15a274cf0656acda64f1086c3b6
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    environment:
+      MARIADB_DATABASE: dolidb
+      MARIADB_PASSWORD: interface-ai-local
+      MARIADB_ROOT_PASSWORD: interface-ai-root-local
+      MARIADB_USER: dolidbuser
+    healthcheck:
+      test: ["CMD-SHELL", "healthcheck.sh --connect --innodb_initialized"]
+      interval: 2s
+      timeout: 5s
+      retries: 60
+    networks:
+      - internal
+    volumes:
+      - mariadb-data:/var/lib/mysql
+
+  app:
+    image: dolibarr/dolibarr:23.0.4@sha256:9d7d3d2d4f3922914a224c3042bc102f4ddf9dbdd3ba0900bc2cccfd784324f5
+    depends_on:
+      mariadb:
+        condition: service_healthy
+    environment:
+      DOLI_ADMIN_LOGIN: admin
+      DOLI_ADMIN_PASSWORD: interface-ai-local
+      DOLI_COMPANY_COUNTRYCODE: US
+      DOLI_COMPANY_NAME: Interface AI Fixture Company
+      DOLI_DB_HOST: mariadb
+      DOLI_DB_NAME: dolidb
+      DOLI_DB_PASSWORD: interface-ai-local
+      DOLI_DB_USER: dolidbuser
+      DOLI_INIT_DEMO: "1"
+      DOLI_INSTALL_AUTO: "1"
+      DOLI_INSTANCE_UNIQUE_ID: interface-ai-take-home-fixture
+      DOLI_URL_ROOT: http://127.0.0.1:8080
+    networks:
+      - default
+      - internal
+    ports:
+      - "127.0.0.1:8080:80"
+    volumes:
+      - documents:/var/www/documents
+      - custom:/var/www/html/custom
+
+networks:
+  internal:
+    internal: true
+
+volumes:
+  mariadb-data:
+    name: interface-ai-dolibarr-mariadb-data
+  documents:
+    name: interface-ai-dolibarr-documents
+  custom:
+    name: interface-ai-dolibarr-custom

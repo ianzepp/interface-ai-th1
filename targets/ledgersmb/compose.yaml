@@ -1,0 +1,37 @@
+services:
+  postgres:
+    image: postgres:15.14-alpine@sha256:64583b3cb4f2010277bdd9749456de78e5c36f8956466ba14b0b96922e510950
+    environment:
+      PGDATA: /var/lib/postgresql/data/pgdata
+      POSTGRES_PASSWORD: interface-ai-local
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 2s
+      timeout: 5s
+      retries: 60
+    networks:
+      - internal
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  app:
+    image: ghcr.io/ledgersmb/ledgersmb:1.13.7@sha256:3cd34ddb5bca4b1ab90c10079ca48ef0c4904bf120909e3885f0e41293b70e99
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      LSMB_WORKERS: "2"
+      POSTGRES_PASSWORD: interface-ai-local
+    networks:
+      - default
+      - internal
+    ports:
+      - "127.0.0.1:5762:80"
+
+networks:
+  internal:
+    internal: true
+
+volumes:
+  postgres-data:
+    name: interface-ai-ledgersmb-postgres-data

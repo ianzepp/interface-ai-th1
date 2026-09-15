@@ -1,0 +1,21 @@
+TARGET_ID="dolibarr"
+TARGET_DISPLAY_NAME="Dolibarr"
+TARGET_VERSION="23.0.4"
+TARGET_URL="http://127.0.0.1:8080"
+TARGET_HEALTH_URL="${TARGET_URL}/"
+COMPOSE_PROJECT="interface-ai-dolibarr"
+APP_SERVICE="app"
+DATABASE_SERVICE="mariadb"
+APP_IMAGE_REF="dolibarr/dolibarr:23.0.4@sha256:9d7d3d2d4f3922914a224c3042bc102f4ddf9dbdd3ba0900bc2cccfd784324f5"
+DATABASE_IMAGE_REF="mariadb:11.4.8@sha256:bc474f00629f0123c10f9e1bca193a45d18af15a274cf0656acda64f1086c3b6"
+VOLUME_NAMES=(
+    "interface-ai-dolibarr-mariadb-data"
+    "interface-ai-dolibarr-documents"
+    "interface-ai-dolibarr-custom"
+)
+VOLUME_KEYS=("mariadb-data" "documents" "custom")
+VOLUME_FILES=(
+    "mariadb-data.tar.gz"
+    "documents.tar.gz"
+    "custom.tar.gz"
+)

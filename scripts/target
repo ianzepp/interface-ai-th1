@@ -1,0 +1,504 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+ROOT_DIRECTORY="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SNAPSHOTS_DIRECTORY="${ROOT_DIRECTORY}/snapshots"
+RUNTIME_DIRECTORY="${ROOT_DIRECTORY}/tmp/targets"
+SNAPSHOT_HELPER_IMAGE="alpine:3.22.1@sha256:4bcff63911fcb4448bd4fdacec207030997caf25e9bea4045fa6c8c44de311d1"
+START_TIMEOUT_SECONDS="${TARGET_START_TIMEOUT_SECONDS:-300}"
+
+usage() {
+    cat <<'EOF'
+Usage:
+  scripts/target fresh <ledgersmb|dolibarr>
+  scripts/target up <ledgersmb|dolibarr>
+  scripts/target stop <ledgersmb|dolibarr>
+  scripts/target snapshot <ledgersmb|dolibarr> <name>
+  scripts/target reset <ledgersmb|dolibarr> <name>
+  scripts/target status <ledgersmb|dolibarr>
+  scripts/target config <ledgersmb|dolibarr>
+  scripts/target url <ledgersmb|dolibarr>
+  scripts/target list [ledgersmb|dolibarr]
+  scripts/target destroy <ledgersmb|dolibarr>
+
+Commands:
+  fresh     Delete only this target's current volumes and create a clean install.
+  up        Start or resume the current target state.
+  stop      Stop containers while preserving their volumes.
+  snapshot  Stop briefly, archive every persistent volume, then restart.
+  reset     Validate a named snapshot, replace current volumes, and restore it.
+  status    Show this target's Compose services.
+  config    Validate the pinned Compose configuration.
+  url       Print the browser entry point.
+  list      List local snapshot IDs.
+  destroy   Delete only this target's containers and persistent volumes.
+
+Snapshot names must start with a lowercase letter or digit and may contain only
+lowercase letters, digits, dots, underscores, and hyphens.
+EOF
+}
+
+fail() {
+    printf 'error: %s\n' "$*" >&2
+    exit 1
+}
+
+load_target() {
+    local requested_target="$1"
+    case "${requested_target}" in
+        ledgersmb | dolibarr) ;;
+        *) fail "unknown target '${requested_target}' (expected ledgersmb or dolibarr)" ;;
+    esac
+
+    # shellcheck source=/dev/null
+    source "${ROOT_DIRECTORY}/targets/${requested_target}/target.sh"
+    COMPOSE_FILE="${ROOT_DIRECTORY}/targets/${requested_target}/compose.yaml"
+}
+
+validate_snapshot_name() {
+    local snapshot_name="$1"
+    [[ "${snapshot_name}" =~ ^[a-z0-9][a-z0-9._-]*$ ]] ||
+        fail "invalid snapshot name '${snapshot_name}'"
+}
+
+require_command() {
+    command -v "$1" >/dev/null 2>&1 || fail "required command not found: $1"
+}
+
+require_docker() {
+    require_command docker
+    docker info >/dev/null 2>&1 || fail "Docker is installed but not running"
+    docker compose version >/dev/null 2>&1 || fail "Docker Compose v2 is required"
+}
+
+compose() {
+    docker compose --project-name "${COMPOSE_PROJECT}" --file "${COMPOSE_FILE}" "$@"
+}
+
+ensure_image() {
+    local image_ref="$1"
+    if ! docker image inspect "${image_ref}" >/dev/null 2>&1; then
+        docker pull "${image_ref}"
+    fi
+}
+
+ensure_target_images() {
+    ensure_image "${DATABASE_IMAGE_REF}"
+    ensure_image "${APP_IMAGE_REF}"
+}
+
+wait_until_ready() {
+    require_command curl
+    local deadline=$((SECONDS + START_TIMEOUT_SECONDS))
+    while ((SECONDS < deadline)); do
+        if curl --fail --silent --show-error --location --max-time 5 \
+            "${TARGET_HEALTH_URL}" >/dev/null 2>&1; then
+            printf '%s %s is ready at %s\n' \
+                "${TARGET_DISPLAY_NAME}" "${TARGET_VERSION}" "${TARGET_URL}"
+            return 0
+        fi
+        sleep 2
+    done
+
+    compose ps >&2 || true
+    compose logs --tail 80 >&2 || true
+    fail "${TARGET_DISPLAY_NAME} did not become ready within ${START_TIMEOUT_SECONDS}s"
+}
+
+volume_exists() {
+    docker volume inspect "$1" >/dev/null 2>&1
+}
+
+archive_volume() {
+    local volume_name="$1"
+    local archive_directory="$2"
+    local archive_name="$3"
+    docker run --rm \
+        --mount "type=volume,source=${volume_name},target=/source,readonly" \
+        --mount "type=bind,source=${archive_directory},target=/backup" \
+        "${SNAPSHOT_HELPER_IMAGE}" \
+        tar -C /source -czf "/backup/${archive_name}" .
+}
+
+restore_volume() {
+    local volume_name="$1"
+    local volume_key="$2"
+    local archive_directory="$3"
+    local archive_name="$4"
+    docker volume create \
+        --label com.interface-ai.take-home.target="${TARGET_ID}" \
+        --label com.docker.compose.project="${COMPOSE_PROJECT}" \
+        --label com.docker.compose.volume="${volume_key}" \
+        "${volume_name}" >/dev/null
+    docker run --rm \
+        --mount "type=volume,source=${volume_name},target=/restore" \
+        --mount "type=bind,source=${archive_directory},target=/backup,readonly" \
+        "${SNAPSHOT_HELPER_IMAGE}" \
+        tar -C /restore -xzpf "/backup/${archive_name}"
+}
+
+resolved_image_id() {
+    local service="$1"
+    local container_id
+    container_id="$(compose ps --all --quiet "${service}")"
+    [[ -n "${container_id}" ]] || fail "no container exists for service '${service}'"
+    docker inspect --format '{{.Image}}' "${container_id}"
+}
+
+write_manifest() {
+    local directory="$1"
+    local snapshot_name="$2"
+    local app_image_id="$3"
+    local database_image_id="$4"
+    local volume_arguments=()
+    local index
+    for index in "${!VOLUME_NAMES[@]}"; do
+        volume_arguments+=("${VOLUME_NAMES[$index]}=${VOLUME_FILES[$index]}")
+    done
+
+    node --input-type=module - \
+        "${directory}" \
+        "${TARGET_ID}" \
+        "${snapshot_name}" \
+        "${TARGET_VERSION}" \
+        "${TARGET_URL}" \
+        "${APP_IMAGE_REF}" \
+        "${app_image_id}" \
+        "${DATABASE_IMAGE_REF}" \
+        "${database_image_id}" \
+        "${SNAPSHOT_HELPER_IMAGE}" \
+        "${volume_arguments[@]}" <<'NODE'
+import { createHash } from "node:crypto";
+import { readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+
+const [
+    directory,
+    target,
+    name,
+    targetVersion,
+    baseUrl,
+    applicationReference,
+    applicationImageId,
+    databaseReference,
+    databaseImageId,
+    helperReference,
+    ...volumeArguments
+] = process.argv.slice(2);
+
+const volumes = [];
+for (const argument of volumeArguments) {
+    const separator = argument.indexOf("=");
+    const volume = argument.slice(0, separator);
+    const archive = argument.slice(separator + 1);
+    const contents = await readFile(join(directory, archive));
+    volumes.push({
+        volume,
+        archive,
+        sha256: createHash("sha256").update(contents).digest("hex"),
+    });
+}
+
+const manifest = {
+    schemaVersion: 1,
+    snapshotId: `${target}/${name}`,
+    target,
+    targetVersion,
+    createdAt: new Date().toISOString(),
+    baseUrl,
+    images: {
+        application: {
+            reference: applicationReference,
+            imageId: applicationImageId,
+        },
+        database: {
+            reference: databaseReference,
+            imageId: databaseImageId,
+        },
+        snapshotHelper: { reference: helperReference },
+    },
+    volumes,
+};
+
+await writeFile(
+    join(directory, "manifest.json"),
+    `${JSON.stringify(manifest, null, 4)}\n`,
+    "utf8",
+);
+NODE
+}
+
+verify_manifest() {
+    local directory="$1"
+    local volume_arguments=()
+    local index
+    for index in "${!VOLUME_NAMES[@]}"; do
+        volume_arguments+=("${VOLUME_NAMES[$index]}=${VOLUME_FILES[$index]}")
+    done
+
+    node --input-type=module - \
+        "${directory}" \
+        "${TARGET_ID}" \
+        "${TARGET_VERSION}" \
+        "${APP_IMAGE_REF}" \
+        "${DATABASE_IMAGE_REF}" \
+        "${SNAPSHOT_HELPER_IMAGE}" \
+        "${volume_arguments[@]}" <<'NODE'
+import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+
+const [
+    directory,
+    expectedTarget,
+    expectedVersion,
+    expectedApplication,
+    expectedDatabase,
+    expectedHelper,
+    ...expectedVolumeArguments
+] = process.argv.slice(2);
+
+const manifest = JSON.parse(
+    await readFile(join(directory, "manifest.json"), "utf8"),
+);
+const expectedVolumes = expectedVolumeArguments.map((argument) => {
+    const separator = argument.indexOf("=");
+    return {
+        volume: argument.slice(0, separator),
+        archive: argument.slice(separator + 1),
+    };
+});
+
+function assertEqual(actual, expected, label) {
+    if (actual !== expected) {
+        throw new Error(
+            `${label} mismatch: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`,
+        );
+    }
+}
+
+assertEqual(manifest.schemaVersion, 1, "schema version");
+assertEqual(manifest.target, expectedTarget, "target");
+assertEqual(manifest.targetVersion, expectedVersion, "target version");
+assertEqual(
+    manifest.images?.application?.reference,
+    expectedApplication,
+    "application image",
+);
+assertEqual(
+    manifest.images?.database?.reference,
+    expectedDatabase,
+    "database image",
+);
+assertEqual(
+    manifest.images?.snapshotHelper?.reference,
+    expectedHelper,
+    "snapshot helper image",
+);
+assertEqual(
+    JSON.stringify(
+        manifest.volumes.map(({ volume, archive }) => ({ volume, archive })),
+    ),
+    JSON.stringify(expectedVolumes),
+    "volume set",
+);
+
+for (const entry of manifest.volumes) {
+    const contents = await readFile(join(directory, entry.archive));
+    const actualHash = createHash("sha256").update(contents).digest("hex");
+    assertEqual(actualHash, entry.sha256, `${entry.archive} checksum`);
+}
+NODE
+}
+
+write_reset_receipt() {
+    local snapshot_directory="$1"
+    local snapshot_name="$2"
+    local receipt_directory="${RUNTIME_DIRECTORY}/${TARGET_ID}"
+    mkdir -p "${receipt_directory}"
+
+    node --input-type=module - \
+        "${snapshot_directory}/manifest.json" \
+        "${receipt_directory}/last-reset.json" \
+        "${TARGET_ID}/${snapshot_name}" <<'NODE'
+import { createHash } from "node:crypto";
+import { readFile, writeFile } from "node:fs/promises";
+
+const [manifestPath, receiptPath, snapshotId] = process.argv.slice(2);
+const manifest = await readFile(manifestPath);
+const receipt = {
+    schemaVersion: 1,
+    operation: "reset",
+    snapshotId,
+    completedAt: new Date().toISOString(),
+    manifestSha256: createHash("sha256").update(manifest).digest("hex"),
+};
+await writeFile(receiptPath, `${JSON.stringify(receipt, null, 4)}\n`, "utf8");
+NODE
+
+    printf 'Reset receipt: %s\n' "${receipt_directory}/last-reset.json"
+}
+
+list_snapshots_for_target() {
+    local requested_target="$1"
+    local target_directory="${SNAPSHOTS_DIRECTORY}/${requested_target}"
+    [[ -d "${target_directory}" ]] || return 0
+    find "${target_directory}" -mindepth 1 -maxdepth 1 -type d ! -name '.*' \
+        -exec basename {} \; | sort | sed "s#^#${requested_target}/#"
+}
+
+command="${1:-help}"
+case "${command}" in
+    help | --help | -h)
+        usage
+        exit 0
+        ;;
+    list)
+        if [[ $# -gt 2 ]]; then
+            fail "list accepts at most one target"
+        fi
+        if [[ $# -eq 2 ]]; then
+            load_target "$2"
+            list_snapshots_for_target "${TARGET_ID}"
+        else
+            list_snapshots_for_target ledgersmb
+            list_snapshots_for_target dolibarr
+        fi
+        exit 0
+        ;;
+esac
+
+[[ $# -ge 2 ]] || fail "${command} requires a target"
+load_target "$2"
+
+case "${command}" in
+    url)
+        [[ $# -eq 2 ]] || fail "url accepts exactly one target"
+        printf '%s\n' "${TARGET_URL}"
+        ;;
+    config)
+        [[ $# -eq 2 ]] || fail "config accepts exactly one target"
+        require_docker
+        compose config --quiet
+        printf '%s configuration is valid\n' "${TARGET_DISPLAY_NAME}"
+        ;;
+    status)
+        [[ $# -eq 2 ]] || fail "status accepts exactly one target"
+        require_docker
+        compose ps
+        ;;
+    up)
+        [[ $# -eq 2 ]] || fail "up accepts exactly one target"
+        require_docker
+        ensure_target_images
+        compose up --detach --remove-orphans
+        wait_until_ready
+        ;;
+    stop)
+        [[ $# -eq 2 ]] || fail "stop accepts exactly one target"
+        require_docker
+        compose stop
+        ;;
+    destroy)
+        [[ $# -eq 2 ]] || fail "destroy accepts exactly one target"
+        require_docker
+        compose down --volumes --remove-orphans
+        printf '%s containers and persistent volumes were deleted\n' \
+            "${TARGET_DISPLAY_NAME}"
+        ;;
+    fresh)
+        [[ $# -eq 2 ]] || fail "fresh accepts exactly one target"
+        require_docker
+        ensure_target_images
+        compose config --quiet
+        compose down --volumes --remove-orphans
+        compose up --detach --remove-orphans
+        wait_until_ready
+        printf 'Fresh state is live; capture it with: scripts/target snapshot %s <name>\n' \
+            "${TARGET_ID}"
+        ;;
+    snapshot)
+        [[ $# -eq 3 ]] || fail "snapshot requires a target and name"
+        snapshot_name="$3"
+        validate_snapshot_name "${snapshot_name}"
+        require_docker
+        require_command node
+        ensure_image "${SNAPSHOT_HELPER_IMAGE}"
+
+        destination="${SNAPSHOTS_DIRECTORY}/${TARGET_ID}/${snapshot_name}"
+        [[ ! -e "${destination}" ]] || fail "snapshot already exists: ${TARGET_ID}/${snapshot_name}"
+        for volume_name in "${VOLUME_NAMES[@]}"; do
+            volume_exists "${volume_name}" || fail "target volume does not exist: ${volume_name}"
+        done
+
+        app_image_id="$(resolved_image_id "${APP_SERVICE}")"
+        database_image_id="$(resolved_image_id "${DATABASE_SERVICE}")"
+        mkdir -p "${SNAPSHOTS_DIRECTORY}/${TARGET_ID}"
+        temporary_directory="$(mktemp -d "${SNAPSHOTS_DIRECTORY}/${TARGET_ID}/.snapshot-${snapshot_name}.XXXXXX")"
+
+        compose stop
+        snapshot_status=0
+        set +e
+        for index in "${!VOLUME_NAMES[@]}"; do
+            archive_volume \
+                "${VOLUME_NAMES[$index]}" \
+                "${temporary_directory}" \
+                "${VOLUME_FILES[$index]}"
+            snapshot_status=$?
+            ((snapshot_status == 0)) || break
+        done
+
+        if ((snapshot_status == 0)); then
+            write_manifest \
+                "${temporary_directory}" \
+                "${snapshot_name}" \
+                "${app_image_id}" \
+                "${database_image_id}"
+            snapshot_status=$?
+        fi
+        if ((snapshot_status == 0)); then
+            mv "${temporary_directory}" "${destination}"
+            snapshot_status=$?
+        fi
+        set -e
+
+        if [[ -d "${temporary_directory}" ]]; then
+            rm -rf "${temporary_directory}"
+        fi
+
+        compose up --detach --remove-orphans
+        wait_until_ready
+        ((snapshot_status == 0)) || fail "snapshot creation failed; the target was restarted unchanged"
+        printf 'Created snapshot %s/%s\n' "${TARGET_ID}" "${snapshot_name}"
+        ;;
+    reset)
+        [[ $# -eq 3 ]] || fail "reset requires a target and name"
+        snapshot_name="$3"
+        validate_snapshot_name "${snapshot_name}"
+        require_docker
+        require_command node
+
+        source_directory="${SNAPSHOTS_DIRECTORY}/${TARGET_ID}/${snapshot_name}"
+        [[ -d "${source_directory}" ]] || fail "snapshot does not exist: ${TARGET_ID}/${snapshot_name}"
+        verify_manifest "${source_directory}"
+        ensure_target_images
+        ensure_image "${SNAPSHOT_HELPER_IMAGE}"
+        compose config --quiet
+
+        compose down --volumes --remove-orphans
+        for index in "${!VOLUME_NAMES[@]}"; do
+            restore_volume \
+                "${VOLUME_NAMES[$index]}" \
+                "${VOLUME_KEYS[$index]}" \
+                "${source_directory}" \
+                "${VOLUME_FILES[$index]}"
+        done
+        compose up --detach --remove-orphans
+        wait_until_ready
+        write_reset_receipt "${source_directory}" "${snapshot_name}"
+        ;;
+    *)
+        fail "unknown command '${command}' (run scripts/target --help)"
+        ;;
+esac

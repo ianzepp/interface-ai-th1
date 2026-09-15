@@ -5,7 +5,7 @@ export const dolibarrProfile: TargetProfile = {
     id: "dolibarr",
     displayName: "Dolibarr",
     surface: "browser",
-    supportedVersions: [],
-    allowedOrigins: ["http://localhost:8080"],
+    supportedVersions: ["23.0.4"],
+    allowedOrigins: ["http://127.0.0.1:8080"],
     globalDetectors: dolibarrDetectors,
 };

@@ -34,6 +34,33 @@ Before touching the browser, establish:
 If the fixture cannot be reset, record an error run. Do not silently reuse the
 state left by an earlier attempt.
 
+## Fixture Lifecycle
+
+Use the same target harness for LedgerSMB and Dolibarr. A fixture is a complete,
+named snapshot of every persistent Docker volume, not a browser storage state or
+a committed container layer.
+
+```sh
+# Create a clean install for initial exploration.
+scripts/target fresh <ledgersmb|dolibarr>
+
+# After arranging useful synthetic data, freeze that starting point.
+scripts/target snapshot <ledgersmb|dolibarr> <snapshot-name>
+
+# Before every test run, return to exactly that starting point.
+scripts/target reset <ledgersmb|dolibarr> <snapshot-name>
+```
+
+Use `<target>/<snapshot-name>` as the run's fixture identifier. A successful
+reset writes `tmp/targets/<target>/last-reset.json`; treat that receipt and the
+snapshot manifest as the evidence that reset completed. Start a new isolated
+Playwright browser context only after the target is healthy and the receipt
+exists.
+
+`fresh` and `reset` delete only the selected target's current Docker volumes.
+Never run them during an active capture. Use `up` and `stop` when the current
+working state must be preserved.
+
 ## Test Run Lifecycle
 
 1. Reset the target fixture.

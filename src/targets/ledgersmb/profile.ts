@@ -5,7 +5,7 @@ export const ledgerSmbProfile: TargetProfile = {
     id: "ledgersmb",
     displayName: "LedgerSMB",
     surface: "browser",
-    supportedVersions: [],
-    allowedOrigins: ["http://localhost:5762"],
+    supportedVersions: ["1.13.7"],
+    allowedOrigins: ["http://127.0.0.1:5762"],
     globalDetectors: ledgerSmbDetectors,
 };

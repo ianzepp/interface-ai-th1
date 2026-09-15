@@ -38,8 +38,24 @@ The toolchain is in place and enforced by CI: strict TypeScript, type-aware
 ESLint, Prettier, and EditorConfig, all run by `npm run verify`.
 
 LedgerSMB and Dolibarr are both first-class local browser targets. Their versions,
-detectors, fixtures, and representative workflows remain to be grounded through
-live inspection.
+Docker images, local origins, and complete persistent state boundaries are now
+pinned. Their detectors, named fixture contents, and representative workflows
+remain to be grounded through live inspection.
+
+Both targets use one snapshot lifecycle:
+
+```sh
+scripts/target fresh dolibarr
+# Explore or arrange synthetic fixture data in the browser.
+scripts/target snapshot dolibarr demo-baseline
+scripts/target reset dolibarr demo-baseline
+```
+
+Replace `dolibarr` with `ledgersmb` to use the same lifecycle there. `fresh` and
+`reset` are destructive only to the selected target's local Docker volumes.
+Named snapshots live under `snapshots/<target>/<name>/`, include a checksummed
+manifest, and are ignored by Git. Run `scripts/target --help` for non-destructive
+start, stop, status, URL, and snapshot-listing commands.
 
 Stage-graph synthesis and deterministic replay are explicitly deferred until the
 capture corpus is useful.
@@ -81,9 +97,9 @@ to 7 in a single dependency bump.
 
 ## Next Actions
 
-- Select and pin LedgerSMB and Dolibarr versions.
-- Launch both applications and replace target-profile stubs with observed facts.
-- Define the smallest capture scenario and fixture reset contract.
+- Launch both applications and replace target-profile detector stubs with observed facts.
+- Create and inspect the first named baseline snapshot for each target.
+- Select the smallest capture scenario against each grounded baseline.
 - Wire the model-driven computer-use loop to the run recorder.
 - Capture happy-path and deliberate error runs for both targets.
 - Turn every must-have requirement into an executable acceptance check.
