@@ -13,7 +13,10 @@ for (const schemaFile of schemaFiles) {
     const source = await readFile(`schemas/${schemaFile}`, "utf8");
     const schema = JSON.parse(source) as Record<string, unknown>;
 
-    assert.equal(schema.$schema, "https://json-schema.org/draft/2020-12/schema");
+    assert.equal(
+      schema.$schema,
+      "https://json-schema.org/draft/2020-12/schema",
+    );
     assert.equal(typeof schema.$id, "string");
   });
 }

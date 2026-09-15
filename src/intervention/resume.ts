@@ -10,8 +10,8 @@ export type ResumeDecision =
   | { type: "complete" }
   | { type: "reject"; reason: string };
 
-export async function evaluateResume(
+export function evaluateResume(
   _checkpoint: ResumeCheckpoint,
 ): Promise<ResumeDecision> {
-  throw new Error("evaluateResume is not implemented");
+  return Promise.reject(new Error("evaluateResume is not implemented"));
 }

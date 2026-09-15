@@ -6,9 +6,11 @@ export interface ArtifactCompiler {
 }
 
 export class GroundedArtifactCompiler implements ArtifactCompiler {
-  public async compile(
+  public compile(
     _events: readonly DiscoveryEvent[],
   ): Promise<CapabilityArtifact> {
-    throw new Error("GroundedArtifactCompiler.compile is not implemented");
+    return Promise.reject(
+      new Error("GroundedArtifactCompiler.compile is not implemented"),
+    );
   }
 }

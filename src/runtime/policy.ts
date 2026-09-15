@@ -1,7 +1,4 @@
-import type {
-  ActionRisk,
-  SurfaceAction,
-} from "../surfaces/surface-driver.js";
+import type { ActionRisk, SurfaceAction } from "../surfaces/surface-driver.js";
 
 export interface PolicyConfiguration {
   allowedOrigins: readonly string[];

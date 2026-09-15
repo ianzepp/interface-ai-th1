@@ -32,11 +32,12 @@ export interface EventRecorder {
 export class InMemoryEventRecorder implements EventRecorder {
   readonly #events: DiscoveryEvent[] = [];
 
-  public async append(event: DiscoveryEvent): Promise<void> {
+  public append(event: DiscoveryEvent): Promise<void> {
     this.#events.push(event);
+    return Promise.resolve();
   }
 
-  public async readAll(): Promise<readonly DiscoveryEvent[]> {
-    return [...this.#events];
+  public readAll(): Promise<readonly DiscoveryEvent[]> {
+    return Promise.resolve([...this.#events]);
   }
 }

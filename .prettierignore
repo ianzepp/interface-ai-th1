@@ -1,0 +1,7 @@
+node_modules/
+dist/
+tmp/
+package-lock.json
+
+# Captured run evidence is data, not source. Never reformat it.
+evidence/

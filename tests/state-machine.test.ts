@@ -32,5 +32,8 @@ test("selects the declared transition for a known state", () => {
 });
 
 test("routes an unknown state to the declared fallback", () => {
-  assert.deepEqual(selectDestination(stage, "unexpected-dialog"), stage.otherwise);
+  assert.deepEqual(
+    selectDestination(stage, "unexpected-dialog"),
+    stage.otherwise,
+  );
 });

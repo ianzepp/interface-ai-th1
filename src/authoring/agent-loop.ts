@@ -20,16 +20,16 @@ export interface DiscoveryAgent {
 
 export class ComputerUseDiscoveryAgent implements DiscoveryAgent {
   public constructor(
-    private readonly driver: SurfaceDriver,
-    private readonly recorder: EventRecorder,
+    public readonly driver: SurfaceDriver,
+    public readonly recorder: EventRecorder,
   ) {}
 
-  public async discover(
+  public discover(
     _contract: GoalContract,
     _limits: DiscoveryLimits,
   ): Promise<void> {
-    void this.driver;
-    void this.recorder;
-    throw new Error("ComputerUseDiscoveryAgent.discover is not implemented");
+    return Promise.reject(
+      new Error("ComputerUseDiscoveryAgent.discover is not implemented"),
+    );
   }
 }

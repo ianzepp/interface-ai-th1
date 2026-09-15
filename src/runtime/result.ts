@@ -7,7 +7,9 @@ export interface FailureDetail {
   evidence: readonly EvidenceReference[];
 }
 
-export type RunResult<Outputs extends Record<string, unknown> = Record<string, unknown>> =
+export type RunResult<
+  Outputs extends Record<string, unknown> = Record<string, unknown>,
+> =
   | { type: "success"; outputs: Outputs }
   | { type: "business-outcome"; code: string; details: Record<string, unknown> }
   | { type: "intervention-required"; requestId: string; code: string }
