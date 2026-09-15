@@ -50,9 +50,16 @@ test("persists a completed test run and its brief README", async (context) => {
 
     assert.equal(manifest.status, "satisfied");
     assert.equal(manifest.finishedAt, "2026-09-15T14:01:00.000Z");
+    assert.deepEqual(manifest.files, {
+        readme: "README.md",
+        events: "events.jsonl",
+        trace: "trace.zip",
+        screenshots: "screenshots/",
+    });
     assert.match(readme, /Status: `satisfied`/);
     assert.match(readme, /Known customer in the baseline fixture/);
     assert.match(readme, /The requested balance was visible/);
+    assert.match(readme, /`screenshots\/`/);
     assert.equal(events.trim().split("\n").length, 1);
 });
 

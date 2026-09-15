@@ -89,6 +89,24 @@ directory without modifying the originals or overwriting existing evidence.
 scripts/promote-run <run-id> [<run-id> ...]
 ```
 
+### LedgerSMB initialization capture pilot
+
+Build the pilot, replace the current LedgerSMB volumes with a fresh install,
+and record the complete company-and-user initialization as one run:
+
+```sh
+npm run capture:ledgersmb:initialize
+```
+
+The command writes a finalized run under `runs/`, including its event ledger,
+Playwright trace, and checkpoint screenshots. It deliberately does not create a
+snapshot. After reviewing and verifying a satisfied run, freeze the initialized
+fixture separately:
+
+```sh
+scripts/target snapshot ledgersmb initialized-company
+```
+
 ## Development
 
 Requires Node 24 or newer.

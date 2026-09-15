@@ -132,14 +132,20 @@ storage layout.
 - Exact synthetic entities and transactions in those baselines.
 - The representative prompt matrix for exploration and evidence capture.
 
-## 2026-09-15 — Three-phase LedgerSMB capability corpus
+## 2026-09-15 — Four-phase LedgerSMB capability corpus
 
 ### Decision
 
-Use three bounded LedgerSMB capabilities as the core training, recording, and
-replay corpus. Each capability starts from a named snapshot, ends at a named
+Use four bounded LedgerSMB capabilities as the core training, recording, and
+replay corpus. Each capability starts from a named state, ends at a named
 snapshot, and is recorded as an independent run.
 
+0. `initialize-company`
+   - Start: fresh LedgerSMB Docker volumes created by `scripts/target fresh`.
+   - Create the company database, select the chart of accounts and templates,
+     create the initial administrator with the required permissions, log in, and
+     verify that the application is usable.
+   - End: `initialized-company`
 1. `create-trading-partners`
    - Start: `initialized-company`
    - Create the synthetic customer and vendor with valid customer/vendor account
@@ -159,6 +165,8 @@ snapshot, and is recorded as an independent run.
 The snapshot progression is therefore:
 
 ```text
+fresh Docker volumes
+  -> initialize-company
 initialized-company
   -> create-trading-partners
 partners-ready
@@ -170,7 +178,8 @@ clean-baseline-v1
 
 ### Recording contract
 
-- Reset to the capability's named starting snapshot before every attempt.
+- Invoke `fresh` for every `initialize-company` attempt. Reset to the named
+  starting snapshot for every later capability attempt.
 - Treat each reset-to-terminal attempt as a separate run.
 - Capture the prompt, reset receipt, manifest, event ledger, Playwright trace,
   meaningful checkpoint screenshots, outcome, and run README.
@@ -191,3 +200,24 @@ replay actions or control-flow inputs.
 The first successful Playwright trace is evidence, not the specification. The
 stage graph should be compiled only after repeated recordings expose the stable
 actions, observations, terminal conditions, and known exception shapes.
+
+### Phase-zero replay pilot
+
+Use `initialize-company` as the first deterministic engine pilot because it has
+an exact empty starting condition and an unambiguous authenticated terminal
+condition. The pilot must establish the minimum reusable engine behavior:
+
+- validate its starting state and allowed origin;
+- resolve stable semantic targets and enter typed inputs;
+- wait for navigations and asynchronous application transitions;
+- detect expected screens and terminal checkpoints;
+- preserve a complete run when a stage fails;
+- redact sensitive inputs from durable event evidence;
+- verify the resulting company, user, permissions, and usable landing page; and
+- create `initialized-company` only after all verification passes.
+
+Docker `fresh` and `snapshot` operations belong to the surrounding harness, not
+the browser stage graph. Browser authentication is part of `initialize-company`
+because it proves the created account works. Later capabilities should use a
+small authentication bootstrap or validated browser storage state rather than
+recording login as part of every business workflow.

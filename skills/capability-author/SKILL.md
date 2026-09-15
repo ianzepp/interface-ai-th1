@@ -57,6 +57,14 @@ snapshot manifest as the evidence that reset completed. Start a new isolated
 Playwright browser context only after the target is healthy and the receipt
 exists.
 
+Visible controls and state markers have different wait semantics. A hidden
+field, metadata node, URL change, or response can prove that the application
+advanced without ever becoming visible. Wait for a visible state only when the
+user could actually perceive that state; wait for attachment or value change
+when application-owned hidden state is the intended signal. Record the
+observation after the transition signal is satisfied, not immediately after the
+click that initiated it.
+
 `fresh` and `reset` delete only the selected target's current Docker volumes.
 Never run them during an active capture. Use `up` and `stop` when the current
 working state must be preserved.
@@ -180,7 +188,8 @@ runs/<run-id>/
 ├── README.md
 ├── run.json
 ├── events.jsonl
-└── trace.zip
+├── trace.zip
+└── screenshots/
 ```
 
 - `README.md` is the brief human account of the goal, situation, target,
@@ -188,6 +197,8 @@ runs/<run-id>/
 - `run.json` is the structured lifecycle record.
 - `events.jsonl` is the ordered, sanitized event ledger.
 - `trace.zip` is the Playwright trace for visual and DOM inspection.
+- `screenshots/` contains meaningful checkpoints and the last useful terminal
+  state when those images were captured.
 
 Write the README when the run starts and update it when the run ends. A crashed
 process should therefore leave a recognizable `running` run rather than an

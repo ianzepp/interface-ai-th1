@@ -73,6 +73,7 @@ export interface TestRunManifest {
         readme: "README.md";
         events: "events.jsonl";
         trace: "trace.zip";
+        screenshots: "screenshots/";
     };
 }
 
@@ -129,6 +130,7 @@ export class FileTestRunRecorder implements EventRecorder {
                 readme: "README.md",
                 events: "events.jsonl",
                 trace: "trace.zip",
+                screenshots: "screenshots/",
             },
         };
         const recorder = new FileTestRunRecorder(
@@ -253,5 +255,6 @@ ${outcomeBody}
 - \`run.json\` — structured run metadata and outcome
 - \`events.jsonl\` — sanitized observations, decisions, and executed actions
 - \`trace.zip\` — Playwright trace when capture completed
+- \`screenshots/\` — meaningful checkpoint or terminal screenshots when captured
 `;
 }
