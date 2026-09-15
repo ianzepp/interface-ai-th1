@@ -83,26 +83,77 @@ validate_lane_name() {
         fail "invalid lane name '${lane_name}' (lowercase letters, digits, and hyphens only)"
 }
 
-# A stable offset in 1..99 derived from the lane name, so a lane's port is
-# reproducible from its name alone and two lanes rarely collide. A collision is
-# reported before anything starts rather than being discovered as a bind error.
+# A stable offset derived from the lane name, so a lane's port is reproducible
+# from its name alone. FNV-1a over a wide range, because the character sum this
+# replaced put two of four real lane names on the same port.
 lane_port_offset() {
-    local lane_name="$1" total=0 index character
+    local lane_name="$1" index character hash=2166136261
     for ((index = 0; index < ${#lane_name}; index++)); do
         printf -v character '%d' "'${lane_name:index:1}"
-        total=$((total + character))
+        hash=$((((hash ^ character) * 16777619) & 4294967295))
     done
-    printf '%d' "$(((total % 99) + 1))"
+    printf '%d' "$(((hash % 400) + 1))"
 }
 
-# Refuse to start on a port something already answers on, so the failure names
-# the cause instead of surfacing as a Compose bind error.
-require_free_port() {
+port_is_free() {
     local port="$1"
     if (exec 3<>"/dev/tcp/127.0.0.1/${port}") 2>/dev/null; then
         exec 3>&- 2>/dev/null || true
-        fail "port ${port} is already in use; pass --port to place this lane elsewhere"
+        return 1
     fi
+    return 0
+}
+
+# Claim a host port for this lane, exclusively.
+#
+# The derived offset is a starting point and not a guarantee: any hash can collide,
+# and probing for a free port then starting later loses a race between two lanes
+# that begin together. The reservation is therefore an exclusive file create, which
+# is atomic, and the search walks up from the derived offset so a collision resolves
+# into the next free port instead of failing at bind time.
+#
+# The lock directory is under the system temporary directory rather than the
+# repository, because ports belong to the machine while lanes each have their own
+# worktree: a lock inside one lane's tree could not exclude another lane.
+claim_lane_port() {
+    local lane_name="$1" start_offset="$2"
+    local lock_directory="${LANE_PORT_LOCK_DIRECTORY}"
+    local offset candidate
+
+    mkdir -p "${lock_directory}"
+    for ((offset = start_offset; offset < start_offset + 400; offset++)); do
+        candidate=$((TARGET_DEFAULT_PORT + offset))
+        if claim_port_lock "${lock_directory}/${candidate}" &&
+            port_is_free "${candidate}"; then
+            printf '%d' "${candidate}"
+            return 0
+        fi
+    done
+    fail "no free port within 400 of ${TARGET_DEFAULT_PORT} for lane '${lane_name}'"
+}
+
+# Take the reservation, or report that somebody living holds it. A lock whose owner
+# is gone is stale, so a crashed lane cannot reserve a port for the rest of the day.
+claim_port_lock() {
+    local lock="$1" owner
+    if (set -C; printf '%s\n' "${LANE_OWNER_PID}" >"${lock}") 2>/dev/null; then
+        return 0
+    fi
+
+    owner="$(cat "${lock}" 2>/dev/null || true)"
+    if [[ -n "${owner}" ]] && kill -0 "${owner}" 2>/dev/null; then
+        return 1
+    fi
+
+    rm -f "${lock}"
+    (set -C; printf '%s\n' "${LANE_OWNER_PID}" >"${lock}") 2>/dev/null || return 1
+    return 0
+}
+
+# Give the port back. Called by destroy, which is what retires a lane.
+release_lane_port() {
+    [[ -n "${LANE_PORT}" ]] || return 0
+    rm -f "${LANE_PORT_LOCK_DIRECTORY}/${LANE_PORT}"
 }
 
 apply_lane() {
@@ -424,6 +475,8 @@ list_snapshots_for_target() {
 # handling, which leaves the existing command grammar untouched.
 LANE_NAME=""
 LANE_PORT=""
+LANE_OWNER_PID="$$"
+LANE_PORT_LOCK_DIRECTORY="${TMPDIR:-/tmp}/interface-ai-lane-ports"
 lane_requested=""
 port_requested=""
 filtered_arguments=()
@@ -492,14 +545,16 @@ if [[ -n "${lane_requested}" ]]; then
             fail "--port must be a number (received '${port_requested}')"
         LANE_PORT="${port_requested}"
     else
-        LANE_PORT="$((TARGET_DEFAULT_PORT + $(lane_port_offset "${lane_requested}")))"
+        LANE_PORT="$(claim_lane_port "${lane_requested}" \
+            "$(lane_port_offset "${lane_requested}")")"
     fi
     apply_lane "${lane_requested}" "${LANE_PORT}"
 fi
 
 require_lane_port_free() {
     [[ -n "${LANE_NAME}" ]] || return 0
-    require_free_port "${LANE_PORT}"
+    port_is_free "${LANE_PORT}" ||
+        fail "port ${LANE_PORT} was taken after lane '${LANE_NAME}' claimed it; retire the lane and start again"
 }
 
 # Refuse to mutate the fixture while a discovery session holds it.
@@ -565,6 +620,7 @@ case "${command}" in
         [[ $# -eq 2 ]] || fail "destroy accepts exactly one target"
         require_docker
         require_no_live_session
+        release_lane_port
         compose down --volumes --remove-orphans
         printf '%s containers and persistent volumes were deleted\n' \
             "${TARGET_DISPLAY_NAME}"
