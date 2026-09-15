@@ -103,6 +103,97 @@ test("blocks navigation outside the artifact origin", async () => {
     assert.equal(result.code, "origin-blocked");
 });
 
+test("binds inputs in action targets and detector targets", async () => {
+    const baseStage = artifact.stages[0];
+    assert.ok(baseStage);
+    const targetArtifact: CapabilityArtifact = {
+        ...artifact,
+        policy: {
+            ...artifact.policy,
+            allowedActionTypes: ["activate"],
+        },
+        stages: [
+            {
+                ...baseStage,
+                action: {
+                    type: "activate",
+                    target: {
+                        candidates: [
+                            {
+                                kind: "text",
+                                text: "{{input.name}}",
+                                exact: true,
+                            },
+                        ],
+                        require: "exactly-one",
+                    },
+                },
+                detectors: [
+                    {
+                        id: "ready",
+                        description: "One exact result",
+                        scope: "capability",
+                        signals: [
+                            {
+                                kind: "count",
+                                target: {
+                                    candidates: [
+                                        {
+                                            kind: "text",
+                                            text: "{{input.name}}",
+                                            exact: true,
+                                        },
+                                    ],
+                                    require: "exactly-one",
+                                },
+                                operator: "equal",
+                                value: 1,
+                            },
+                        ],
+                    },
+                ],
+            },
+        ],
+    };
+    let actionText = "";
+    let detectorText = "";
+    const driver = fakeDriver({
+        act: (action) => {
+            if (action.type === "activate") {
+                const candidate = action.target.candidates[0];
+                if (candidate?.kind === "text") actionText = candidate.text;
+            }
+            return Promise.resolve({
+                completed: true,
+                observation: { url: "http://local.test", title: "Ready" },
+            });
+        },
+        waitFor: (detectors) => {
+            const signal = detectors[0]?.signals[0];
+            if (signal?.kind === "count") {
+                const candidate = signal.target.candidates[0];
+                if (candidate?.kind === "text") detectorText = candidate.text;
+            }
+            return Promise.resolve({
+                detectorId: "ready",
+                observedAt: new Date().toISOString(),
+            });
+        },
+    });
+
+    const result = await new DeterministicEngine(
+        driver,
+        new ArtifactPolicy(targetArtifact.policy),
+    ).run(targetArtifact, {
+        capabilityId: targetArtifact.id,
+        inputs: { name: "Book Keeping Company" },
+    });
+
+    assert.equal(result.type, "success");
+    assert.equal(actionText, "Book Keeping Company");
+    assert.equal(detectorText, "Book Keeping Company");
+});
+
 function fakeDriver(overrides: Partial<SurfaceDriver> = {}): SurfaceDriver {
     return {
         observe: () =>

@@ -99,6 +99,7 @@ export interface CapabilityContract {
 export interface ArtifactProvenance {
     discoveryRunId: string;
     createdAt: string;
+    evidenceRunIds?: readonly string[];
     validatedRunIds?: readonly string[];
 }
 

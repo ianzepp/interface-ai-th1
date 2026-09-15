@@ -223,6 +223,22 @@ export class PlaywrightBrowserDriver implements SurfaceDriver {
                     )
                         return true;
                     break;
+                case "count": {
+                    const count = await this.locatorFor(
+                        signal.target.candidates[0] ?? {
+                            kind: "css",
+                            selector: ":not(*)",
+                        },
+                    ).count();
+                    if (
+                        (signal.operator === "equal" &&
+                            count === signal.value) ||
+                        (signal.operator === "greater-than" &&
+                            count > signal.value)
+                    )
+                        return true;
+                    break;
+                }
                 case "response-status":
                 case "timeout":
                     break;

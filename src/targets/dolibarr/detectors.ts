@@ -1,5 +1,13 @@
 import type { StateDetector } from "../../surfaces/surface-driver.js";
 
-// Populate only after inspecting the pinned Dolibarr version. Target-specific
-// detectors must be grounded in observed pages rather than assumed labels.
-export const dolibarrDetectors: readonly StateDetector[] = [];
+export const dolibarrAuthenticationRequired: StateDetector = {
+    id: "dolibarr-authentication-required",
+    description:
+        "Dolibarr redirected the protected operation to its login page.",
+    scope: "target",
+    signals: [{ kind: "text", value: "Password forgotten?", exact: true }],
+};
+
+export const dolibarrDetectors: readonly StateDetector[] = [
+    dolibarrAuthenticationRequired,
+];

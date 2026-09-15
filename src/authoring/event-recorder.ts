@@ -1,8 +1,10 @@
 import type {
+    ActionRisk,
     ActionResult,
     Observation,
     SurfaceAction,
 } from "../surfaces/surface-driver.js";
+import type { PolicyDecision } from "../runtime/policy.js";
 
 /**
  * The event ledger: the only account of what actually happened.
@@ -24,6 +26,14 @@ export type DiscoveryEvent =
           type: "observation";
           recordedAt: string;
           observation: Observation;
+      }
+    | {
+          type: "proposal";
+          recordedAt: string;
+          action: SurfaceAction;
+          risk: ActionRisk;
+          rationale: string;
+          policyDecision: PolicyDecision;
       }
     | {
           type: "action";

@@ -58,10 +58,17 @@ It normally contains several successful runs, deliberate exception runs,
 recovery runs where justified, draft revisions, and deterministic replay runs.
 The loop ends only when the skill's artifact approval conditions hold.
 
-The repository currently has a reviewed LedgerSMB initialization artifact and
-deterministic replay pilot plus staged LedgerSMB capture evidence. The next
-cross-target proof is a complete Dolibarr authoring session using the same
-skill, fixture, evidence, artifact, and replay boundaries.
+The repository now has two reviewed vertical slices:
+
+- LedgerSMB company initialization, plus staged capture evidence for the later
+  inventory workflow.
+- Dolibarr exact-name third-party lookup, authored from two happy runs, three
+  exception runs, and one useful failed replay, then validated by two happy
+  replays and deterministic no-match, ambiguity, and authentication-required
+  replays.
+
+The Dolibarr artifact is `src/capabilities/dolibarr-third-party-lookup.ts` and
+its replay runner is `src/runtime/dolibarr-third-party-replay.ts`.
 
 ## Repository map
 
@@ -325,8 +332,32 @@ sed -n '1,120p' runs/<run-id>/events.jsonl
 ```
 
 The Playwright trace is the browser evidence. Open it with the Playwright
-trace viewer when visual or DOM inspection is needed; the repository does not
-turn a trace into a capability automatically.
+trace viewer when visual or DOM inspection is needed. The draft extractor uses
+the trace as grounding evidence but does not turn it into an approved capability
+automatically.
+
+### LLM-driven interactive capture
+
+For a genuine external-LLM discovery run, reset the fixture and start the
+long-lived JSONL session:
+
+```sh
+scripts/target reset dolibarr demo-install-smoke
+DOLIBARR_FIXTURE_PASSWORD=<fixture-password> \
+  npm run discover:dolibarr:third-party
+```
+
+The process authenticates before trace capture, prints a `ready` record, and
+then accepts one JSON command per line on stdin. Supported commands are
+`observe`, `act`, `checkpoint`, and `finish`. The LLM must observe the returned
+state before choosing the next `act`. Every proposal and policy verdict is
+recorded before execution; every successful action records its result. A
+controller disconnect finalizes the run as an error.
+
+Use `DOLIBARR_SKIP_AUTH=1` to capture the authentication-required condition
+without entering a credential. Never put login actions inside a durable trace.
+`src/authoring/interactive-playwright-session.ts` is the shared session seam;
+do not replace it with a fixed pilot and call that LLM discovery.
 
 For a new target-specific pilot, follow the existing files under
 `src/authoring/` rather than inventing a second recorder. Use
@@ -410,6 +441,18 @@ After independent checks, create the ending snapshot explicitly:
 ```sh
 scripts/target snapshot ledgersmb initialized-company
 ```
+
+The completed cross-target example is:
+
+- artifact: `src/capabilities/dolibarr-third-party-lookup.ts`;
+- replay runner: `src/runtime/dolibarr-third-party-replay.ts`;
+- command: `DOLIBARR_FIXTURE_PASSWORD=<fixture-password> npm run replay:dolibarr:third-party`.
+
+Set `DOLIBARR_LOOKUP_NAME` and `DOLIBARR_EXPECT_RESULT` to validate business
+outcomes. Set `DOLIBARR_SKIP_AUTH=1` with expected result
+`authentication-required` to validate intervention routing. Every invocation
+resets `dolibarr/demo-install-smoke`, records a trace, and writes the typed
+result to `result.json` in its run directory.
 
 ### Generate a first-pass draft
 

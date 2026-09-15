@@ -148,7 +148,9 @@ export class DeterministicEngine {
                 }
 
                 const match = await this.driver.waitFor(
-                    stage.detectors,
+                    stage.detectors.map((detector) =>
+                        bindDetector(detector, invocation.inputs),
+                    ),
                     this.options.stageTimeoutMs ?? 15_000,
                 );
                 for (const extraction of stage.extractions)
@@ -215,6 +217,69 @@ export class DeterministicEngine {
     }
 }
 
+function bindDetector(
+    detector: import("../surfaces/surface-driver.js").StateDetector,
+    inputs: Record<string, unknown>,
+): import("../surfaces/surface-driver.js").StateDetector {
+    const bind = (value: string): string =>
+        value.replaceAll(
+            /\{\{input\.([a-zA-Z0-9_-]+)\}\}/g,
+            (_match, name: string) => {
+                if (!(name in inputs))
+                    throw new Error(`Missing invocation input: ${name}`);
+                return String(inputs[name]);
+            },
+        );
+    return {
+        ...detector,
+        signals: detector.signals.map((signal) => {
+            switch (signal.kind) {
+                case "url":
+                    return { ...signal, pattern: bind(signal.pattern) };
+                case "text":
+                    return { ...signal, value: bind(signal.value) };
+                case "role":
+                    return { ...signal, name: bind(signal.name) };
+                case "count":
+                    return {
+                        ...signal,
+                        target: bindTarget(signal.target, bind),
+                    };
+                case "response-status":
+                case "timeout":
+                    return signal;
+            }
+        }),
+    };
+}
+
+function bindTarget(
+    target: import("../surfaces/surface-driver.js").TargetDescriptor,
+    bind: (value: string) => string,
+): import("../surfaces/surface-driver.js").TargetDescriptor {
+    return {
+        ...target,
+        candidates: target.candidates.map((candidate) => {
+            switch (candidate.kind) {
+                case "role":
+                    return { ...candidate, name: bind(candidate.name) };
+                case "label":
+                    return { ...candidate, text: bind(candidate.text) };
+                case "text":
+                    return { ...candidate, text: bind(candidate.text) };
+                case "css":
+                    return { ...candidate, selector: bind(candidate.selector) };
+                case "relative":
+                    return {
+                        ...candidate,
+                        anchor: bind(candidate.anchor),
+                        relation: bind(candidate.relation),
+                    };
+            }
+        }),
+    };
+}
+
 function bindAction(
     action: SurfaceAction,
     inputs: Record<string, unknown>,
@@ -230,7 +295,13 @@ function bindAction(
         );
     if (action.type === "navigate") return { ...action, url: bind(action.url) };
     if (action.type === "fill" || action.type === "select")
-        return { ...action, value: bind(action.value) };
+        return {
+            ...action,
+            target: bindTarget(action.target, bind),
+            value: bind(action.value),
+        };
+    if (action.type === "activate")
+        return { ...action, target: bindTarget(action.target, bind) };
     return action;
 }
 

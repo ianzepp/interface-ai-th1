@@ -415,3 +415,45 @@ Company database creation dominates the replay at roughly 53% of total browser
 time. These numbers are an initial local baseline rather than a performance
 claim; future evidence should report hardware/environment, sample count, and a
 distribution rather than only a mean.
+
+## 2026-09-15 — Dolibarr corpus-level authoring proof
+
+The second target now demonstrates the intended architecture end to end. The
+external LLM host controlled one long-lived Playwright browser session through
+JSONL commands, choosing each action after observing the prior result. Login
+bootstrap happened before tracing, so no fixture credential appears in the
+promoted traces.
+
+The discovery corpus contains:
+
+- `20260915201727769-f02bcb33` and `20260915201943054-c67afa9b` — repeated
+  successful exact-name lookups for `Book Keeping Company`;
+- `20260915202031432-6995a2e8` — no matching record;
+- `20260915202113470-97cf9873` — two exact `aaa` matches amid four substring
+  results, proving that selecting the first result would be unsafe;
+- `20260915202202470-9abd1d52` — protected route redirected to login;
+- `20260915202607595-f1eee304` — useful first replay failure showing that
+  detector templates were bound but action-target templates were not.
+
+`npm run draft:artifact` extracted a four-action provisional graph from the
+first successful run, with exactly four ledger actions and four trace actions.
+Human/LLM review then added the observed exception semantics and typed output
+extractions. This was a judgment-led merge, not automatic failure synthesis.
+
+The reviewed `dolibarr.lookup-third-party` artifact returns name, customer code,
+vendor code, currency, status, and nature. It routes no-match and duplicate
+exact matches as separate business outcomes and routes a missing session to
+intervention. A generic count detector and input binding inside action and
+detector targets were added because the corpus proved they were necessary.
+
+Validation corpus:
+
+- `20260915202650455-004445ba` and `20260915202710527-48b0cf0c` — repeated
+  successful replays with identical six-field outputs;
+- `20260915202725488-7b93abd6` — `third-party-not-found`;
+- `20260915202742493-769ba7f6` — `third-party-ambiguous`;
+- `20260915202758596-ed9759b5` — `authentication-required` intervention.
+
+All eleven selected discovery and replay runs were promoted unchanged under
+`evidence/runs/` after a bounded scan found no fixture password literal in any
+trace archive.

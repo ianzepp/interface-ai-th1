@@ -121,6 +121,12 @@ export type DetectorSignal =
     | { kind: "url"; pattern: string }
     | { kind: "text"; value: string; exact: boolean }
     | { kind: "role"; role: string; name: string }
+    | {
+          kind: "count";
+          target: TargetDescriptor;
+          operator: "equal" | "greater-than";
+          value: number;
+      }
     | { kind: "response-status"; status: number }
     | { kind: "timeout" };
 

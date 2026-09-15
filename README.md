@@ -18,8 +18,9 @@ The required vertical slice is:
 
 ## Current State
 
-The assignment has been reviewed. The repository now contains both the capture
-loop and the first deterministic vertical slice for LedgerSMB initialization.
+The repository contains the complete skill-driven authoring loop and reviewed
+deterministic vertical slices for LedgerSMB initialization and Dolibarr
+third-party lookup.
 
 Every reset-to-terminal discovery attempt is saved as one test run. A run has a
 brief README, structured manifest, sanitized event ledger, and Playwright trace.
@@ -36,10 +37,9 @@ into tracked `evidence/runs/<run-id>/` copies with
 The toolchain is in place and enforced by CI: strict TypeScript, type-aware
 ESLint, Prettier, and EditorConfig, all run by `npm run verify`.
 
-LedgerSMB and Dolibarr are both first-class local browser targets. Their versions,
-Docker images, local origins, and complete persistent state boundaries are now
-pinned. Their detectors, named fixture contents, and representative workflows
-remain to be grounded through live inspection.
+LedgerSMB and Dolibarr are both first-class local browser targets. Their
+versions, Docker images, local origins, and complete persistent state boundaries
+are pinned. The committed evidence contains live runs for both targets.
 
 Both targets use one snapshot lifecycle:
 
@@ -61,6 +61,12 @@ company initialization. The Playwright surface driver and deterministic engine
 now replay that artifact without an LLM, enforce exact target resolution and
 origin/action policy, bind invocation inputs, route on screen detectors, and
 save successful or failed replay runs in the same evidence shape as discovery.
+
+For Dolibarr, an external LLM drove a long-lived Playwright session one action
+at a time. Two happy runs, three exception runs, and a useful failed replay were
+reviewed into `dolibarr.lookup-third-party`. Deterministic replays now return a
+typed six-field profile, `third-party-not-found`, `third-party-ambiguous`, or an
+`authentication-required` intervention without model decisions.
 
 The original assignment PDF is available locally as `assignment.pdf` and is
 intentionally ignored by Git.
@@ -145,6 +151,31 @@ npm run capture:ledgersmb:end-to-end
 
 The command stops at the first failed phase and leaves one run directory per
 attempted phase under `runs/`.
+
+### Dolibarr interactive discovery and replay
+
+Reset the demo snapshot, then start an external-controller capture session:
+
+```sh
+scripts/target reset dolibarr demo-install-smoke
+DOLIBARR_FIXTURE_PASSWORD=<fixture-password> \
+  npm run discover:dolibarr:third-party
+```
+
+The process exchanges JSONL commands and observations over stdin/stdout while
+recording one Playwright trace. The external LLM chooses each action; the repo
+does not embed a model SDK.
+
+Replay the reviewed artifact from the same reset snapshot:
+
+```sh
+DOLIBARR_FIXTURE_PASSWORD=<fixture-password> \
+  npm run replay:dolibarr:third-party
+```
+
+Use `DOLIBARR_LOOKUP_NAME`, `DOLIBARR_EXPECT_RESULT`, and
+`DOLIBARR_SKIP_AUTH=1` to exercise the admitted business and intervention
+branches. The replay writes its typed terminal value to `result.json`.
 
 ## Development
 
