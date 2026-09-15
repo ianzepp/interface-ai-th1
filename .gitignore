@@ -1,4 +1,5 @@
 .DS_Store
+assignment.pdf
 .env
 .env.*
 !.env.example
