@@ -63,6 +63,32 @@ capture corpus is useful.
 The original assignment PDF is available locally as `assignment.pdf` and is
 intentionally ignored by Git.
 
+## Project Scripts
+
+### `scripts/target`
+
+Manages the pinned LedgerSMB and Dolibarr Docker environments and their local
+snapshots. Run `scripts/target --help` for the complete command list; the usual
+workflow is:
+
+```sh
+scripts/target fresh dolibarr
+scripts/target snapshot dolibarr demo-baseline
+scripts/target reset dolibarr demo-baseline
+```
+
+Use `ledgersmb` in place of `dolibarr` for the other target. The script also
+provides `up`, `stop`, `status`, `config`, `url`, `list`, and `destroy` commands.
+
+### `scripts/promote-run`
+
+Copies one or more reviewed, completed local runs into the tracked evidence
+directory without modifying the originals or overwriting existing evidence.
+
+```sh
+scripts/promote-run <run-id> [<run-id> ...]
+```
+
 ## Development
 
 Requires Node 24 or newer.
