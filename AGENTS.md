@@ -15,7 +15,12 @@ the workflow from scratch.
 - [`NOTES.md`](NOTES.md) records settled product, architecture, target, fixture,
   and evidence decisions. Treat implementation claims as claims to verify
   against current code, tests, Git history, and receipts.
+- [`assignment-proof.md`](assignment-proof.md) is the live requirement-to-proof
+  matrix. Update it whenever implementation or evidence changes assignment
+  status.
 - [`README.md`](README.md) is the project overview and script index.
+- [`REPORT.md`](REPORT.md) is the concise seven-section submission narrative;
+  derive it from the proof matrix without turning it into a work tracker.
 - [`skills/capability-author/SKILL.md`](skills/capability-author/SKILL.md) is the
   detailed procedure for fixture setup, browser capture, evidence, artifact
   authoring, and replay validation.

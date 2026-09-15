@@ -22,6 +22,11 @@ The repository contains the complete skill-driven authoring loop and reviewed
 deterministic vertical slices for LedgerSMB initialization and Dolibarr
 third-party lookup.
 
+[`assignment-proof.md`](assignment-proof.md) tracks each original requirement
+against live implementation, tests, evidence, and remaining gaps. It is the
+status authority; [`REPORT.md`](REPORT.md) is the shorter required submission
+write-up.
+
 Every reset-to-terminal discovery attempt is saved as one test run. A run has a
 brief README, structured manifest, sanitized event ledger, and Playwright trace.
 Runs terminate as either `satisfied` or `error`; failed and exploratory runs are
