@@ -94,6 +94,25 @@ unexplained trace file.
 Raw run directories are local and Git-ignored. Copy only deliberately reviewed,
 sanitized examples into tracked evidence later.
 
+## Evidence Promotion
+
+Promote a run only after it is finalized and its README, event ledger, and trace
+have been reviewed for secrets and unintended customer data. Both `satisfied`
+and `error` runs are useful evidence; failed runs demonstrate the observed error
+shape and the system's terminal behavior.
+
+Promote one or more reviewed runs from the repository root:
+
+```sh
+scripts/promote-run <run-id> [<run-id> ...]
+```
+
+Promotion copies each complete run from `runs/<run-id>/` to
+`evidence/runs/<run-id>/`. It leaves the raw run unchanged and refuses to
+overwrite existing evidence. Treat the promoted copy as an immutable submission
+record; if its contents are unsuitable, remove it through an explicit reviewed
+change and promote a different run.
+
 ## Event Evidence
 
 Record only concise operational evidence, never hidden chain-of-thought. For

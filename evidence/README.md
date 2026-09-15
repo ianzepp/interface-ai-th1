@@ -1,4 +1,24 @@
 # Evidence
 
-This directory will contain evidence produced by genuine discovery and replay
-runs. Do not add fabricated, hand-authored, or secret-bearing evidence.
+This directory contains submission evidence produced by genuine discovery and,
+later, replay runs. Do not add fabricated, hand-authored, or secret-bearing
+evidence.
+
+Reviewed discovery runs are promoted without alteration into:
+
+```text
+evidence/runs/<run-id>/
+├── README.md
+├── run.json
+├── events.jsonl
+└── trace.zip
+```
+
+Both successful and failed runs may be promoted. From the repository root:
+
+```sh
+scripts/promote-run <run-id> [<run-id> ...]
+```
+
+The command accepts only finalized runs and never overwrites an existing evidence
+copy. Review the trace and logs for sensitive data before promotion.

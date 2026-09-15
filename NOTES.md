@@ -84,3 +84,18 @@ The current authoring phase captures evidence only:
 Do not synthesize a stage graph, compile a deterministic artifact, or replay one
 as part of this loop. Those steps follow after the capture corpus exposes the
 real happy paths and exception shapes.
+
+## 2026-09-15 — Evidence promotion
+
+### Decision
+
+Keep all raw test runs under the Git-ignored `runs/` tree. A completed run may be
+explicitly marked as submission evidence by copying it, unchanged, to
+`evidence/runs/<run-id>/`.
+
+- Both `satisfied` and `error` runs may be promoted.
+- Any number of distinct runs may be retained as evidence.
+- Promotion must not remove or modify the raw run.
+- Existing evidence is never overwritten implicitly.
+- The run must be reviewed for secrets and unintended customer data first,
+  especially inside the Playwright trace.

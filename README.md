@@ -30,6 +30,10 @@ first-class evidence rather than discarded attempts.
 Raw runs live under `runs/<run-id>/` and are ignored by Git. The tracked
 [`runs/README.md`](runs/README.md) describes the layout.
 
+After review, any number of finalized successful or failed runs can be promoted
+into tracked `evidence/runs/<run-id>/` copies with
+`scripts/promote-run <run-id> [<run-id> ...]`.
+
 The toolchain is in place and enforced by CI: strict TypeScript, type-aware
 ESLint, Prettier, and EditorConfig, all run by `npm run verify`.
 
