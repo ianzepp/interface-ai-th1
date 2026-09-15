@@ -1,0 +1,22 @@
+{
+  "runId": "20260915201943054-c67afa9b",
+  "status": "satisfied",
+  "goal": "Look up a Dolibarr third party by exact name and return its account profile.",
+  "situation": "Authenticated administrator starts from the demo fixture home page.",
+  "targetProfile": "dolibarr",
+  "targetVersion": "23.0.4",
+  "fixtureId": "dolibarr/demo-install-smoke",
+  "startedAt": "2026-09-15T20:19:43.054Z",
+  "files": {
+    "readme": "README.md",
+    "events": "events.jsonl",
+    "trace": "trace.zip",
+    "screenshots": "screenshots/"
+  },
+  "finishedAt": "2026-09-15T20:20:14.413Z",
+  "outcome": {
+    "status": "satisfied",
+    "summary": "Repeated the unique exact-name lookup and opened the same account profile.",
+    "checkpoint": "third-party-profile-visible"
+  }
+}

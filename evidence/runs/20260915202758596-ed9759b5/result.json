@@ -1,0 +1,5 @@
+{
+  "type": "intervention-required",
+  "requestId": "dolibarr.lookup-third-party:open-list",
+  "code": "authentication-required"
+}

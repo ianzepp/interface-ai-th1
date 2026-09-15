@@ -1,0 +1,22 @@
+{
+  "runId": "20260915202758596-ed9759b5",
+  "status": "satisfied",
+  "goal": "Look up a Dolibarr third party by exact name and return its account profile.",
+  "situation": "Deterministic replay for expected result authentication-required.",
+  "targetProfile": "dolibarr",
+  "targetVersion": "23.0.4",
+  "fixtureId": "dolibarr/demo-install-smoke",
+  "startedAt": "2026-09-15T20:27:58.596Z",
+  "files": {
+    "readme": "README.md",
+    "events": "events.jsonl",
+    "trace": "trace.zip",
+    "screenshots": "screenshots/"
+  },
+  "finishedAt": "2026-09-15T20:27:58.723Z",
+  "outcome": {
+    "status": "satisfied",
+    "summary": "The deterministic artifact returned the expected typed result: authentication-required.",
+    "checkpoint": "authentication-required"
+  }
+}

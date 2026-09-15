@@ -1,0 +1,22 @@
+{
+  "runId": "20260915202031432-6995a2e8",
+  "status": "error",
+  "goal": "Look up a Dolibarr third party by exact name and return its account profile.",
+  "situation": "Authenticated lookup for a third-party name absent from the demo fixture.",
+  "targetProfile": "dolibarr",
+  "targetVersion": "23.0.4",
+  "fixtureId": "dolibarr/demo-install-smoke",
+  "startedAt": "2026-09-15T20:20:31.432Z",
+  "files": {
+    "readme": "README.md",
+    "events": "events.jsonl",
+    "trace": "trace.zip",
+    "screenshots": "screenshots/"
+  },
+  "finishedAt": "2026-09-15T20:20:58.420Z",
+  "outcome": {
+    "status": "error",
+    "summary": "Dolibarr reported that no third party matched the requested name.",
+    "code": "third-party-not-found"
+  }
+}

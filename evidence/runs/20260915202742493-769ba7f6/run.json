@@ -1,0 +1,22 @@
+{
+  "runId": "20260915202742493-769ba7f6",
+  "status": "satisfied",
+  "goal": "Look up a Dolibarr third party by exact name and return its account profile.",
+  "situation": "Deterministic replay for expected result third-party-ambiguous.",
+  "targetProfile": "dolibarr",
+  "targetVersion": "23.0.4",
+  "fixtureId": "dolibarr/demo-install-smoke",
+  "startedAt": "2026-09-15T20:27:42.493Z",
+  "files": {
+    "readme": "README.md",
+    "events": "events.jsonl",
+    "trace": "trace.zip",
+    "screenshots": "screenshots/"
+  },
+  "finishedAt": "2026-09-15T20:27:43.014Z",
+  "outcome": {
+    "status": "satisfied",
+    "summary": "The deterministic artifact returned the expected typed result: third-party-ambiguous.",
+    "checkpoint": "third-party-ambiguous"
+  }
+}

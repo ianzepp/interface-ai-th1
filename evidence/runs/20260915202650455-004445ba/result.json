@@ -1,0 +1,11 @@
+{
+  "type": "success",
+  "outputs": {
+    "name": "Book Keeping Company",
+    "customerCode": "CU1108-0004",
+    "vendorCode": "SU1108-0004",
+    "currency": "EUR - Euros",
+    "status": "Open",
+    "nature": "PCV"
+  }
+}

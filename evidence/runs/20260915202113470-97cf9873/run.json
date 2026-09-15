@@ -1,0 +1,22 @@
+{
+  "runId": "20260915202113470-97cf9873",
+  "status": "error",
+  "goal": "Look up a Dolibarr third party by exact name and return its account profile.",
+  "situation": "Authenticated lookup for a name with multiple exact matches in the demo fixture.",
+  "targetProfile": "dolibarr",
+  "targetVersion": "23.0.4",
+  "fixtureId": "dolibarr/demo-install-smoke",
+  "startedAt": "2026-09-15T20:21:13.470Z",
+  "files": {
+    "readme": "README.md",
+    "events": "events.jsonl",
+    "trace": "trace.zip",
+    "screenshots": "screenshots/"
+  },
+  "finishedAt": "2026-09-15T20:21:39.572Z",
+  "outcome": {
+    "status": "error",
+    "summary": "Two records exactly matched the requested name, so choosing either would be unsafe.",
+    "code": "third-party-ambiguous"
+  }
+}

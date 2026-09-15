@@ -1,0 +1,2 @@
+{"type":"observation","recordedAt":"2026-09-15T20:22:28.064Z","observation":{"url":"http://127.0.0.1:8080/societe/list.php","title":"Login @ 23.0.4","accessibility":{"text":"Dolibarr 23.0.4\n\n\n \n \n\n\n\n\nPassword forgotten?\nNote that a lot of features/modules are disabled in this demonstration.\n\n"},"screenshotPath":"screenshots/1789503748041-observation.png"}}
+{"type":"checkpoint","name":"login-required-visible","satisfied":true,"recordedAt":"2026-09-15T20:22:28.064Z"}

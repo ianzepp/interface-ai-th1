@@ -1,0 +1,22 @@
+{
+  "runId": "20260915202725488-7b93abd6",
+  "status": "satisfied",
+  "goal": "Look up a Dolibarr third party by exact name and return its account profile.",
+  "situation": "Deterministic replay for expected result third-party-not-found.",
+  "targetProfile": "dolibarr",
+  "targetVersion": "23.0.4",
+  "fixtureId": "dolibarr/demo-install-smoke",
+  "startedAt": "2026-09-15T20:27:25.488Z",
+  "files": {
+    "readme": "README.md",
+    "events": "events.jsonl",
+    "trace": "trace.zip",
+    "screenshots": "screenshots/"
+  },
+  "finishedAt": "2026-09-15T20:27:25.995Z",
+  "outcome": {
+    "status": "satisfied",
+    "summary": "The deterministic artifact returned the expected typed result: third-party-not-found.",
+    "checkpoint": "third-party-not-found"
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "runId": "20260915202607595-f1eee304",
+  "status": "error",
+  "goal": "Look up a Dolibarr third party by exact name and return its account profile.",
+  "situation": "Deterministic replay for expected result success.",
+  "targetProfile": "dolibarr",
+  "targetVersion": "23.0.4",
+  "fixtureId": "dolibarr/demo-install-smoke",
+  "startedAt": "2026-09-15T20:26:07.595Z",
+  "files": {
+    "readme": "README.md",
+    "events": "events.jsonl",
+    "trace": "trace.zip",
+    "screenshots": "screenshots/"
+  },
+  "finishedAt": "2026-09-15T20:26:08.099Z",
+  "outcome": {
+    "status": "error",
+    "code": "deterministic-replay-failed",
+    "summary": "Expected success, received stage-execution-failed: {\"type\":\"failure\",\"code\":\"stage-execution-failed\",\"detail\":{\"stageId\":\"open-result\",\"expected\":\"Open the sole exact-name result and return its account profile.\",\"observed\":\"Missing target [{\\\"kind\\\":\\\"text\\\",\\\"text\\\":\\\"{{input.name}}\\\",\\\"exact\\\":true}]\",\"evidence\":[{\"kind\":\"screenshot\",\"path\":\"screenshots/1789503968016-failure-open-result.png\",\"redacted\":false}]}}"
+  }
+}

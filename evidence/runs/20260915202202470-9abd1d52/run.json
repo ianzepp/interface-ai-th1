@@ -1,0 +1,22 @@
+{
+  "runId": "20260915202202470-9abd1d52",
+  "status": "error",
+  "goal": "Look up a Dolibarr third party by exact name and return its account profile.",
+  "situation": "Unauthenticated browser attempts to start a protected third-party lookup.",
+  "targetProfile": "dolibarr",
+  "targetVersion": "23.0.4",
+  "fixtureId": "dolibarr/demo-install-smoke",
+  "startedAt": "2026-09-15T20:22:02.470Z",
+  "files": {
+    "readme": "README.md",
+    "events": "events.jsonl",
+    "trace": "trace.zip",
+    "screenshots": "screenshots/"
+  },
+  "finishedAt": "2026-09-15T20:22:28.096Z",
+  "outcome": {
+    "status": "error",
+    "summary": "The protected lookup redirected to the login page before any capability action could run.",
+    "code": "authentication-required"
+  }
+}
