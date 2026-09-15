@@ -8,10 +8,10 @@ import type {
  * The event ledger: the only account of what actually happened.
  *
  * The ledger is where a discovery run records observations, decided actions, and
- * checkpoints. The compiler is meant to build capabilities from that stream and
- * to reject steps it cannot trace back to it. That grounding rule is what keeps
- * a recorded capability honest, because a run that was not recorded cannot be
- * claimed.
+ * checkpoints. Draft extraction and reviewed artifact authoring consume that
+ * stream and reject steps they cannot trace back to it. That grounding rule is
+ * what keeps a recorded capability honest, because a run that was not recorded
+ * cannot be claimed.
  *
  * Actions carry their rationale because a reviewable artifact needs more than
  * an action list. A reviewer asking "why did it click that" needs the reason

@@ -86,10 +86,12 @@ fallback.
 Separate the probabilistic capability-authoring plane from the deterministic
 execution plane.
 
-- A dense authoring skill guides LLM discovery, exception authoring, and artifact
-  revision.
+- The external LLM host loads the repo-owned authoring skill and is the
+  discovery control plane. The repository does not embed a duplicate model loop.
 - A typed event ledger records actions and observations that actually occurred.
-- An artifact compiler produces a versioned state graph from grounded evidence.
+- A mechanical extractor produces a provisional linear draft from a successful
+  run. The LLM-guided authoring session compares the run corpus and uses explicit
+  judgment to revise that draft into a versioned state graph.
 - A deterministic engine interprets approved artifacts without an LLM in its
   decision loop.
 - Playwright is the first surface adapter rather than an engine dependency.
@@ -104,13 +106,13 @@ remains the primary domain narrative, while Dolibarr validates that the
 architecture is not accidentally coupled to one application. Dolibarr is no
 longer only a dormant fallback.
 
-### Still open
+### Boundary ruling
 
-- Exact capability schema and graph semantics.
-- Model provider and structured decision protocol.
-- Persistent event-ledger format.
-- Artifact validation and approval mechanism.
-- Target versions, fixtures, and workflows.
+Do not add an embedded model-provider SDK, a second autonomous discovery-agent
+class, or an automatic semantic failure-to-graph compiler merely to duplicate
+the LLM host and skill. The required integration proof is a recorded
+corpus-level authoring session in which the skill-driven LLM operates the live
+surface and the resulting reviewed artifact passes deterministic replay.
 
 ## 2026-09-15 — Capture-first authoring loop
 
