@@ -67,7 +67,8 @@ Isolation:
 Forwarded to scripts/author:
   --model <model>      Model passed to codex exec.
   --reasoning-effort <level>  low, medium, high, xhigh, ultra, or max.
-  --max-runs <n>       Recorded runs allowed in total.
+  --max-runs <n>       Recorded runs allowed in total. Defaults to 8, which
+                       leaves room for the happy path plus a failure matrix.
   --max-actions <n>    Browser actions allowed per run.
   --timeout <ms>       Whole-session budget.
   --codex-sandbox <m>  read-only, workspace-write, or danger-full-access.
