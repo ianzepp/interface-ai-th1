@@ -60,3 +60,27 @@ longer only a dormant fallback.
 - Persistent event-ledger format.
 - Artifact validation and approval mechanism.
 - Target versions, fixtures, and workflows.
+
+## 2026-09-15 — Capture-first authoring loop
+
+### Decision
+
+Keep the capability-author skill monolithic while the architecture is changing
+quickly. Its supporting references have been folded into the main `SKILL.md` so
+the instructions can be revised as one unit.
+
+The current authoring phase captures evidence only:
+
+- Every attempt starts from a reset fixture.
+- One reset-to-terminal attempt is one test run.
+- A run ends as either `satisfied` or `error`.
+- Every run retains a brief README, structured manifest, event ledger, and
+  Playwright trace.
+- A retry after another reset creates a separate run.
+- Raw local run directories are ignored by Git.
+
+### Deferred
+
+Do not synthesize a stage graph, compile a deterministic artifact, or replay one
+as part of this loop. Those steps follow after the capture corpus exposes the
+real happy paths and exception shapes.

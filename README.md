@@ -18,10 +18,17 @@ The required vertical slice is:
 
 ## Current State
 
-The assignment has been reviewed. The repository now contains the initial
-TypeScript architecture skeleton: a capability-authoring skill and event ledger,
-versioned JSON schemas, a deterministic runtime, a Playwright surface adapter,
-target profiles, and human-control seams.
+The assignment has been reviewed. The repository contains the initial
+architecture skeleton, but current implementation work is intentionally focused
+on the capture-only authoring loop.
+
+Every reset-to-terminal discovery attempt is saved as one test run. A run has a
+brief README, structured manifest, sanitized event ledger, and Playwright trace.
+Runs terminate as either `satisfied` or `error`; failed and exploratory runs are
+first-class evidence rather than discarded attempts.
+
+Raw runs live under `runs/<run-id>/` and are ignored by Git. The tracked
+[`runs/README.md`](runs/README.md) describes the layout.
 
 The toolchain is in place and enforced by CI: strict TypeScript, type-aware
 ESLint, Prettier, and EditorConfig, all run by `npm run verify`.
@@ -29,6 +36,9 @@ ESLint, Prettier, and EditorConfig, all run by `npm run verify`.
 LedgerSMB and Dolibarr are both first-class local browser targets. Their versions,
 detectors, fixtures, and representative workflows remain to be grounded through
 live inspection.
+
+Stage-graph synthesis and deterministic replay are explicitly deferred until the
+capture corpus is useful.
 
 The original assignment PDF is available locally as `assignment.pdf` and is
 intentionally ignored by Git.
@@ -69,6 +79,7 @@ to 7 in a single dependency bump.
 
 - Select and pin LedgerSMB and Dolibarr versions.
 - Launch both applications and replace target-profile stubs with observed facts.
-- Define the smallest representative workflow and exceptional states.
-- Harden the draft graph semantics before implementing the compiler and engine.
+- Define the smallest capture scenario and fixture reset contract.
+- Wire the model-driven computer-use loop to the run recorder.
+- Capture happy-path and deliberate error runs for both targets.
 - Turn every must-have requirement into an executable acceptance check.
