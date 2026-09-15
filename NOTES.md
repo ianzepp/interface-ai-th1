@@ -359,6 +359,56 @@ Mean stage durations across the two successful replays (`n = 2`) were:
 | `authenticate`          |   531 ms |
 | `dismiss-expiry`        |   263 ms |
 
+## 2026-09-15 — Remaining LedgerSMB discovery captures
+
+The three post-initialization phases now each have two successful recorded
+runs from their named starting fixture:
+
+| Phase                          | Successful runs                                            | Mean capture time |
+| ------------------------------ | ---------------------------------------------------------- | ----------------: |
+| `create-trading-partners`      | `20260915172018412-bc071dc3`, `20260915172035044-358c074c` |           3.639 s |
+| `create-inventory-catalog`     | `20260915172329463-f794ccde`, `20260915172345524-ddd21616` |           2.951 s |
+| `exercise-inventory-lifecycle` | `20260915174132599-b4f1d635`, `20260915174207782-dc9b4034` |          12.785 s |
+
+These durations come directly from each run's `startedAt` and `finishedAt`
+metadata and exclude fixture reset, compilation, and service health checks.
+
+The lifecycle's persisted-state check confirmed posted purchase `BILL-2001`
+for 2,175 USD, posted sale `INV-1001` for 387 USD, approved physical count
+`COUNT-001`, expected quantity 27, counted quantity 25, variance -2, and final
+on-hand quantity 25.
+
+Useful failures captured during lifecycle authoring exposed two reusable UI
+conditions. A known password-expiry interstitial can block the first menu action
+and must be handled as an explicit branch. More subtly, a route change can occur
+before a client-rendered content frame changes; a replay must wait for a unique
+marker on the destination stage before resolving controls whose labels are
+shared with the prior stage. The physical-count workflow also requires an
+explicit accounting-effective date even though the UI accepts a blank field.
+
+### Fresh end-to-end proof
+
+`npm run capture:ledgersmb:end-to-end` subsequently succeeded from fresh Docker
+volumes without intermediate snapshot restores. It produced four satisfied run
+artifacts in sequence:
+
+- `20260915174522338-d689ee84` — initialize company and administrator (5.374 s)
+- `20260915174527865-4ee2f9eb` — create trading partners (4.304 s)
+- `20260915174532327-fbb724a9` — create inventory catalog (2.890 s)
+- `20260915174535371-b7e6f918` — exercise inventory lifecycle (10.082 s)
+
+The captured browser phases spanned 23.115 seconds from the first run's start to
+the last run's finish. This excludes compilation, fresh-volume creation, and
+service health checks. A final independent database check reproduced the same
+posted amounts, approved count, variance, and on-hand quantity listed above.
+
+The first contiguous attempt failed even though each isolated fixture-based
+phase had passed. Item autocomplete had closed before its dependent description
+and price fields finished populating, allowing the replay to race the
+application and submit an invalid sales price. Waiting for application-derived
+field values, rather than adding a fixed delay, made both the isolated and
+contiguous execution paths deterministic.
+
 Company database creation dominates the replay at roughly 53% of total browser
 time. These numbers are an initial local baseline rather than a performance
 claim; future evidence should report hardware/environment, sample count, and a

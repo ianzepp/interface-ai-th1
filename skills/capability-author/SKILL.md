@@ -95,6 +95,24 @@ when application-owned hidden state is the intended signal. Record the
 observation after the transition signal is satisfied, not immediately after the
 click that initiated it.
 
+A URL change is not proof that a client-rendered content region has finished
+transitioning. Before resolving controls on the next stage, wait for a unique
+application-owned heading, landmark, or state marker from that stage. This is
+especially important when consecutive screens reuse labels such as `Date`,
+`Source`, `Continue`, or `Save`; otherwise a fast replay can act on the prior
+screen even though the address bar already describes the next route.
+
+Selecting an autocomplete result may start application work that populates
+dependent fields after the selection control disappears. Before editing or
+submitting those fields, wait for a meaningful application-derived value or
+state marker. Do not substitute a fixed delay: repeated captures can pass from
+a restored snapshot while a faster contiguous run exposes the unresolved race.
+
+Treat recoverable interstitials as explicit observed branches. Detect them by a
+specific state marker, execute the bounded recovery action, and then re-check
+the intended stage. Do not make a generic dismissal action that could hide an
+unknown warning.
+
 `fresh` and `reset` delete only the selected target's current Docker volumes.
 Never run them during an active capture. Use `up` and `stop` when the current
 working state must be preserved.
@@ -121,6 +139,12 @@ Do not assume a draft is inert or that approval is the first mutation. Do not
 assume a screen whose name suggests initialization is valid for seeding opening
 state. Infer the workflow contract from observed UI transitions and persisted
 records.
+
+Enter accounting-effective dates explicitly whenever a workflow accepts them,
+even when the UI permits a blank value or displays a default. An implicit date
+can be interpreted differently by validation, inventory, posting, and reporting
+layers, producing a run that appears successful but mutates the wrong period or
+calculates from the wrong state.
 
 Build a clean fixture in dependency order:
 

@@ -123,6 +123,29 @@ target running. It does not overwrite an existing snapshot. After reviewing the
 run and persisted-state assertions, snapshot it under an intentional name with
 `scripts/target snapshot ledgersmb <snapshot-name>`.
 
+### LedgerSMB staged captures
+
+Each command resets its named starting fixture and records one independent run:
+
+```sh
+npm run capture:ledgersmb:partners
+npm run capture:ledgersmb:catalog
+npm run capture:ledgersmb:lifecycle
+```
+
+They create the customer and vendor, create the warehouse and inventory item,
+then exercise and approve the purchase, sale, and physical-count lifecycle.
+
+To prove the complete dependency chain without intermediate snapshot restores,
+start from fresh volumes and record all four phases in sequence:
+
+```sh
+npm run capture:ledgersmb:end-to-end
+```
+
+The command stops at the first failed phase and leaves one run directory per
+attempted phase under `runs/`.
+
 ## Development
 
 Requires Node 24 or newer.

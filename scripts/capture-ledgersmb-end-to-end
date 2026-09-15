@@ -1,0 +1,12 @@
+#!/bin/sh
+set -eu
+
+project_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+cd "$project_dir"
+
+npm run build --silent
+scripts/target fresh ledgersmb
+node dist/src/authoring/ledgersmb-initialize-pilot.js
+node dist/src/authoring/ledgersmb-partners-pilot.js
+node dist/src/authoring/ledgersmb-catalog-pilot.js
+node dist/src/authoring/ledgersmb-lifecycle-pilot.js

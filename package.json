@@ -6,6 +6,10 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "capture:ledgersmb:initialize": "npm run build && scripts/target fresh ledgersmb && node dist/src/authoring/ledgersmb-initialize-pilot.js",
+    "capture:ledgersmb:partners": "npm run build && scripts/target reset ledgersmb initialized-company && node dist/src/authoring/ledgersmb-partners-pilot.js",
+    "capture:ledgersmb:catalog": "npm run build && scripts/target reset ledgersmb partners-ready && node dist/src/authoring/ledgersmb-catalog-pilot.js",
+    "capture:ledgersmb:lifecycle": "npm run build && scripts/target reset ledgersmb catalog-ready && node dist/src/authoring/ledgersmb-lifecycle-pilot.js",
+    "capture:ledgersmb:end-to-end": "scripts/capture-ledgersmb-end-to-end",
     "replay:ledgersmb:initialize": "npm run build && scripts/target fresh ledgersmb && node dist/src/runtime/ledgersmb-initialize-replay.js",
     "check": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint .",
