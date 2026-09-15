@@ -10,6 +10,7 @@
     "capture:ledgersmb:catalog": "npm run build && scripts/target reset ledgersmb partners-ready && node dist/src/authoring/ledgersmb-catalog-pilot.js",
     "capture:ledgersmb:lifecycle": "npm run build && scripts/target reset ledgersmb catalog-ready && node dist/src/authoring/ledgersmb-lifecycle-pilot.js",
     "capture:ledgersmb:end-to-end": "scripts/capture-ledgersmb-end-to-end",
+    "draft:artifact": "npm run build && node dist/src/authoring/draft-artifact-cli.js",
     "replay:ledgersmb:initialize": "npm run build && scripts/target fresh ledgersmb && node dist/src/runtime/ledgersmb-initialize-replay.js",
     "check": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint .",
