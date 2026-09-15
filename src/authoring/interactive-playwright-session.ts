@@ -10,11 +10,15 @@ import {
 
 import { ArtifactPolicy, type PolicyConfiguration } from "../runtime/policy.js";
 import { PlaywrightBrowserDriver } from "../surfaces/playwright-driver.js";
-import type { ActionRisk, SurfaceAction } from "../surfaces/surface-driver.js";
+import type {
+    ActionRisk,
+    Observation,
+    SurfaceAction,
+} from "../surfaces/surface-driver.js";
 import { PlaywrightTestRunCapture } from "./playwright-run-capture.js";
 import { FileTestRunRecorder, type TestRunOutcome } from "./run-recorder.js";
 
-interface SessionOptions {
+export interface SessionOptions {
     rootDirectory: string;
     goal: string;
     situation: string;
@@ -25,7 +29,7 @@ interface SessionOptions {
     prepare(page: Page): Promise<void>;
 }
 
-type SessionCommand =
+export type SessionCommand =
     | { type: "observe"; screenshot?: boolean }
     | {
           type: "act";
@@ -36,24 +40,70 @@ type SessionCommand =
     | { type: "checkpoint"; name: string; satisfied: boolean }
     | { type: "finish"; outcome: TestRunOutcome };
 
+/** One command's answer, and whether the run is now over. */
+export interface SessionCommandOutcome {
+    record: unknown;
+    terminal: boolean;
+}
+
 /**
- * Run one browser attempt while an external LLM supplies each next action.
+ * A live session as a command handler rather than as a process.
  *
- * The host process writes one JSON command per line and receives one JSON
- * observation in response. This keeps discovery decisions outside the repo
- * while preserving a single Playwright context, trace, policy gate, and event
- * ledger for the complete attempt.
+ * The session's decisions — policy gate, origin check, target resolution,
+ * recording, finalization — belong to exactly one implementation, and the only
+ * thing that legitimately varies is how commands arrive. Separating setup from
+ * transport is what lets a stdin loop and a control socket drive the identical
+ * code path instead of two implementations that drift apart.
+ *
+ * INVARIANTS
+ * - `handle` never rejects. A failed command comes back as a `command-error`
+ *   record, so the transport stays alive and the caller decides what to do next.
+ * - Once a command reports `terminal`, the run is finalized and further commands
+ *   are refused rather than recorded against a closed run.
  */
-export async function runInteractivePlaywrightSession(
+export interface InteractiveSession {
+    runId: string;
+    runDirectory: string;
+    /**
+     * What the surface looked like once the session was ready.
+     *
+     * Captured here rather than by each transport because it is part of the
+     * protocol a stdio controller already depends on, and a controller that had
+     * to ask for it separately would be making a second round trip for something
+     * the session already knows.
+     */
+    initialObservation: Observation;
+    handle(command: SessionCommand): Promise<SessionCommandOutcome>;
+    /** Stop tracing and the browser, finalizing the run if it is still open. */
+    close(): Promise<void>;
+}
+
+/** The live state a session's commands operate on, created once and shared. */
+interface SessionRun {
+    options: SessionOptions;
+    page: Page;
+    recorder: FileTestRunRecorder;
+    capture: PlaywrightTestRunCapture;
+    driver: PlaywrightBrowserDriver;
+    policy: ArtifactPolicy;
+    finalized: boolean;
+}
+
+/**
+ * Bring up one browser attempt: authenticate, start recording, and return a
+ * handler for the commands an external host will send.
+ *
+ * Authentication happens before tracing and before the run directory exists, so
+ * a fixture credential can reach neither the trace nor the ledger.
+ */
+export async function createInteractiveSession(
     options: SessionOptions,
-): Promise<void> {
+): Promise<InteractiveSession> {
     const browser = await chromium.launch({ headless: true });
     const context = await browser.newContext();
     const page = await context.newPage();
 
     try {
-        // Authentication and other fixture bootstrap happen before tracing so
-        // credentials cannot enter the run trace or event ledger.
         await options.prepare(page);
 
         const recorder = await FileTestRunRecorder.start({
@@ -73,17 +123,178 @@ export async function runInteractivePlaywrightSession(
             page,
             join(recorder.directory, "screenshots"),
         );
-        const policy = new ArtifactPolicy(options.policy);
-        let finished = false;
+        const run: SessionRun = {
+            options,
+            page,
+            recorder,
+            capture,
+            driver,
+            policy: new ArtifactPolicy(options.policy),
+            finalized: false,
+        };
 
-        emit({
-            type: "ready",
+        return {
             runId: basename(recorder.directory),
             runDirectory: recorder.directory,
-            observation: await driver.observe({
+            initialObservation: await driver.observe({
                 includeAccessibility: true,
                 includeScreenshot: false,
             }),
+
+            async handle(
+                command: SessionCommand,
+            ): Promise<SessionCommandOutcome> {
+                if (run.finalized) {
+                    return {
+                        record: {
+                            type: "command-error",
+                            error: "The run is already finalized",
+                        },
+                        terminal: true,
+                    };
+                }
+                try {
+                    return await handleCommand(run, command);
+                } catch (error) {
+                    return {
+                        record: {
+                            type: "command-error",
+                            error: describeError(error),
+                        },
+                        terminal: false,
+                    };
+                }
+            },
+
+            async close(): Promise<void> {
+                try {
+                    if (!run.finalized) {
+                        await run.capture.finish({
+                            status: "error",
+                            code: "controller-disconnected",
+                            summary:
+                                "The external discovery controller disconnected before finalizing the run.",
+                        });
+                        run.finalized = true;
+                    }
+                } finally {
+                    await closeQuietly(context, browser);
+                }
+            },
+        };
+    } catch (error) {
+        await closeQuietly(context, browser);
+        throw error;
+    }
+}
+
+/** Apply one command, recording it and reporting the state it reached. */
+async function handleCommand(
+    run: SessionRun,
+    command: SessionCommand,
+): Promise<SessionCommandOutcome> {
+    const { driver, recorder, capture, page, policy, options } = run;
+
+    if (command.type === "observe") {
+        const observation = await driver.observe({
+            includeAccessibility: true,
+            includeScreenshot: command.screenshot ?? false,
+        });
+        await recorder.append({
+            type: "observation",
+            recordedAt: new Date().toISOString(),
+            observation,
+        });
+        return {
+            record: { type: "observation", observation },
+            terminal: false,
+        };
+    }
+
+    if (command.type === "checkpoint") {
+        await recorder.append({
+            ...command,
+            recordedAt: new Date().toISOString(),
+        });
+        return {
+            record: { type: "checkpoint-recorded", name: command.name },
+            terminal: false,
+        };
+    }
+
+    if (command.type === "finish") {
+        await capture.finish(command.outcome);
+        run.finalized = true;
+        return {
+            record: { type: "finished", outcome: command.outcome },
+            terminal: true,
+        };
+    }
+
+    // A proposed action is recorded before it runs, so a refusal or a thrown
+    // locator leaves evidence of the attempt rather than a gap in the ledger.
+    const decision = policy.evaluate(command.action, command.risk);
+    await recorder.append({
+        type: "proposal",
+        recordedAt: new Date().toISOString(),
+        action: command.action,
+        risk: command.risk,
+        rationale: command.rationale,
+        policyDecision: decision,
+    });
+    if (decision.type !== "allow") {
+        return {
+            record: { type: "action-rejected", decision },
+            terminal: false,
+        };
+    }
+    const originFailure = blockedOrigin(
+        command.action,
+        page,
+        options.policy.allowedOrigins,
+    );
+    if (originFailure !== null) {
+        return {
+            record: { type: "action-rejected", reason: originFailure },
+            terminal: false,
+        };
+    }
+    if (command.action.type !== "navigate" && command.action.type !== "press") {
+        await driver.locate(command.action.target);
+    }
+    const result = await driver.act(command.action);
+    await recorder.append({
+        type: "action",
+        recordedAt: new Date().toISOString(),
+        action: command.action,
+        result,
+        rationale: command.rationale,
+    });
+    return {
+        record: { type: "action-completed", result },
+        terminal: false,
+    };
+}
+
+/**
+ * Run one browser attempt while an external LLM supplies each next action.
+ *
+ * The host process writes one JSON command per line and receives one JSON
+ * observation in response. This keeps discovery decisions outside the repo
+ * while preserving a single Playwright context, trace, policy gate, and event
+ * ledger for the complete attempt.
+ */
+export async function runInteractivePlaywrightSession(
+    options: SessionOptions,
+): Promise<void> {
+    const session = await createInteractiveSession(options);
+
+    try {
+        emit({
+            type: "ready",
+            runId: session.runId,
+            runDirectory: session.runDirectory,
+            observation: session.initialObservation,
         });
 
         const lines = createInterface({
@@ -92,89 +303,22 @@ export async function runInteractivePlaywrightSession(
         });
         for await (const line of lines) {
             if (line.trim() === "") continue;
+            let command: SessionCommand;
             try {
-                const command = parseSessionCommand(line);
-                if (command.type === "observe") {
-                    const observation = await driver.observe({
-                        includeAccessibility: true,
-                        includeScreenshot: command.screenshot ?? false,
-                    });
-                    await recorder.append({
-                        type: "observation",
-                        recordedAt: new Date().toISOString(),
-                        observation,
-                    });
-                    emit({ type: "observation", observation });
-                    continue;
-                }
-                if (command.type === "checkpoint") {
-                    await recorder.append({
-                        ...command,
-                        recordedAt: new Date().toISOString(),
-                    });
-                    emit({ type: "checkpoint-recorded", name: command.name });
-                    continue;
-                }
-                if (command.type === "finish") {
-                    await capture.finish(command.outcome);
-                    finished = true;
-                    emit({ type: "finished", outcome: command.outcome });
-                    lines.close();
-                    break;
-                }
-
-                const decision = policy.evaluate(command.action, command.risk);
-                await recorder.append({
-                    type: "proposal",
-                    recordedAt: new Date().toISOString(),
-                    action: command.action,
-                    risk: command.risk,
-                    rationale: command.rationale,
-                    policyDecision: decision,
-                });
-                if (decision.type !== "allow") {
-                    emit({ type: "action-rejected", decision });
-                    continue;
-                }
-                const originFailure = blockedOrigin(
-                    command.action,
-                    page,
-                    options.policy.allowedOrigins,
-                );
-                if (originFailure !== null) {
-                    emit({ type: "action-rejected", reason: originFailure });
-                    continue;
-                }
-                if (
-                    command.action.type !== "navigate" &&
-                    command.action.type !== "press"
-                ) {
-                    await driver.locate(command.action.target);
-                }
-                const result = await driver.act(command.action);
-                await recorder.append({
-                    type: "action",
-                    recordedAt: new Date().toISOString(),
-                    action: command.action,
-                    result,
-                    rationale: command.rationale,
-                });
-                emit({ type: "action-completed", result });
+                command = parseSessionCommand(line);
             } catch (error) {
                 emit({ type: "command-error", error: describeError(error) });
+                continue;
+            }
+            const outcome = await session.handle(command);
+            emit(outcome.record);
+            if (outcome.terminal) {
+                lines.close();
+                break;
             }
         }
-
-        if (!finished) {
-            await capture.finish({
-                status: "error",
-                code: "controller-disconnected",
-                summary:
-                    "The external discovery controller disconnected before finalizing the run.",
-            });
-        }
     } finally {
-        await closeQuietly(context, browser);
+        await session.close();
     }
 }
 
