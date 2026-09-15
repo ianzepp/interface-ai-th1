@@ -131,3 +131,63 @@ storage layout.
 - The first reviewed baseline snapshot for each target.
 - Exact synthetic entities and transactions in those baselines.
 - The representative prompt matrix for exploration and evidence capture.
+
+## 2026-09-15 — Three-phase LedgerSMB capability corpus
+
+### Decision
+
+Use three bounded LedgerSMB capabilities as the core training, recording, and
+replay corpus. Each capability starts from a named snapshot, ends at a named
+snapshot, and is recorded as an independent run.
+
+1. `create-trading-partners`
+   - Start: `initialized-company`
+   - Create the synthetic customer and vendor with valid customer/vendor account
+     classes and AR/AP defaults.
+   - End: `partners-ready`
+2. `create-inventory-catalog`
+   - Start: `partners-ready`
+   - Create `Main Warehouse` and the `TRAIL-PACK-40` inventory part with its
+     pricing, unit, bin, reorder point, and account mappings.
+   - End: `catalog-ready`
+3. `exercise-inventory-lifecycle`
+   - Start: `catalog-ready`
+   - Post the 30-unit vendor purchase, post the three-unit customer sale, record
+     a physical count of 25 from 27 expected, and approve the two-unit shortage.
+   - End: `clean-baseline-v1`
+
+The snapshot progression is therefore:
+
+```text
+initialized-company
+  -> create-trading-partners
+partners-ready
+  -> create-inventory-catalog
+catalog-ready
+  -> exercise-inventory-lifecycle
+clean-baseline-v1
+```
+
+### Recording contract
+
+- Reset to the capability's named starting snapshot before every attempt.
+- Treat each reset-to-terminal attempt as a separate run.
+- Capture the prompt, reset receipt, manifest, event ledger, Playwright trace,
+  meaningful checkpoint screenshots, outcome, and run README.
+- Capture at least two clean successful runs per capability before treating the
+  interaction as understood.
+- Preserve useful failed attempts as distinct runs and classify their failures.
+- Compare repeated successes to identify incidental values such as timestamps,
+  generated identifiers, transient DOM identifiers, menu state, and response
+  timing before compiling deterministic selectors and transitions.
+
+### Replay boundary
+
+The deterministic replay must operate through the application UI and branch on
+observable application state. Direct database queries may verify preconditions
+and final accounting invariants, but they are test assertions rather than
+replay actions or control-flow inputs.
+
+The first successful Playwright trace is evidence, not the specification. The
+stage graph should be compiled only after repeated recordings expose the stable
+actions, observations, terminal conditions, and known exception shapes.
