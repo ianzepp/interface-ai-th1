@@ -327,6 +327,14 @@ Build the smallest reviewed state graph that covers the demonstrated path:
 9. Add successful replay run IDs to artifact provenance only after checking the
    checkpoint and persisted-state assertions.
 
+Measure replay time at two boundaries. The replay run records browser execution
+from run creation through terminal outcome, with timestamps at every action and
+detector checkpoint so stage durations can be calculated. The surrounding
+harness separately measures environment reset, service readiness, compilation,
+and other setup costs. Do not mix harness time into capability latency or report
+a single local run as a performance claim. Preserve the sample count and target
+environment with any timing summary.
+
 The engine owns graph traversal, input binding, policy evaluation, target
 resolution, detector matching, extraction, and typed terminal results. The
 surface driver owns browser-specific location, action, waiting, observation,

@@ -309,3 +309,57 @@ parts, or entity credit accounts.
 - Replay uses the same run evidence layout as discovery.
 - Do not overwrite the existing `initialized-company` snapshot implicitly;
   snapshot creation remains an intentional post-verification harness action.
+
+### Replay timing baseline
+
+The two successful deterministic initialization replays took 6.495 seconds and
+6.439 seconds from replay-run creation through finalization, for a mean of 6.467
+seconds. The complete development command, including compilation, destructive
+Docker reset, service health checks, and browser replay, took approximately
+14–15 seconds in the observed local runs.
+
+`run.json` directly stores the replay `startedAt` and `finishedAt` timestamps.
+`events.jsonl` stores timestamps for every completed action and detector
+checkpoint, so stage durations are derivable even though they are not currently
+materialized as explicit duration fields. The outer compilation and Docker-reset
+time is not part of the replay metadata.
+
+Mean stage durations across the two successful replays (`n = 2`) were:
+
+| Stage                   |     Mean |
+| ----------------------- | -------: |
+| `open-setup`            |   319 ms |
+| `fill-db-admin`         |    24 ms |
+| `fill-db-password`      |    35 ms |
+| `fill-company`          |    11 ms |
+| `create-company`        | 3,439 ms |
+| `open-country-list`     |    49 ms |
+| `choose-chart-country`  |    39 ms |
+| `confirm-chart-country` |   256 ms |
+| `confirm-chart`         |   341 ms |
+| `load-templates`        |   245 ms |
+| `fill-username`         |    12 ms |
+| `fill-user-password`    |    12 ms |
+| `fill-first-name`       |    10 ms |
+| `fill-last-name`        |    10 ms |
+| `fill-employee-number`  |    11 ms |
+| `fill-birth-date`       |    13 ms |
+| `fill-tax-id`           |     8 ms |
+| `open-salutation`       |    46 ms |
+| `choose-salutation`     |    48 ms |
+| `open-country`          |    80 ms |
+| `choose-country`        |   101 ms |
+| `open-permissions`      |    71 ms |
+| `choose-permissions`    |    83 ms |
+| `create-user`           |   271 ms |
+| `open-login`            |    77 ms |
+| `fill-login-user`       |    12 ms |
+| `fill-login-password`   |    10 ms |
+| `fill-login-company`    |     9 ms |
+| `authenticate`          |   531 ms |
+| `dismiss-expiry`        |   263 ms |
+
+Company database creation dominates the replay at roughly 53% of total browser
+time. These numbers are an initial local baseline rather than a performance
+claim; future evidence should report hardware/environment, sample count, and a
+distribution rather than only a mean.
