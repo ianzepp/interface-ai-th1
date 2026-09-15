@@ -58,6 +58,11 @@ Isolation:
   --keep               Leave the Docker instance running afterwards, and print
                        how to inspect or remove it.
   --no-author          Provision and tear down without running a session.
+  --audit              Review what the lane produced before tearing down. Runs a
+                       second Codex as an independent reviewer, and reports
+                       rather than repairing, so the artifact stays as the author
+                       wrote it. Needs workspace isolation so the lane's output
+                       can be told apart from everything else.
 
 Forwarded to scripts/author:
   --model <model>      Model passed to codex exec.
@@ -95,6 +100,7 @@ lane_port=""
 workspace=""
 keep_instance=0
 run_author=1
+run_audit=0
 forwarded_arguments=()
 
 while [[ $# -gt 0 ]]; do
@@ -137,6 +143,10 @@ while [[ $# -gt 0 ]]; do
             run_author=0
             shift
             ;;
+        --audit)
+            run_audit=1
+            shift
+            ;;
         --no-isolation)
             workspace="${ROOT_DIRECTORY}"
             shift
@@ -167,6 +177,9 @@ if ((run_author == 1)); then
     [[ -n "${goal_text}" ]] || fail "--goal is required"
 fi
 [[ -n "${workspace}" ]] || workspace="${ROOT_DIRECTORY}/worktrees/${lane_name}"
+if ((run_audit == 1)) && [[ "${workspace}" == "${ROOT_DIRECTORY}" ]]; then
+    fail "--audit needs workspace isolation to tell the lane's output from the rest"
+fi
 
 # The lane's port comes from scripts/target so the port arithmetic lives in one
 # place. Resolving it before provisioning keeps the origin passed to the author
@@ -295,6 +308,23 @@ node dist/src/authoring/author-cli.js \
     --origin "${origin}" \
     ${forwarded_arguments[@]+"${forwarded_arguments[@]}"}
 
+# Optional independent review. Opt-in because it costs a second model pass, and
+# it reports rather than repairs, so the artifact is left exactly as authored.
+audit_status=0
+if ((run_audit == 1)); then
+    printf '\nAuditing what lane %s produced\n' "${lane_name}"
+    produced="$(git -C "${workspace}" status --porcelain |
+        awk '{print $2}' | grep '^src/capabilities/.*\.ts$' || true)"
+    if [[ -z "${produced}" ]]; then
+        printf 'no capability artifact was produced, so there is nothing to audit\n'
+    else
+        for source_path in ${produced}; do
+            scripts/audit-artifact --source "${source_path}" --model-review ||
+                audit_status=$?
+        done
+    fi
+fi
+
 # The workspace is kept because it holds the artifact and the runs. Report the
 # lane's own work, which is everything the agent changed since its baseline.
 if [[ "${workspace}" != "${ROOT_DIRECTORY}" ]]; then
@@ -305,3 +335,5 @@ if [[ "${workspace}" != "${ROOT_DIRECTORY}" ]]; then
     printf 'diffstat:\n'
     git -C "${workspace}" diff HEAD --stat | sed 's/^/  /' || true
 fi
+
+exit "${audit_status}"
