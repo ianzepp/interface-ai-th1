@@ -252,7 +252,19 @@ prepare_workspace() {
     # snapshot archives (Docker bind-mounts into this path, so it is a copy rather
     # than a symlink), and its own run and temporary roots.
     ln -sfn "${ROOT_DIRECTORY}/node_modules" "${workspace}/node_modules"
-    cp -a "${ROOT_DIRECTORY}/snapshots" "${workspace}/snapshots"
+
+    # Copy the snapshot *contents*, not the directory. A worktree already contains
+    # `snapshots/` because `snapshots/README.md` is tracked, so copying the
+    # directory into it nests one level too deep and leaves the lane unable to find
+    # a fixture. The assertion below is here because that failure otherwise
+    # surfaces from a different script as "snapshot does not exist".
+    mkdir -p "${workspace}/snapshots"
+    cp -a "${ROOT_DIRECTORY}/snapshots/." "${workspace}/snapshots/"
+    [[ -d "${workspace}/snapshots/${target_name}/${fixture_name}" ]] ||
+        fail "lane snapshot copy is wrong: ${workspace}/snapshots/${target_name}/${fixture_name} is missing"
+    [[ -d "${workspace}/node_modules" ]] ||
+        fail "lane dependency link is broken: ${workspace}/node_modules"
+
     mkdir -p "${workspace}/runs" "${workspace}/tmp"
 
     # Commit the copied state inside the lane, so the lane starts clean and
