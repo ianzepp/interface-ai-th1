@@ -9,6 +9,12 @@ Capture what actually happens while an LLM explores an allowlisted browser
 surface, then turn stable recorded behavior into a reviewed deterministic
 capability.
 
+The unit of authoring is a corpus-building session, not one browser run. One
+run is one immutable reset-to-terminal experiment. An authoring session uses as
+many successful, failed, and recovered runs as needed to ground the smallest
+useful state graph. The LLM may make judgments while authoring; the approved
+artifact must replay without an LLM making execution decisions.
+
 ## Mission
 
 Use this skill as the operating method for taking an unfamiliar application
@@ -48,6 +54,64 @@ knowledge from the original authoring session.
   unknown UI state.
 - Do not compile a stage graph during an individual capture attempt. Finish and
   preserve the run before comparing it with the corpus or editing an artifact.
+
+## Authoring Session Boundary
+
+Keep these three boundaries distinct:
+
+- A **run** is one immutable reset-to-terminal attempt with its own manifest,
+  event ledger, trace, screenshots, and outcome.
+- An **authoring session** is the LLM-guided loop that plans, captures, compares,
+  and classifies multiple runs while revising a capability draft.
+- An **approved artifact** is the reviewed state graph that has passed
+  deterministic replay against its admitted scenario matrix.
+
+The first successful run should produce a typed provisional draft. This
+satisfies the need to emit a structured artifact while preserving the truth
+that one success cannot establish stable targets, complete detectors, runtime
+branches, or safe recovery. Keep the draft marked as provisional and continue
+the authoring session.
+
+The authoring session ends only when the approval conditions in this skill are
+met. A model deciding that it has seen enough is not itself evidence; the
+corpus, graph review, and deterministic replay results are the evidence.
+
+## Corpus-Level Authoring Loop
+
+Follow this loop for each capability:
+
+1. Define the capability contract: goal, starting state, typed inputs, typed
+   outputs, success condition, allowed surface, and safety limits.
+2. Establish a resettable fixture and record the reset evidence.
+3. Capture one complete successful run through the real application.
+4. Extract a provisional linear draft from that run. Do not approve or replay
+   it unattended merely because extraction succeeded.
+5. Reset and capture at least one corroborating success. Compare actions,
+   targets, observations, timing, generated values, and the terminal checkpoint.
+6. Review the draft into a stable happy-path graph using only grounded actions
+   and observed state markers.
+7. Generate a small, risk-ranked failure matrix from the capability contract,
+   application behavior, assignment-required runtime classes, and surprises in
+   the successful corpus.
+8. Reset and capture each selected failure experiment as its own run. Change
+   one relevant condition at a time so the divergence remains attributable.
+9. When a known state can be recovered safely, let the LLM attempt the bounded
+   recovery in the same run. If the run already terminated, use a new reset run
+   to test the recovery. Never infer a recovery edge from an error-only run.
+10. Compare each exception run with the current draft, classify the observed
+    state, and revise the graph through explicit LLM or human judgment.
+11. Replay the revised artifact without an LLM across the happy path and every
+    admitted business, recovery, intervention, and hard-failure scenario.
+12. Approve the artifact when the stopping conditions below hold. Otherwise,
+    preserve the evidence, revise the experiment or graph, and continue the
+    authoring loop.
+
+This loop is intentionally asymmetric. Extraction and replay are mechanical.
+Choosing fixtures, selecting useful failure experiments, deciding whether a
+condition is recoverable, and fitting grounded evidence into the graph are
+reviewable authoring judgments. A tool may align runs, extract observations,
+or scaffold a proposed branch, but it must not silently decide the semantics of
+an exception or make an unsupported recovery claim.
 
 ## Required Run Contract
 
@@ -116,6 +180,30 @@ unknown warning.
 `fresh` and `reset` delete only the selected target's current Docker volumes.
 Never run them during an active capture. Use `up` and `stop` when the current
 working state must be preserved.
+
+### Choosing Snapshot Boundaries
+
+Snapshot placement is an authoring judgment. Create a reusable starting
+snapshot only at a stable application boundary where:
+
+- all prerequisite records and configuration are complete;
+- no request, transaction, migration, or asynchronous application update is in
+  flight;
+- the visible state and authoritative persisted state agree;
+- the state can be described as a capability precondition without relying on
+  undocumented manual repair; and
+- resetting to it does not inherit output or mutation from the scenario being
+  tested.
+
+Prefer one clean snapshot that supports several input-driven scenarios. Create
+a dedicated deliberately broken snapshot only when the failure depends on
+persisted state that cannot be introduced safely through the scenario itself.
+Document the broken invariant, expected failure shape, and recovery limits.
+
+Do not snapshot arbitrary browser positions. Browser storage may accompany a
+scenario when authentication state is part of the fixture design, but it does
+not replace the persistent target snapshot. Never snapshot an uncertain
+post-action state merely to avoid determining whether the action committed.
 
 ## Exploratory Setup and Learning Loop
 
@@ -206,10 +294,12 @@ state.
 4. Start Playwright tracing with screenshots and DOM snapshots enabled.
 5. Observe the current UI.
 6. Ask the LLM for one bounded action through the typed computer-use interface.
-7. Apply the policy decision, execute the action if allowed, and append the
-   sanitized event evidence.
-8. Repeat observe, decide, act, and record until a terminal condition occurs.
-9. Stop the trace into `trace.zip` and finalize the manifest and README.
+7. Record the proposed action, rationale, and policy decision before execution
+   so a thrown locator or browser action cannot erase evidence of the attempt.
+8. Execute the action if allowed, then record its target resolution, result,
+   timing, resulting observation, and error when one occurs.
+9. Repeat observe, decide, act, and record until a terminal condition occurs.
+10. Stop the trace into `trace.zip` and finalize the manifest and README.
 
 A retry after another reset is a new run with a new run identifier. Never append
 a retry to the prior run.
@@ -219,6 +309,10 @@ a retry to the prior run.
 Use `satisfied` only after observing the declared checkpoint in the UI or in a
 trusted target response. A model statement that the goal is complete is not
 evidence by itself.
+
+A deliberate exception experiment may use the observed exception state as its
+declared checkpoint and therefore end as `satisfied`. That means the experiment
+proved its scenario; it does not mean the original capability goal succeeded.
 
 Use `error` for every other terminal result, including:
 
@@ -297,6 +391,12 @@ Executed observations are the source of truth. Never invent a step, locator,
 output, checkpoint, or successful result. Preserve input provenance so later
 artifact work can distinguish invocation values from accidental literals.
 
+If the recorder loses an attempted action because execution threw before the
+action event was appended, use the trace and terminal evidence for diagnosis
+but do not claim automatic branch extraction from that ledger. Improve the
+recording boundary or capture again before treating the run as complete
+grounding for a recovery action.
+
 ## Targeting During Discovery
 
 Prefer stable semantic target information in this order:
@@ -312,44 +412,157 @@ screen coordinates, generated class names, transient row positions, or guessed
 selectors as durable targets. Coordinates may remain in raw evidence when that
 is how the action was executed.
 
-## Exception Capture
+## Failure Discovery and Recovery Authoring
 
-This phase discovers exceptions; it does not encode their recovery graph. When
-an exception appears, record:
+Begin deliberate failure discovery only after a provisional happy-path graph
+exists. The graph gives each experiment an intended stage, expected state, and
+safe reset point. Do not conduct unbounded fuzzing or mutate the fixture without
+a hypothesis and a way to restore it.
 
-- where it occurred;
-- the observable shape of the state;
-- the attempted action and application response;
-- whether a safe recovery was attempted;
-- the resulting state; and
-- whether the run ended in satisfaction or error.
+### Build the Failure Matrix
 
-Do not speculate that an unseen exception exists. Exercise deliberate red paths
-only through fixture data or actions allowed by the run contract.
+Generate hypotheses; do not generate artifact facts. Consider:
+
+- invalid, missing, boundary, or conflicting invocation inputs;
+- legitimate business outcomes such as no matching record or a duplicate;
+- missing prerequisite application state;
+- permission or role denial;
+- known confirmation dialogs and interstitials;
+- session or authentication expiry;
+- delayed dependent values, transient loads, and bounded timeouts;
+- application errors after an action whose commit status may be uncertain; and
+- weak, missing, or ambiguous targets exposed by repeated runs.
+
+Rank candidates by realistic likelihood, consequence, value to the caller, and
+whether the condition can be reproduced safely. Select a small matrix that
+exercises the capability's important runtime boundaries. Broad or exhaustive
+exception coverage is not required.
+
+For each selected experiment, declare before capture:
+
+- the current draft or artifact version and intended stage;
+- the starting fixture and reset evidence;
+- the single condition being changed;
+- the expected observable divergence;
+- whether mutation may already have occurred when the divergence appears;
+- the maximum safe recovery actions; and
+- the expected terminal classification if recovery does not succeed.
+
+### Capture and Classify the Result
+
+When an exception appears, record:
+
+- the last recognized state and intended stage;
+- the proposed or attempted action, including failures before completion;
+- the observable application response and evidence references;
+- the resulting visible and persisted state;
+- whether a bounded recovery was attempted;
+- every recovery action and the state reached after it; and
+- whether the original capability goal was ultimately satisfied.
+
+Classify the evidence after the run:
+
+- **business outcome**: a legitimate answer the caller must handle, even though
+  the requested success condition was not reached;
+- **recoverable condition**: a recognized state with an observed, bounded path
+  back to a declared stage;
+- **intervention required**: automation cannot proceed safely, but a person can
+  act on the same live session and return it to a recognized state;
+- **hard failure**: the capability must stop and report a debuggable failure;
+- **authoring or instrumentation defect**: the locator, detector, recorder,
+  policy description, or evidence is wrong or incomplete; or
+- **unknown**: the evidence does not support a stronger classification.
+
+A run's lifecycle status and an artifact outcome are different. A run may end
+as `error` while demonstrating a stable business outcome. A scenario explicitly
+defined to prove an error state may end as `satisfied` when that checkpoint is
+observed. Use the declared scenario and evidence, not the status word alone,
+when revising the graph.
+
+Do not encode a hypothesis merely because it is plausible. Do not call a
+condition recoverable because a recovery seems obvious. A recovery edge is
+grounded only when a recorded action reaches its declared destination, and an
+automatic retry is allowed only when evidence establishes that repeating the
+action cannot duplicate or corrupt state.
+
+If a failed action's commit status is uncertain, inspect authoritative state
+before retrying. Route to intervention or hard failure when that uncertainty
+cannot be resolved safely.
+
+### Fit Evidence into the Graph
+
+Graph revision is an LLM or human authoring judgment, not a mechanical merge:
+
+- Add an observed business state as another detector on the stage whose action
+  produced it, then route it to a typed business outcome.
+- Add a post-action recoverable state as another detector and route it to one
+  or more recovery stages whose actions were observed succeeding.
+- Add an actionless guard stage when a condition such as session expiry must be
+  detected before the intended action.
+- Resume only at a stage whose entry state was observed after recovery. Do not
+  jump to a convenient stage or repeat a mutating action without evidence.
+- Route a condition to intervention only when the same live session can be
+  preserved and resume validation is defined.
+- Keep authoring defects out of the application graph. Correct the recorder,
+  locator, detector, or policy description and capture again.
+- Leave unsupported and unknown states on the stage's explicit hard-failure
+  fallback.
+
+An alignment or branch-drafting tool may propose the first divergence,
+candidate detector signals, or a graph patch. Treat that output as a review aid.
+The author must check the run ledger, trace, screenshots, target behavior, and
+persisted-state evidence before accepting it.
 
 ## Artifact and Replay Loop
 
-Begin artifact work only after at least two successful captures agree on the
-important action sequence and terminal checkpoint. A recorded action is
-evidence that an action occurred; it is not automatically proof that the
-serialized locator accurately describes the locator the browser library
-resolved. Compare the recorder implementation, trace, and repeated observations
-before approving every target.
+After the first successful capture, extract a provisional draft from the
+repository root:
+
+```sh
+npm run draft:artifact -- \
+  --run runs/<successful-run-id> \
+  --id <capability-id> \
+  --out tmp/drafts/<capability-id>.json
+```
+
+The event ledger is the semantic action source. The Playwright trace
+corroborates what the browser actually executed and supplies DOM and visual
+evidence. The extractor may infer bindings, targets, detectors, and risks only
+as visibly marked draft suggestions. Its output is neither approved nor safe
+for unattended replay.
+
+Reset and capture at least one corroborating success before approving the happy
+path. A recorded action proves that an action occurred; it does not
+automatically prove that the serialized locator accurately describes the
+locator the browser library resolved. Compare the recorder implementation,
+trace, and repeated observations before approving every target.
 
 Build the smallest reviewed state graph that covers the demonstrated path:
 
-1. Copy only actions that occurred in the successful corpus.
+1. Include an action only when a run recorded that action completing. The whole
+   run need not have reached the original success condition, but the action and
+   state it claims must be grounded.
 2. Replace literal invocation values with typed input bindings.
-3. Annotate each action with a stable post-action detector observed in the
-   traces. Do not guess detectors from arbitrary page text.
-4. Give every stage an explicit fallback terminal outcome.
-5. Enforce the artifact's origin and action allowlists before acting.
-6. Require exactly one target match. Zero or multiple matches end the stage.
-7. Preserve every replay, including failures, in the same run-directory shape
+3. Define typed outputs and extractions from values actually observed on the
+   declared terminal or intermediate states.
+4. Annotate each action with stable success and exception detectors observed in
+   the corpus. Do not guess detectors from arbitrary page text.
+5. Add only recovery actions whose run reached the state named by the recovery
+   edge.
+6. Give every stage an explicit fallback terminal outcome.
+7. Enforce the artifact's origin and action allowlists before acting.
+8. Require exactly one target match. Zero or multiple matches end the stage.
+9. Preserve every replay, including failures, in the same run-directory shape
    as discovery captures.
-8. Reset the fixture and replay again. One success is not validation.
-9. Add successful replay run IDs to artifact provenance only after checking the
-   checkpoint and persisted-state assertions.
+10. Reset the fixture and replay again. One success is not validation.
+11. Add successful replay run IDs to artifact provenance only after checking the
+    checkpoint and persisted-state assertions.
+
+The current artifact provenance records the primary discovery run and checked
+successful replay runs. Keep exception and recovery source runs in the reviewed
+corpus record unless and until the artifact schema explicitly supports
+branch-level provenance. Do not place them in a field reserved for successful
+replay validation.
 
 Measure replay time at two boundaries. The replay run records browser execution
 from run creation through terminal outcome, with timestamps at every action and
@@ -371,9 +584,47 @@ strict replay should expose a serialized locator that differs from the locator
 actually exercised during discovery rather than silently choosing a nearby
 element.
 
+When replay reveals a new legitimate application state, return to the authoring
+loop. Preserve the replay as evidence, reproduce the condition through a
+bounded recorded experiment when necessary, revise the graph through review,
+and replay the revised scenario. Never let the deterministic engine ask an LLM
+to decide what to do with the new state.
+
 Docker reset and snapshot operations remain outside the browser graph. Create
 or replace a named ending snapshot only after the browser checkpoint and
 independent persisted-state assertions pass.
+
+## Artifact Approval Conditions
+
+Approve a capability only when all of the following hold:
+
+- At least two successful captures from reset agree on the important happy-path
+  actions, state transitions, and terminal checkpoint.
+- Every serialized action, target, detector, extraction, and recovery edge is
+  traceable to recorded evidence or an explicit reviewed correction to
+  recording metadata.
+- Invocation-specific values are typed inputs rather than accidental literals,
+  and declared outputs have verified extraction behavior.
+- Every stage has recognized destinations for its admitted states and an
+  explicit fail-closed destination for everything else.
+- The selected failure matrix is documented and justified by risk and value;
+  unselected plausible failures are not represented as supported behavior.
+- Every business outcome in the graph has been observed and replayed to the
+  declared typed result.
+- Every automatic recovery has been observed reaching its declared resume
+  state and has been replayed without duplicate or uncertain mutation.
+- Every intervention route preserves the same live session, supplies actionable
+  context and evidence, and validates the state before resuming.
+- Hard failures preserve enough evidence to identify the stage, expected state,
+  observed divergence, and relevant trace or screenshot.
+- The happy path and every admitted branch have been replayed from their named
+  reset fixture without an LLM in the execution decision loop.
+- The happy-path replay has succeeded more than once, and final visible and
+  persisted-state assertions agree.
+
+Approval does not claim exhaustive error coverage. It claims that the graph is
+deterministic and evidence-grounded for the scenarios it explicitly admits,
+and that all other states fail closed.
 
 ## Data Safety
 
@@ -387,7 +638,11 @@ independent persisted-state assertions pass.
 
 ## Deferred Work
 
-Automatic graph synthesis, a formal artifact approval workflow, generalized
-recovery graphs, and broad exception coverage remain deferred. Do not let those
-future concerns make either the capture loop or the first reviewed replay more
-elaborate than its evidence requires.
+Automatic semantic graph synthesis, automatic failure-to-branch merging, a
+formal approval service, exhaustive exception discovery, and a generalized
+cross-application recovery library remain deferred.
+
+Bounded failure discovery and reviewed recovery branches are not deferred. They
+are part of authoring a useful deterministic capability. Keep that work
+proportional to the selected capability and its risk-ranked scenario matrix;
+do not turn the assignment into a claim of exhaustive application modeling.
