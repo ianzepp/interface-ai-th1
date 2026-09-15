@@ -177,19 +177,19 @@ operation, and no socket of its own, which is what makes concurrency possible:
 because a session is one self-contained execution rather than a sequence the
 launcher steps through, several can run at once, each on its own lane.
 
-| Option                   | Meaning                                                  |
-| ------------------------ | -------------------------------------------------------- |
-| `--goal <text>`          | The capability goal. Required.                           |
-| `--target <name>`        | `ledgersmb` or `dolibarr`. Required.                     |
-| `--fixture <snapshot>`   | Starting fixture snapshot name. Required.                |
-| `--lane <name>`          | Lane name; defaults to a timestamped value.              |
-| `--max-runs <n>`         | Recorded runs allowed in total. Defaults to 4.           |
-| `--max-actions <n>`      | Browser actions allowed per run. Defaults to 60.         |
-| `--timeout <ms>`         | Whole-session budget. Defaults to one hour.              |
-| `--model <model>`        | Model passed to `codex exec`.                            |
-| `--codex-sandbox <mode>` | `read-only`, `workspace-write`, or `danger-full-access`. |
-| `--preflight`            | Verify the transport only, without authoring anything.   |
-| `--print-prompt`         | Print the prompt and exit.                               |
+| Option                   | Meaning                                                                                                    |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------- |
+| `--goal <text>`          | The capability goal. Required.                                                                             |
+| `--target <name>`        | `ledgersmb` or `dolibarr`. Required.                                                                       |
+| `--fixture <snapshot>`   | Starting fixture snapshot name. Required.                                                                  |
+| `--lane <name>`          | Lane name; defaults to a timestamped value.                                                                |
+| `--max-runs <n>`         | Recorded runs allowed in total. Defaults to 8, which leaves room for the happy path plus a failure matrix. |
+| `--max-actions <n>`      | Browser actions allowed per run. Defaults to 60.                                                           |
+| `--timeout <ms>`         | Whole-session budget. Defaults to one hour.                                                                |
+| `--model <model>`        | Model passed to `codex exec`.                                                                              |
+| `--codex-sandbox <mode>` | `read-only`, `workspace-write`, or `danger-full-access`.                                                   |
+| `--preflight`            | Verify the transport only, without authoring anything.                                                     |
+| `--print-prompt`         | Print the prompt and exit.                                                                                 |
 
 Each session writes its prompt, its final message, and its report under
 `tmp/discovery/<lane>/`, so what the model was asked is part of the record.
