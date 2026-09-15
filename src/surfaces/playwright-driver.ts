@@ -14,6 +14,19 @@ import type {
   TargetResolution,
 } from "./surface-driver.js";
 
+/**
+ * The first `SurfaceDriver`: a browser page driven through Playwright.
+ *
+ * STATUS: no method is implemented yet. The class exists to fix the adapter
+ * shape early, so the surface vocabulary can be reviewed without Playwright's
+ * API leaking into it.
+ *
+ * Once implemented, Playwright supplies locating, waiting, extraction, and
+ * tracing, and this adapter translates in both directions between that API and
+ * the surface-neutral vocabulary. Nothing in the artifact schema names
+ * Playwright, so adding a second surface changes no recorded flow.
+ */
+
 export class PlaywrightBrowserDriver implements SurfaceDriver {
   public constructor(
     public readonly context: BrowserContext,

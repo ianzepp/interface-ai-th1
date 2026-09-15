@@ -1,12 +1,26 @@
 import { cp, lstat, mkdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 
+/**
+ * Promoting scratch runs into the committed evidence set.
+ *
+ * Runs are written to a working directory while the system is being exercised;
+ * `evidence/` is the deliverable a reviewer reads. Promotion is that curation
+ * gate. Only finalized runs holding every required file are copied, and nothing
+ * is overwritten, so what is committed stays a deliberate selection rather than
+ * a directory dump of whatever happened to run.
+ *
+ * Validation covers every requested run before the first copy begins, so a bad
+ * request fails without leaving evidence half-promoted.
+ */
+
 export interface PromoteTestRunsOptions {
   runsDirectory: string;
   evidenceDirectory: string;
   runIds: readonly string[];
 }
 
+/** One run that was promoted, and the outcome it was validated against. */
 export interface PromotedTestRun {
   runId: string;
   status: "satisfied" | "error";
@@ -22,6 +36,13 @@ const REQUIRED_RUN_FILES = [
   "trace.zip",
 ] as const;
 
+/**
+ * Copy finalized runs into the evidence directory.
+ *
+ * Run IDs are validated and de-duplicated up front, and an existing destination
+ * is refused rather than merged: two evidence directories claiming the same run
+ * would disagree about provenance, which is the one thing evidence cannot do.
+ */
 export async function promoteTestRuns(
   options: PromoteTestRunsOptions,
 ): Promise<readonly PromotedTestRun[]> {
