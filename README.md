@@ -237,6 +237,50 @@ proposal before every action, so a refused action leaves evidence rather than a
 gap. Authentication happens before tracing starts, so a fixture credential
 reaches neither the trace nor the ledger.
 
+### `scripts/audit-artifact` — review a capability artifact
+
+Reviews an artifact in two layers, and the difference between them is the point.
+
+```sh
+scripts/audit-artifact                              # every artifact
+scripts/audit-artifact --capability dolibarr.lookup-third-party
+scripts/audit-artifact --source src/capabilities/some-capability.ts
+scripts/audit-artifact --capability <id> --model-review
+```
+
+**The mechanical layer always runs, and it is free.** It is a rubric of rules
+decidable from the artifact alone: whether `targetProfile` resolves, whether policy
+origins belong to the target's profile, whether a state-changing activation
+resolves by position rather than identity, whether a `fill` or `select` could
+observe its own effect, whether the graph is structurally sound and reachable, and
+whether the contract's declared inputs and outputs are actually bound and produced.
+It exits non-zero on a blocking finding, so it works as a gate.
+
+**The model layer is opt-in** with `--model-review`. It exists only for what a
+program cannot decide: whether a detector is meaningful, whether the branch claim
+is true, whether any stage was guessed rather than observed. It defaults to
+`gpt-5.6-sol` at `medium` — a different model family from the usual author, because
+independence matters more than capability in a reviewer — and the reviewer is fixed
+so that reviews of different artifacts stay comparable.
+
+The reviewer is told what the mechanical pass already found, so it does not
+rediscover it, and it is told to report rather than repair. It also has to cite
+evidence for every finding, and it is explicitly asked what the author did _not_
+admit to, because an artifact that documents its own weaknesses makes it easy for a
+reviewer to add nothing.
+
+Reports land in `tmp/audit/`. `scripts/author-lane --audit` runs this against what a
+lane produces, before tearing it down.
+
+#### Where the mechanical layer is enforced
+
+`tests/artifact-quality.test.ts` runs the rubric over every artifact, discovered
+from the source tree so a new capability cannot skip it. Only blocking findings
+gate: a warning means the artifact is weaker than the skill asks for, and firing the
+build on warnings trains everyone to ignore them. Recorded blocking findings live in
+a ledger in that file whose counts must match in both directions, so fixing one
+forces its entry out and a stale entry cannot survive.
+
 ### `scripts/promote-run`
 
 Copies one or more reviewed, completed local runs into the tracked evidence
