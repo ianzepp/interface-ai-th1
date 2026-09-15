@@ -61,6 +61,81 @@ exists.
 Never run them during an active capture. Use `up` and `stop` when the current
 working state must be preserved.
 
+## Exploratory Setup and Learning Loop
+
+Fixture authoring is an exploratory phase before recorded test runs. Do not
+start Playwright tracing merely because an agent is learning the application or
+arranging seed data. Explore manually, inspect persisted state when useful, and
+record durable lessons in this skill and in snapshot documentation.
+
+Treat visible labels as hypotheses, not semantics. A control labeled `Save`,
+`Post`, `Approve`, `Receive`, or similar may update several independent kinds
+of state. Observe the state before and after each important action and separate:
+
+- configuration and identity state;
+- operational state such as reservations, availability, and workflow status;
+- accounting or approval state;
+- inventory quantity state;
+- valuation, allocation, or cost-layer state; and
+- reporting or derived state.
+
+Do not assume a draft is inert or that approval is the first mutation. Do not
+assume a screen whose name suggests initialization is valid for seeding opening
+state. Infer the workflow contract from observed UI transitions and persisted
+records.
+
+Build a clean fixture in dependency order:
+
+1. Create required configuration, identities, roles, accounts, and locations.
+2. Establish source records that make later state valid, such as inventory,
+   balances, or parent workflow objects.
+3. Verify both the visible state and the authoritative persisted state.
+4. Add downstream transactions, drafts, reservations, and approvals.
+5. Exercise corrections only after their prerequisite history exists.
+6. Verify invariants after each boundary before taking a clean snapshot.
+
+When exploration reaches a contradictory or contaminated state, preserve it
+only if it demonstrates a useful condition. Then return to a fresh fixture and
+rebuild in the corrected order. Do not rescue an exploratory database merely to
+avoid repeating setup; hidden manual repairs make later runs irreproducible.
+
+Classify observed failures before generalizing them:
+
+- **workflow constraint**: the application rejects an operation because its
+  required history or state transition is absent;
+- **state-model surprise**: the application mutates a different layer or at a
+  different time than the UI suggests;
+- **application defect**: the supported UI reaches an internally inconsistent,
+  unauthorized, or otherwise broken implementation path; or
+- **unknown**: the evidence is insufficient to distinguish the above.
+
+Keep the classification provisional until the persisted state or a clean
+reproduction supports it. One error message is evidence of the response, not a
+complete explanation of the cause.
+
+## Snapshot Documentation
+
+Every retained named snapshot must include a human-readable `README.md` beside
+its manifest and volume archives. A snapshot without historical context is not
+useful evidence and should not be retained merely because it can be restored.
+
+Document:
+
+- the snapshot's purpose and whether it is clean, exploratory, or deliberately
+  broken;
+- the important records and state boundaries it contains;
+- exact reset and reproduction steps;
+- the expected visible outcome or failure shape;
+- the current explanation and confidence or unresolved questions;
+- whether the condition is a workflow constraint, state-model surprise,
+  application defect, or unknown; and
+- whether a recorded browser run exists.
+
+Snapshot names are labels, not sufficient documentation. If a later discovery
+changes the explanation, update the README while preserving the distinction
+between facts stored in the snapshot and behavior observed only in a derived
+state.
+
 ## Test Run Lifecycle
 
 1. Reset the target fixture.
