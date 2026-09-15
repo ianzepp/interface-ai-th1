@@ -298,11 +298,59 @@ state.
    so a thrown locator or browser action cannot erase evidence of the attempt.
 8. Execute the action if allowed, then record its target resolution, result,
    timing, resulting observation, and error when one occurs.
-9. Repeat observe, decide, act, and record until a terminal condition occurs.
-10. Stop the trace into `trace.zip` and finalize the manifest and README.
+9. When the operating LLM identifies an important proof point, request a
+   screenshot and pair its evidence reference with a concise named checkpoint.
+10. Repeat observe, decide, act, record, and capture proof until a terminal
+    condition occurs.
+11. Capture the final visible proof point, stop the trace into `trace.zip`, and
+    finalize the manifest and README.
 
 A retry after another reset is a new run with a new run identifier. Never append
 a retry to the prior run.
+
+### LLM-Selected Screenshot Proof Points
+
+Playwright tracing continuously preserves browser imagery and DOM snapshots,
+but deliberate screenshots serve a different purpose: they are the small set
+of human-readable exhibits that prove why the operating LLM classified a state
+or ended a run.
+
+The operating LLM decides when a screenshot is materially useful. The harness
+must expose screenshot capture during the live browser session; it must not
+hard-code application-specific screenshot steps or capture every action by
+default. Make the decision after observing the resulting UI and before taking
+the next action or finalizing the run.
+
+Capture a screenshot when it materially proves one of these conditions:
+
+- the declared happy-path terminal checkpoint;
+- a business outcome, intervention state, hard failure, or unknown state;
+- the visible state immediately before and after a consequential mutation when
+  the pair is needed to establish what changed;
+- the beginning and successful end of an observed recovery branch;
+- an ambiguous target or surprising application state whose visual context is
+  necessary for later graph review; or
+- a transient state that the next action will dismiss or overwrite and that
+  cannot be reconstructed clearly from the event text alone.
+
+Do not capture screenshots merely because another action completed. Do not
+capture login forms containing populated credentials, secret-bearing dialogs,
+tokens, customer data outside the declared fixture, or other material that
+should not enter durable evidence. Authenticate before tracing when possible.
+
+For each deliberate screenshot:
+
+1. request an observation with screenshot capture enabled;
+2. verify that the returned image represents the intended proof point;
+3. append the observation and screenshot evidence path to the run ledger;
+4. record a concise checkpoint name stating what the image proves; and
+5. mention the proof point in the run outcome when it is terminal.
+
+The screenshot is evidence, not the detector itself. Artifact detectors must
+still use stable machine-observable signals grounded in the same state. A
+terminal run without a deliberate screenshot needs an explicit reason; a
+terminal screenshot that does not visibly support the declared outcome is an
+evidence defect and should be recaptured in a new run.
 
 ## Terminal Outcomes
 
@@ -346,7 +394,8 @@ runs/<run-id>/
 - `events.jsonl` is the ordered, sanitized event ledger.
 - `trace.zip` is the Playwright trace for visual and DOM inspection.
 - `screenshots/` contains meaningful checkpoints and the last useful terminal
-  state when those images were captured.
+  state selected by the operating LLM. It is not an automatic screenshot of
+  every step.
 
 Write the README when the run starts and update it when the run ends. A crashed
 process should therefore leave a recognizable `running` run rather than an
@@ -619,6 +668,9 @@ Approve a capability only when all of the following hold:
   observed divergence, and relevant trace or screenshot.
 - The happy path and every admitted branch have been replayed from their named
   reset fixture without an LLM in the execution decision loop.
+- Each happy-path and admitted-branch run has an LLM-selected terminal
+  screenshot that visibly supports its checkpoint, or an explicit reviewed
+  reason why visual proof was unavailable or unsafe to retain.
 - The happy-path replay has succeeded more than once, and final visible and
   persisted-state assertions agree.
 
