@@ -457,3 +457,82 @@ Validation corpus:
 All eleven selected discovery and replay runs were promoted unchanged under
 `evidence/runs/` after a bounded scan found no fixture password literal in any
 trace archive.
+
+## 2026-09-15 — Scripted discovery host: Codex
+
+### Decision
+
+Tie the capability-authoring control plane to the Codex CLI instead of building a
+provider-neutral agent host of our own.
+
+One `codex exec` invocation owns the whole loop: it reads
+`skills/capability-author/SKILL.md`, resets its own fixture, drives the browser,
+extracts a draft, writes the reviewed artifact, and validates it with a
+deterministic replay. `scripts/author` writes the prompt and launches it;
+`scripts/author-lane` gives it an isolated target instance and an isolated
+workspace.
+
+### Rationale
+
+- **Codex is straightforward for computer-use automation.** `browser_use` and
+  `computer_use` are stable, enabled features, and its bundled browser tooling
+  already treats loopback targets as a first-class case. Driving a browser with a
+  model is the genuinely fiddly part of this system, and Codex already does it.
+- **Computer use is a core requirement of the assignment**, so the authoring
+  plane has to be operated by a real computer-use agent. Demonstrating that with
+  a hand-rolled provider integration would exercise the integration rather than
+  the requirement.
+- **A CLI host can be scripted and a desktop-app host cannot.** `codex exec`
+  accepts a prompt, a working directory, a sandbox mode, model and
+  reasoning-effort overrides, and a timeout, and it returns a final message the
+  caller can read. That is what makes parallel authoring possible at all: several
+  isolated lanes at once, each with its own target instance, its own worktree, and
+  its own reasoning-effort setting.
+
+### Why the session still drives the browser
+
+Codex's own browser tooling is why it is a credible host for a computer-use task,
+but it is not what this repository uses to touch the target. A run driven by
+Codex's browser would bypass the recorder, the policy gate, and the trace, and so
+would produce no run directory, no event ledger, and no trace — grounding no
+artifact. The repository's own session is what makes a run into evidence, so the
+host is given a command-line hand to that session instead.
+
+### Why not generalize
+
+The assignment did not ask for a general-purpose application. It asked for
+something tight and well written, and a provider-neutral agent host would be
+speculative scope: an abstraction built ahead of its second implementation,
+covering a substitution nobody has asked for.
+
+The parts that carry the design are already host-neutral. The skill is markdown,
+the session seam takes typed commands over a socket, the artifact is a reviewed
+TypeScript state graph, and the engine replays it with no model in the decision
+loop. Tying the host to Codex therefore does not tie the architecture to Codex:
+replacing the host means writing a different process that drives the same session
+commands.
+
+### Boundary
+
+This does not amend the boundary ruling above. That ruling forbids an embedded
+model-provider SDK, a second autonomous discovery-agent class, and an automatic
+failure-to-graph compiler. Launching an external CLI adds none of the three: the
+model stays outside the repository, and the orchestrator decides when to run it,
+not what to decide inside it. The line held is that the launcher owns
+orchestration — fixture reset, lane lifecycle, caps, teardown — while the model
+owns decisions.
+
+What would cross that line is an orchestrator that begins deciding what to do
+when the model stalls, or a script that turns traces into a graph without review.
+
+### Implications
+
+- Codex is a dependency of the harness, not of the engine or the artifact schema.
+  Replay never invokes a model, so an artifact stays portable regardless of which
+  host authored it.
+- A session records the model and reasoning effort that authored it, because
+  `codex exec` otherwise resolves both from the operator's global configuration
+  and the evidence would not say what produced a run.
+- Discovery capability is a property of the host rather than of this repository.
+  The repository supplies the fixture harness, the recorder, the extractor, the
+  engine, and the policy; Codex supplies the reasoning.
