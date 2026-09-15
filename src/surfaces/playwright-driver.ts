@@ -1,9 +1,38 @@
+/**
+ * The first `SurfaceDriver`: a browser page driven through Playwright.
+ *
+ * Playwright supplies locating, waiting, extraction, and tracing, and this
+ * adapter translates in both directions between that API and the surface-neutral
+ * vocabulary. Nothing in the artifact schema names Playwright, so adding a second
+ * surface changes no recorded flow.
+ *
+ * This adapter is where the seam's promises are kept or broken, so the decisions
+ * behind them are recorded here:
+ *
+ * - `locate` walks the candidate list in order and accepts only a single match.
+ *   More than one match throws immediately rather than falling through to a
+ *   looser candidate, because a later candidate that happened to be unique would
+ *   hide the ambiguity the first one exposed.
+ * - `waitFor` polls every detector until one matches or the budget runs out. On
+ *   expiry it returns whichever detector carried a `timeout` signal, and `null`
+ *   when the stage declared none. The engine routes `null` to the stage's
+ *   `otherwise`, so "nothing recognized" stays a state a stage can name.
+ * - `captureEvidence` refuses to run without an evidence directory. A silently
+ *   skipped screenshot would leave a failure with no diagnostic material, which
+ *   is the one thing a failure must carry.
+ *
+ * LIMITS
+ * - Only `role`, `label`, `text`, and `css` candidates resolve. `relative` is
+ *   declared in the vocabulary but unimplemented, so its failure is a loud throw
+ *   rather than a quiet approximation.
+ * - A `count` signal is measured against the first candidate of its target only.
+ *   Count signals name one way of finding the elements being counted.
+ */
+
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { BrowserContext, Locator, Page } from "playwright";
-
-type AriaRole = Parameters<Page["getByRole"]>[0];
 
 import type {
     ActionResult,
@@ -20,14 +49,14 @@ import type {
 } from "./surface-driver.js";
 
 /**
- * The first `SurfaceDriver`: a browser page driven through Playwright.
+ * Playwright's accessible-role vocabulary.
  *
- * Playwright supplies locating, waiting, extraction, and
- * tracing, and this adapter translates in both directions between that API and
- * the surface-neutral vocabulary. Nothing in the artifact schema names
- * Playwright, so adding a second surface changes no recorded flow.
+ * Derived from `getByRole` so this adapter cannot drift from the installed
+ * Playwright's accepted role names.
  */
+type AriaRole = Parameters<Page["getByRole"]>[0];
 
+/** A browser page: one `SurfaceDriver` over one Playwright `Page`. */
 export class PlaywrightBrowserDriver implements SurfaceDriver {
     public constructor(
         public readonly context: BrowserContext,

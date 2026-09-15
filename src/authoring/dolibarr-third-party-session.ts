@@ -1,3 +1,22 @@
+/**
+ * Discovery entry point for the Dolibarr third-party lookup.
+ *
+ * This file is the whole configuration of an LLM-driven discovery session: it
+ * declares the goal, the fixture, the allowed origin, and the action allowlist,
+ * then hands the live browser to `runInteractivePlaywrightSession`. The decisions
+ * stay outside the repository — a host process writes one JSON command per line
+ * and observes the result before choosing the next one.
+ *
+ * Authentication happens in `prepare`, before tracing starts, so the fixture
+ * password cannot enter the run's trace or event ledger. With
+ * `DOLIBARR_SKIP_AUTH=1` the same session starts unauthenticated instead, which is
+ * how the `authentication-required` branch was captured without ever putting a
+ * login action inside a durable trace.
+ *
+ * Run it through `npm run discover:dolibarr:third-party` after resetting the
+ * `demo-install-smoke` snapshot.
+ */
+
 import type { Page } from "playwright";
 
 import { runInteractivePlaywrightSession } from "./interactive-playwright-session.js";

@@ -1,3 +1,19 @@
+/**
+ * Scripted capture pilot for LedgerSMB trading-partner creation.
+ *
+ * Phase one of the four-phase LedgerSMB corpus. Starting from the
+ * `initialized-company` snapshot, it creates the synthetic customer and vendor
+ * with the customer/vendor account classes and AR/AP defaults the later inventory
+ * phases depend on.
+ *
+ * Its recorded run is the reference for what a correct partner-creation flow
+ * looks like, and it is the first pilot whose fixture is a snapshot rather than
+ * fresh volumes — which is why a failed partner run usually means the wrong
+ * snapshot was restored, not that the pilot is wrong. Run it through
+ * `npm run capture:ledgersmb:partners`. It leaves the created partners in the
+ * live fixture and creates no snapshot.
+ */
+
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 

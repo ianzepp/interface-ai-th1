@@ -1,3 +1,19 @@
+/**
+ * Scripted capture pilot for the LedgerSMB inventory catalog.
+ *
+ * Phase two of the four-phase LedgerSMB corpus. Starting from the
+ * `partners-ready` snapshot, it creates `Main Warehouse` and the `TRAIL-PACK-40`
+ * inventory part with its pricing, unit, bin, reorder point, and account
+ * mappings.
+ *
+ * This is the first phase that has to wait for the application rather than just
+ * fill fields. `Add Part` is opened from a menu tree, so the part-number field is
+ * waited for before the first fill, and the saved record is verified by waiting
+ * for the part number to reappear as a field *value* rather than by assuming the
+ * save action returned only once the record existed. Run it through
+ * `npm run capture:ledgersmb:catalog`.
+ */
+
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 

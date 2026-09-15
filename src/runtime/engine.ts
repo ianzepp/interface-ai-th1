@@ -8,18 +8,37 @@ import type { RunResult } from "./result.js";
 import { selectDestination, type CapabilityArtifact } from "./state-machine.js";
 
 /**
- * Replay: the production path, with no model in the decision loop.
+ * The execution plane: the production path, with no model in the decision loop.
  *
- * The engine walks the artifact's stages, applies the
- * recorded policy to each action, match the resulting state against that
- * stage's detectors, and return a terminal outcome. Determinism is the whole
- * point: the same artifact against the same target version with the same inputs
- * must produce the same result and the same outputs, which is what makes a
- * capability safe to invoke unattended and cheap enough to invoke often.
+ * The engine walks the artifact's stages, applies the recorded policy to each
+ * action, matches the observed state against that stage's detectors, and returns
+ * a terminal outcome. Determinism is the whole point: the same artifact against
+ * the same target version with the same inputs must produce the same result and
+ * the same outputs, which is what makes a capability safe to invoke unattended
+ * and cheap enough to invoke often.
  *
- * Runtime conditions are expected rather than
- * exceptional. An expired session, a validation error, or a "record not found"
- * page is a state to detect and route on, not a crash to propagate.
+ * Runtime conditions are expected rather than exceptional. An expired session, a
+ * validation error, or a "record not found" page is a state to detect and route
+ * on, not a crash to propagate.
+ *
+ * INVARIANTS
+ * - The engine holds no application knowledge. Stages, detectors, transitions,
+ *   and bindings all arrive from the artifact.
+ * - Input binding happens before policy and origin checks, so those two decide on
+ *   the action that would actually run rather than on its template.
+ * - The walk is step-limited by the artifact's own stage count, so a graph cycle
+ *   ends as a typed failure instead of a hang.
+ *
+ * LIMITS
+ * - Determinism is guaranteed over the graph, not over the surface. A recognized
+ *   state always routes the same way; the engine cannot make the application
+ *   reach that state.
+ * - A driver exception becomes a `stage-execution-failed` failure instead of
+ *   propagating, so a run always ends typed. The cost is that a driver bug and a
+ *   genuinely unrecognized screen arrive by the same code, and only the recorded
+ *   `observed` text tells them apart.
+ * - The caller owns the session. The engine starts no browser, resets no fixture,
+ *   and finalizes no run.
  */
 
 /** One call: which capability, and the values for its declared inputs. */
@@ -28,6 +47,14 @@ export interface CapabilityInvocation {
     inputs: Record<string, unknown>;
 }
 
+/**
+ * Where a replay reports progress.
+ *
+ * The engine is deliberately silent about evidence. A caller that wants a run
+ * directory, a trace, or a live progress display supplies an observer, so replay
+ * and discovery can produce the same evidence shape without the engine knowing
+ * what a run directory is.
+ */
 export interface EngineObserver {
     actionCompleted(
         stageId: string,
@@ -42,6 +69,13 @@ export interface EngineOptions {
     observer?: EngineObserver;
 }
 
+/**
+ * Walk one artifact against one surface.
+ *
+ * The engine is stateless between calls: everything a run needs arrives as the
+ * artifact plus the invocation, so two invocations cannot contaminate each other
+ * and a failed run leaves nothing behind to reset.
+ */
 export class DeterministicEngine {
     public constructor(
         public readonly driver: SurfaceDriver,
@@ -56,6 +90,13 @@ export class DeterministicEngine {
         return this.execute(artifact, invocation);
     }
 
+    /**
+     * The stage loop: act, detect, extract, transition.
+     *
+     * Each guard below refuses the run before any browser action happens, because
+     * a mismatched artifact or policy means the reviewed graph is not the graph
+     * that would execute.
+     */
     private async execute(
         artifact: CapabilityArtifact,
         invocation: CapabilityInvocation,
@@ -86,6 +127,8 @@ export class DeterministicEngine {
         );
         let stageId = artifact.entryStageId;
         const outputs: Record<string, unknown> = {};
+        // Two steps per stage is the budget the graph needs to reach a terminal
+        // from any admitted entry point; anything beyond that is a cycle.
         for (let step = 0; step <= artifact.stages.length * 2; step += 1) {
             const stage = stages.get(stageId);
             if (stage === undefined)
@@ -137,6 +180,10 @@ export class DeterministicEngine {
                             code: "policy-confirmation-required",
                         };
                     }
+                    // Navigating and pressing act on the page rather than on a
+                    // located control, so only the other verbs resolve a target
+                    // first. Locating early is what turns an ambiguous or missing
+                    // control into a typed failure before the action mutates state.
                     if (action.type !== "navigate" && action.type !== "press")
                         await this.driver.locate(action.target);
                     const result = await this.driver.act(action);
@@ -217,6 +264,18 @@ export class DeterministicEngine {
     }
 }
 
+/**
+ * Resolve `{{input.NAME}}` placeholders against the invocation's inputs.
+ *
+ * Binding is textual and total: an unbound placeholder is an error rather than an
+ * empty string, because a half-resolved target would silently act on the wrong
+ * control while still looking like a faithful replay of the reviewed artifact.
+ *
+ * The three functions below exist because a placeholder can appear in three
+ * shapes: inside a detector signal, inside a target candidate nested in a
+ * detector's count signal, and inside an action's own target. Each shape needs
+ * its own traversal, but they share this one substitution rule.
+ */
 function bindDetector(
     detector: import("../surfaces/surface-driver.js").StateDetector,
     inputs: Record<string, unknown>,
@@ -280,6 +339,7 @@ function bindTarget(
     };
 }
 
+/** Bind an action's own target and value, leaving action types without either alone. */
 function bindAction(
     action: SurfaceAction,
     inputs: Record<string, unknown>,
@@ -305,6 +365,14 @@ function bindAction(
     return action;
 }
 
+/**
+ * Check the origin an action would actually touch.
+ *
+ * A navigation is judged by where it is going; every other action is judged by
+ * the page it is already on. An action with no determinable URL is refused rather
+ * than allowed, so a driver that cannot report its location cannot widen the
+ * allowlist by omission.
+ */
 function validateOrigin(
     action: SurfaceAction,
     allowedOrigins: readonly string[],
@@ -316,6 +384,7 @@ function validateOrigin(
     return allowedOrigins.includes(origin) ? null : origin;
 }
 
+/** Build the unrecoverable result every refusal path returns. */
 function failure(
     stageId: string,
     code: string,

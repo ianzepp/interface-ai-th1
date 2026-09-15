@@ -1,3 +1,24 @@
+/**
+ * Scripted capture pilot for LedgerSMB company initialization.
+ *
+ * Phase zero of the four-phase LedgerSMB corpus. It drives a fresh Docker
+ * fixture from empty PostgreSQL volumes through company-database creation, chart
+ * and template selection, first-administrator creation, and a login that proves
+ * the created account works.
+ *
+ * This is a scripted pilot rather than an LLM-driven session: the sequence is
+ * known, so the value it produces is the *record*, not the discovery. Each step
+ * appends a redacted action event with the rationale that was true when it ran,
+ * which is what later lets a reviewer tell a stable action from an incidental
+ * one. Run it through `npm run capture:ledgersmb:initialize`, which performs the
+ * destructive fixture reset first.
+ *
+ * The run is finalized `satisfied` at the authenticated home screen or `error`
+ * with a screenshot whenever any step throws. It never creates a snapshot: the
+ * `initialized-company` snapshot is an intentional review action taken after the
+ * run has been checked.
+ */
+
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 

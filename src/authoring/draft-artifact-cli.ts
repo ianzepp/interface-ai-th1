@@ -1,3 +1,16 @@
+/**
+ * Operator entry point for draft extraction: `npm run draft:artifact`.
+ *
+ * Everything here is argument parsing, module loading, and operator-facing output.
+ * The extraction itself lives in `draft-artifact.ts`, which keeps that module
+ * free of process arguments and dynamic imports.
+ *
+ * `--compare` is the review aid: it diffs the generated draft against an existing
+ * compiled artifact by observed stage order and reports exact action and detector
+ * matches, which is how a reviewer sees the distance between a mechanical draft
+ * and the reviewed graph it is meant to approximate.
+ */
+
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { pathToFileURL } from "node:url";

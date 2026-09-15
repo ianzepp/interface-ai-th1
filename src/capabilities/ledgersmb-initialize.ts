@@ -1,3 +1,39 @@
+/**
+ * Reviewed capability: initialize a fresh LedgerSMB company and its first
+ * administrator.
+ *
+ * This is the phase-zero artifact, and it is the one that establishes the shape
+ * every later capability copies. It is reviewed TypeScript rather than generated
+ * output: each stage, detector, and transition here was decided by comparing
+ * repeated runs, and the file is the durable record of that review.
+ *
+ * It is a state graph, not a recording. `provenance` names the discovery run and
+ * the two successful replays that validated it. The `authenticate` stage activates
+ * by role and accessible name because an earlier draft carried the CSS selector
+ * that the recorder *reported* instead of the role the discovery code had actually
+ * used, and exact target resolution rejected it. The lesson is recorded in the
+ * file rather than in a comment about CSS being bad.
+ *
+ * DESIGN NOTES
+ * - Every stage declares `reversible` risk. Combined with `riskyActionMode:
+ *   "block"`, policy never stops this graph for a person, which is what makes
+ *   `replay:ledgersmb:initialize` a single unattended command.
+ * - The last stage dismisses the disposable-password expiry notice because the
+ *   home screen only proves the account works once that interstitial is past.
+ * - Authored values that are not the caller's business stay as literals: the
+ *   salutation, country, birth date, tax identifier, employee number, and the
+ *   administrator's first and last name are fixture constants the graph commits
+ *   to, not invocation inputs.
+ *
+ * LIMITS
+ * - This graph has no recoverable branches. Any screen other than the expected one
+ *   ends as `unexpected-screen`, which is honest for a flow whose starting state is
+ *   an empty database: there is no upstream data to be wrong.
+ * - Login is part of this capability because proving the created account works is
+ *   its success condition. Later capabilities should bootstrap authentication
+ *   rather than repeat this stage.
+ */
+
 import type {
     CapabilityArtifact,
     CapabilityStage,

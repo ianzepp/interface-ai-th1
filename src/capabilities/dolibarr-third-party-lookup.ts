@@ -1,3 +1,42 @@
+/**
+ * Reviewed capability: look up a Dolibarr third party by exact name.
+ *
+ * This is the second vertical slice, and its job is to prove the architecture is
+ * not secretly LedgerSMB-shaped. The interesting difference is that this
+ * capability has real business outcomes and a real intervention branch, so it is
+ * the artifact that shows runtime conditions being detected and routed rather
+ * than reported as crashes.
+ *
+ * The corpus behind it, named in `provenance`, contains repeated successful
+ * lookups, a no-match run, a duplicate-match run, a run redirected to login, and
+ * one useful failed replay. Review over that corpus is what produced the four
+ * branches below, not any automatic synthesis.
+ *
+ * DESIGN NOTES
+ * - Exact name is the whole contract. Two exact matches amid several substring
+ *   results is genuinely ambiguous, so `third-party-ambiguous` is a business
+ *   outcome rather than a first-match win. The discovery corpus contains that
+ *   case precisely to prove first-match selection would be unsafe.
+ * - Cardinality is decided by counting the name element, so `uniqueMatch` and
+ *   `ambiguousMatch` are two readings of one observation rather than two
+ *   independent checks that could disagree. `noMatch` stays a separate detector
+ *   because it is recognized from the application's own empty-list message, which
+ *   is a different kind of evidence than a count.
+ * - `dolibarrAuthenticationRequired` comes from the target profile, not this
+ *   file, because a lost session is a property of the application. Every stage
+ *   that touches a protected route lists it.
+ * - The extraction selectors are structural and therefore the weakest locators in
+ *   the repository. They are the reviewed result for a card whose fields have no
+ *   test identifiers, and they are the first thing to re-verify on a version bump.
+ *
+ * LIMITS
+ * - No pagination branch. The count detectors read the rendered result set, so a
+ *   name whose matches span pages is not currently distinguishable from a single
+ *   match.
+ * - The extraction targets read display text, so a change in how Dolibarr formats
+ *   a code or a currency changes the output without changing the outcome.
+ */
+
 import type {
     CapabilityArtifact,
     CapabilityStage,

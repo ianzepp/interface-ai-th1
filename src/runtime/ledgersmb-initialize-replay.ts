@@ -1,3 +1,18 @@
+/**
+ * Deterministic replay of `ledgersmb.initialize-company`, with no model present.
+ *
+ * This is the proof the execution plane works as its own path: the reviewed
+ * artifact is handed to `DeterministicEngine` and nothing here decides anything.
+ * The inputs are the fixture constants, the observer translates engine progress
+ * into the same event ledger a discovery run writes, and the error path finalizes
+ * the run with whatever the engine or the browser reported.
+ *
+ * Run it through `npm run replay:ledgersmb:initialize`, which builds and then
+ * performs the destructive `fresh` reset. It leaves the initialized target
+ * running and creates no snapshot: `initialized-company` is an intentional review
+ * action taken after the run has been inspected.
+ */
+
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 

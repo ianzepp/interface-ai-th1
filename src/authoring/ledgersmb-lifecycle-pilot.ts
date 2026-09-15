@@ -1,3 +1,28 @@
+/**
+ * Scripted capture pilot for the LedgerSMB inventory lifecycle.
+ *
+ * Phase three and the final phase of the LedgerSMB corpus. Starting from the
+ * `catalog-ready` snapshot, it posts a 30-unit vendor purchase, posts a three-unit
+ * customer sale, records a physical count of 25 against 27 expected, and approves
+ * the resulting two-unit shortage. The ending state is the `clean-baseline-v1`
+ * snapshot, which is the corpus's reviewed ledger baseline.
+ *
+ * This pilot carries the corpus's three genuine runtime conditions, and each is
+ * handled by waiting for something the application owns rather than by sleeping:
+ *
+ * - A disposable-password expiry interstitial can appear over the first menu
+ *   action, so it is dismissed explicitly before the flow proceeds.
+ * - A route change can land before the client-rendered frame changes, leaving a
+ *   control whose label is shared with the previous screen briefly still present.
+ *   Stages therefore wait for a marker unique to the destination screen.
+ * - Picking an inventory item populates its dependent description and price fields
+ *   asynchronously. Reading them too early submits an invalid price, so the flow
+ *   waits for the application-derived field values themselves. A fixed delay here
+ *   was the original defect, and it failed only in the contiguous end-to-end run.
+ *
+ * Run it through `npm run capture:ledgersmb:lifecycle`.
+ */
+
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 

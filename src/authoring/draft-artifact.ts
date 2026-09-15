@@ -1,3 +1,40 @@
+/**
+ * The mechanical half of artifact authoring: one successful run in, one
+ * inspectable provisional graph out.
+ *
+ * Artifact authoring splits into a mechanical step and a judgment step. This
+ * file is the mechanical step. It reads a finalized satisfied run and emits a
+ * linear stage-per-action draft so that review starts from a concrete,
+ * evidence-linked proposal rather than a blank file. Deciding which states are
+ * real, which transitions are recoverable, and which failure branches the
+ * application actually has remains a human/LLM review decision made over the
+ * whole run corpus; nothing here infers exception semantics.
+ *
+ * The semantic source is `events.jsonl`. The Playwright trace is read as
+ * corroborating metadata — its action count and version — and its disagreement
+ * with the ledger becomes a warning rather than a silent preference for either
+ * one, because a disagreement means one of the two is misrepresenting the run.
+ *
+ * INVARIANTS
+ * - The run is never modified. Draft extraction reads and writes elsewhere.
+ * - Only a `satisfied` run is admissible. An error run describes a flow that did
+ *   not complete, and a draft built from one would encode a failure as a path.
+ * - Every stage gets an `otherwise`, so even a draft cannot fall through on an
+ *   unrecognized state.
+ * - Inputs and targets that could not be grounded are reported in `warnings`
+ *   rather than guessed into the graph.
+ *
+ * LIMITS
+ * - One happy path produces no red-path knowledge. Exception codes, business
+ *   outcomes, and recoveries are absent by construction, not by oversight.
+ * - No typed output extraction is inferred, so a draft returns no outputs.
+ * - Inferred input names come from a fixed heuristic table (see
+ *   `inferInputName`), which encodes this repository's fixture vocabulary. It is
+ *   a starting proposal for review, not a general inference.
+ * - Stages are ordered by observed action, so a draft is a transcript until a
+ *   reviewer turns it into a graph.
+ */
+
 import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -434,6 +471,17 @@ function isActionEvent(
     return event.type === "action";
 }
 
+/**
+ * Replace a recorded literal with a typed placeholder when a value looks like an
+ * invocation input.
+ *
+ * Recalled values are the main reason a single run cannot be trusted as an
+ * artifact: the run contains the fixture's password, company name, and search
+ * term as literals. Two attempts are made to bind them, in decreasing
+ * confidence: infer a name from the field's own identity, or, when the field
+ * looks sensitive, replace it with an obviously unbound marker so review cannot
+ * mistake a credential for a finished binding.
+ */
 function draftAction(
     action: SurfaceAction,
     inputs: Record<string, string>,
@@ -473,6 +521,15 @@ function draftAction(
     return action;
 }
 
+/**
+ * Guess an input name from the identity of the field that received the value.
+ *
+ * This is a fixed table over the fixture vocabulary of this repository's two
+ * targets, ordered from most to least specific because several entries would
+ * otherwise match the same selector. Every hit is reported as a warning, since
+ * the binding is a proposal a reviewer has to confirm against the artifact's
+ * declared contract.
+ */
 function inferInputName(
     candidate: TargetDescriptor["candidates"][number] | undefined,
 ): string | null {
@@ -505,6 +562,16 @@ function looksSensitive(
     return /password|secret|token|cookie|authorization|ssn/.test(value);
 }
 
+/**
+ * Infer what a stage's landing state looked like, from the run that followed it.
+ *
+ * A recorded action carries no state of its own, so the only grounded signal for
+ * "where did this leave us" is the *next* thing the run did: the next action's
+ * target is by definition present on the page it acted on, and its URL is the
+ * page a navigation opened. If neither is available the observed URL is used, and
+ * if even that is empty the stage is left with a `timeout` signal and an explicit
+ * warning, because a stage with no grounded detector cannot be reviewed.
+ */
 function detectorForStage(
     actionEvents: readonly Extract<DiscoveryEvent, { type: "action" }>[],
     index: number,
@@ -598,6 +665,14 @@ function signalFromAction(
     return signalFromTarget(action.target);
 }
 
+/**
+ * Reduce a URL to its final path segment as a regular expression.
+ *
+ * A recorded URL carries generated identifiers, so matching it exactly would
+ * make the detector fail on the next run. The last segment is the part that names
+ * the screen; the identifier in front of it is what varies. A single-segment path
+ * is already the screen name, so it is kept whole.
+ */
 function urlSignal(url: string): DetectorSignal {
     const parsed = new URL(url);
     const segments = parsed.pathname
@@ -632,6 +707,14 @@ function terminalFailure(code: string): StageDestination {
     return { type: "terminal", outcome: { type: "failure", code } };
 }
 
+/**
+ * Assign a first-pass risk class.
+ *
+ * An activation is guessed `reversible` because it is the only recorded verb that
+ * can submit something. This is a conservative floor, not a judgment about the
+ * flow: a reviewer decides what a specific button actually does, and the artifact
+ * is where that decision is recorded.
+ */
 function draftRisk(action: SurfaceAction): ActionRisk {
     return action.type === "activate" ? "reversible" : "safe";
 }

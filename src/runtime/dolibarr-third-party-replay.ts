@@ -1,3 +1,18 @@
+/**
+ * Deterministic replay of `dolibarr.lookup-third-party`, with no model present.
+ *
+ * Unlike the LedgerSMB replay, this one is also the harness for a small branch
+ * matrix. `DOLIBARR_LOOKUP_NAME` supplies the search term, `DOLIBARR_EXPECT_RESULT`
+ * names the typed outcome the run must produce, and `DOLIBARR_SKIP_AUTH=1` starts
+ * an unauthenticated session to exercise intervention routing. The run is
+ * finalized `satisfied` whenever the engine returns the expected outcome and
+ * `error` when it does not, so a mismatch is preserved as evidence rather than
+ * swallowed. The typed result is written to `result.json` in the run directory.
+ *
+ * Run it through `npm run replay:dolibarr:third-party`, which builds and resets
+ * the `demo-install-smoke` snapshot first.
+ */
+
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
