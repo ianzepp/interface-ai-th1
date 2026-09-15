@@ -82,17 +82,17 @@ const BANNED_PATTERNS: readonly BannedPattern[] = [
     },
     {
         label: "unvalidated parse",
-        budget: 6,
+        budget: 8,
         pattern: /JSON\.parse\s*\(/,
         rationale:
-            "Each of the six is a boundary read that immediately validates its own shape: run manifests, event ledger lines, trace entries, and external controller commands. The budget is a ceiling, not an endorsement of adding a seventh.",
+            "Every one is a boundary read whose result is immediately narrowed rather than trusted: run manifests, event ledger lines, trace entries, external controller commands, the control-channel response envelope, and the session state file. The budget is a ceiling, not an endorsement: it was raised from six to eight to admit the control bridge, and a ninth call site should have to argue for itself the same way.",
     },
     {
         label: "console output",
-        budget: 18,
+        budget: 20,
         pattern: /console\.(log|info|warn|error|debug|trace|table|dir)\s*\(/,
         rationale:
-            "Every one is operator-facing output in a process entry point: the capture pilots, the draft CLI, the replay runners. Library modules under src/ print nothing. A new call outside those entry points is the change this budget exists to catch.",
+            "Every one is operator-facing output in a process entry point: the capture pilots, the draft CLI, and the replay runners. Library modules under src/ print nothing. The budget includes the two output lines in the customer-with-contact replay entry point; a new call outside those entry points is the change this budget exists to catch.",
     },
 ];
 

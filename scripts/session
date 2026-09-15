@@ -1,0 +1,15 @@
+#!/bin/sh
+set -eu
+
+project_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+cd "$project_dir"
+
+# Unlike the other wrappers here, this one is called once per browser action by
+# the authoring model, so a build on every call would dominate the run. The
+# entry point is built by scripts/author before a session starts; this only
+# covers a first use on a clean checkout.
+if [ ! -f dist/src/authoring/session-cli.js ]; then
+    npm run build --silent
+fi
+
+exec node dist/src/authoring/session-cli.js "$@"
