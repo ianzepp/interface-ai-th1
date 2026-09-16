@@ -18,8 +18,6 @@ export function serializeCapabilityArtifact(
     artifact: CapabilityArtifact,
 ): string {
     const serialized = JSON.stringify(canonicalize(artifact), null, 2);
-    if (serialized === undefined)
-        throw new Error(`could not serialize artifact ${artifact.id}`);
     return `${serialized}\n`;
 }
 
