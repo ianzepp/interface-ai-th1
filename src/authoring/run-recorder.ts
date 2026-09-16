@@ -1,8 +1,17 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import type { DiscoveryEvent, EventRecorder } from "./event-recorder.js";
+import type {
+    ActionRisk,
+    SurfaceAction,
+} from "../surfaces/surface-driver.js";
+import type {
+    DecisionReceipt,
+    DiscoveryEvent,
+    EventIdentity,
+    EventRecorder,
+} from "./event-recorder.js";
 import { redactKnownSecrets } from "./redaction.js";
 
 /**
@@ -24,6 +33,10 @@ import { redactKnownSecrets } from "./redaction.js";
  * - A run finalizes exactly once and the manifest is rewritten at that point, so
  *   a crashed process leaves a recognizable `running` run rather than an
  *   unexplained trace file.
+ * - Decision receipts are computed here, from what this recorder observed. A
+ *   receipt-bearing event is refused without a sealed producer record, so
+ *   controller-supplied producer metadata can never reach the ledger or the
+ *   manifest.
  */
 
 /** What a run needs to identify itself before it starts. */
@@ -35,7 +48,26 @@ export interface TestRunStart {
     targetProfile: string;
     targetVersion: string;
     fixtureId: string;
+    /** Producer identity, sealed by the launcher that started the session. */
+    producer?: ProducerRecord | undefined;
     now?: () => string;
+}
+
+/**
+ * Who produced a run's decisions, as the launcher sealed it.
+ *
+ * Every field comes from a record the launcher wrote before the host ran; the
+ * controller cannot supply one, because a free-text identity it can set is
+ * forgeable and cannot bind a decision to the observation before it.
+ */
+export interface ProducerRecord {
+    kind: "external-llm" | "human";
+    provider: string;
+    model: string;
+    /** Harness-generated nonce binding decisions to this producer. */
+    sessionNonce: string;
+    /** Lane-directory path of the launcher-sealed record this came from. */
+    sealPath: string;
 }
 
 /**
@@ -66,6 +98,10 @@ export interface TestRunManifest {
     targetProfile: string;
     targetVersion: string;
     fixtureId: string;
+    /** The launcher-sealed producer of this run's decisions, when sealed. */
+    producer?: ProducerRecord | undefined;
+    /** Terminal state of the append-only decision-receipt chain, at finalize. */
+    decisionReceipts?: { count: number; digest: string } | undefined;
     startedAt: string;
     finishedAt?: string;
     outcome?: TestRunOutcome;
@@ -83,6 +119,12 @@ export class FileTestRunRecorder implements EventRecorder {
     readonly #now: () => string;
     #finalized = false;
     #writeQueue: Promise<void> = Promise.resolve();
+    readonly #producer: ProducerRecord | undefined;
+    #eventChainHash: string;
+    #receiptChainHash: string;
+    #eventSequence = 0;
+    #receiptCount = 0;
+    #lastObservation: EventIdentity | null = null;
 
     private constructor(
         public readonly directory: string,
@@ -91,9 +133,15 @@ export class FileTestRunRecorder implements EventRecorder {
         public readonly readmePath: string,
         public readonly tracePath: string,
         private readonly manifest: TestRunManifest,
+        producer: ProducerRecord | undefined,
+        eventChainGenesis: string,
+        receiptChainGenesis: string,
         now: () => string,
     ) {
         this.#now = now;
+        this.#producer = producer;
+        this.#eventChainHash = eventChainGenesis;
+        this.#receiptChainHash = receiptChainGenesis;
     }
 
     /**
@@ -125,6 +173,7 @@ export class FileTestRunRecorder implements EventRecorder {
             targetProfile: options.targetProfile,
             targetVersion: options.targetVersion,
             fixtureId: options.fixtureId,
+            producer: options.producer,
             startedAt,
             files: {
                 readme: "README.md",
@@ -140,6 +189,15 @@ export class FileTestRunRecorder implements EventRecorder {
             join(directory, manifest.files.readme),
             join(directory, manifest.files.trace),
             manifest,
+            options.producer,
+            createHash("sha256")
+                .update(`events:${runId}:${startedAt}`)
+                .digest("hex"),
+            createHash("sha256")
+                .update(
+                    `decision-receipts:${runId}:${options.producer?.sessionNonce ?? "unsealed"}`,
+                )
+                .digest("hex"),
             now,
         );
 
@@ -152,20 +210,69 @@ export class FileTestRunRecorder implements EventRecorder {
      * Record one event, redacted, in arrival order.
      *
      * Late writes are rejected so a stray event cannot land in a closed run and
-     * leave its evidence disagreeing with its own manifest.
+     * leave its evidence disagreeing with its own manifest. Receipt-bearing
+     * decisions have their receipt sealed here — sequence and chain hash are
+     * always computed by this recorder, overwriting whatever a caller supplied.
      */
-    public append(event: DiscoveryEvent): Promise<void> {
+    public append(event: DiscoveryEvent): Promise<EventIdentity> {
         if (this.#finalized) {
             return Promise.reject(
                 new Error(`Run ${this.manifest.runId} is already finalized`),
             );
         }
 
-        const line = `${JSON.stringify(redactKnownSecrets(event))}\n`;
-        this.#writeQueue = this.#writeQueue.then(() =>
-            appendFile(this.eventsPath, line),
+        const appended = this.#writeQueue.then(() => {
+            const identity = this.#appendSerialized(event);
+            return appendFile(
+                this.eventsPath,
+                `${JSON.stringify(identity.event)}\n`,
+            ).then(() => ({ sequence: identity.sequence, hash: identity.hash }));
+        });
+        // The caller sees the rejection; the queue itself proceeds, so one
+        // refused event cannot poison the appends behind it or sit unhandled.
+        this.#writeQueue = appended.then(
+            () => undefined,
+            () => undefined,
         );
-        return this.#writeQueue;
+        return appended;
+    }
+
+    /**
+     * Bind one proposed command to the observation it followed.
+     *
+     * This is the only place a decision receipt is authored: the command hash
+     * covers exactly what the harness received, and the prior observation is
+     * whatever this ledger last recorded. An unbound decision is still
+     * receipt-carrying — the null binding is what a review reads as "acted
+     * without looking".
+     */
+    public buildDecisionReceipt(command: {
+        action: SurfaceAction;
+        risk: ActionRisk;
+        rationale: string;
+    }): DecisionReceipt {
+        if (this.#producer === undefined) {
+            throw new Error(
+                `Run ${this.manifest.runId} has no sealed producer record; decisions cannot be attested`,
+            );
+        }
+        const prior = this.#lastObservation;
+        return {
+            sessionNonce: this.#producer.sessionNonce,
+            priorObservationSequence: prior?.sequence ?? null,
+            priorObservationHash: prior?.hash ?? null,
+            commandHash: createHash("sha256")
+                .update(
+                    JSON.stringify({
+                        action: command.action,
+                        risk: command.risk,
+                        rationale: command.rationale,
+                    }),
+                )
+                .digest("hex"),
+            sequence: -1,
+            receiptHash: "",
+        };
     }
 
     public async readAll(): Promise<readonly DiscoveryEvent[]> {
@@ -196,7 +303,62 @@ export class FileTestRunRecorder implements EventRecorder {
         this.manifest.status = outcome.status;
         this.manifest.finishedAt = this.#now();
         this.manifest.outcome = outcome;
+        if (this.#producer !== undefined) {
+            this.manifest.decisionReceipts = {
+                count: this.#receiptCount,
+                digest: this.#receiptChainHash,
+            };
+        }
         await this.writeSummaryFiles();
+    }
+
+    /** Runs inside the write queue, so chain state advances in arrival order. */
+    #appendSerialized(event: DiscoveryEvent): {
+        sequence: number;
+        hash: string;
+        event: DiscoveryEvent;
+    } {
+        const clean = redactKnownSecrets(event) as DiscoveryEvent;
+        if (
+            clean.type === "proposal" ||
+            clean.type === "decision-rejected"
+        ) {
+            clean.receipt = this.#sealReceipt(clean.receipt);
+            this.#receiptCount += 1;
+        }
+        const sequence = this.#eventSequence;
+        const hash = createHash("sha256")
+            .update(`${this.#eventChainHash}|${sequence}|${JSON.stringify(clean)}`)
+            .digest("hex");
+        this.#eventChainHash = hash;
+        this.#eventSequence = sequence + 1;
+        if (clean.type === "observation") {
+            this.#lastObservation = { sequence, hash };
+        }
+        return { sequence, hash, event: clean };
+    }
+
+    #sealReceipt(receipt: DecisionReceipt): DecisionReceipt {
+        if (this.#producer === undefined) {
+            throw new Error(
+                `Run ${this.manifest.runId} has no sealed producer record; receipt-bearing events are refused`,
+            );
+        }
+        const sequence = this.#receiptCount;
+        const core = {
+            sessionNonce: this.#producer.sessionNonce,
+            priorObservationSequence: receipt.priorObservationSequence,
+            priorObservationHash: receipt.priorObservationHash,
+            commandHash: receipt.commandHash,
+            sequence,
+        };
+        const receiptHash = createHash("sha256")
+            .update(`${this.#receiptChainHash}|${JSON.stringify(core)}`)
+            .digest("hex");
+        this.#receiptChainHash = createHash("sha256")
+            .update(`${this.#receiptChainHash}|${receiptHash}`)
+            .digest("hex");
+        return { ...core, receiptHash };
     }
 
     private async writeSummaryFiles(): Promise<void> {
@@ -222,6 +384,20 @@ function quote(value: string): string {
         .join("\n");
 }
 
+function producerLine(manifest: TestRunManifest): string {
+    const producer = manifest.producer;
+    return producer === undefined
+        ? ""
+        : `- Producer: \`${producer.kind}/${producer.provider}\` model \`${producer.model}\` sealed nonce \`${producer.sessionNonce}\`\n`;
+}
+
+function receiptLine(manifest: TestRunManifest): string {
+    const receipts = manifest.decisionReceipts;
+    return receipts === undefined
+        ? ""
+        : `- Decision receipts: \`${String(receipts.count)}\` sealed, terminal digest \`${receipts.digest}\`\n`;
+}
+
 function renderReadme(manifest: TestRunManifest): string {
     const outcome = manifest.outcome;
     const outcomeBody =
@@ -236,7 +412,7 @@ function renderReadme(manifest: TestRunManifest): string {
 - Status: \`${manifest.status}\`
 - Target: \`${manifest.targetProfile}\` \`${manifest.targetVersion}\`
 - Fixture: \`${manifest.fixtureId}\`
-- Started: \`${manifest.startedAt}\`
+${producerLine(manifest)}${receiptLine(manifest)}- Started: \`${manifest.startedAt}\`
 ${manifest.finishedAt === undefined ? "" : `- Finished: \`${manifest.finishedAt}\`\n`}
 ## Goal
 

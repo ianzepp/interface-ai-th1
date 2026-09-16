@@ -16,7 +16,12 @@ import type {
     SurfaceAction,
 } from "../surfaces/surface-driver.js";
 import { PlaywrightTestRunCapture } from "./playwright-run-capture.js";
-import { FileTestRunRecorder, type TestRunOutcome } from "./run-recorder.js";
+import type { DecisionReceipt } from "./event-recorder.js";
+import {
+    FileTestRunRecorder,
+    type ProducerRecord,
+    type TestRunOutcome,
+} from "./run-recorder.js";
 
 export interface SessionOptions {
     rootDirectory: string;
@@ -25,6 +30,13 @@ export interface SessionOptions {
     targetProfile: string;
     targetVersion: string;
     fixtureId: string;
+    /**
+     * The launcher-sealed producer of this session's decisions.
+     *
+     * Sealed by the launcher into the lane directory; a controller cannot supply
+     * it, and commands that try are refused at the parser.
+     */
+    producer?: ProducerRecord | undefined;
     policy: PolicyConfiguration;
     prepare(page: Page): Promise<void>;
 }
@@ -113,6 +125,7 @@ export async function createInteractiveSession(
             targetProfile: options.targetProfile,
             targetVersion: options.targetVersion,
             fixtureId: options.fixtureId,
+            producer: options.producer,
         });
         const capture = await PlaywrightTestRunCapture.start(
             context.tracing,
@@ -132,14 +145,22 @@ export async function createInteractiveSession(
             policy: new ArtifactPolicy(options.policy),
             finalized: false,
         };
+        const initialObservation = await driver.observe({
+            includeAccessibility: true,
+            includeScreenshot: false,
+        });
+        // The screen the controller first saw is ledger event zero, so the first
+        // decision always has an observation to bind to.
+        await recorder.append({
+            type: "observation",
+            recordedAt: new Date().toISOString(),
+            observation: initialObservation,
+        });
 
         return {
             runId: basename(recorder.directory),
             runDirectory: recorder.directory,
-            initialObservation: await driver.observe({
-                includeAccessibility: true,
-                includeScreenshot: false,
-            }),
+            initialObservation,
 
             async handle(
                 command: SessionCommand,
@@ -231,47 +252,102 @@ async function handleCommand(
         };
     }
 
-    // A proposed action is recorded before it runs, so a refusal or a thrown
-    // locator leaves evidence of the attempt rather than a gap in the ledger.
-    const decision = policy.evaluate(command.action, command.risk);
-    await recorder.append({
-        type: "proposal",
+    // A proposed action is receipted against the observation it followed, and
+    // recorded before it runs, so a refusal or a thrown locator leaves evidence
+    // of the attempt rather than a gap in the ledger.
+    if (command.type === "act") {
+        const receipt = recorder.buildDecisionReceipt({
+            action: command.action,
+            risk: command.risk,
+            rationale: command.rationale,
+        });
+        if (receipt.priorObservationHash === null) {
+            return rejectDecision(
+                run,
+                command,
+                receipt,
+                "no-bound-observation",
+                "The decision had no recorded observation to bind to.",
+            );
+        }
+        const decision = policy.evaluate(command.action, command.risk);
+        await recorder.append({
+            type: "proposal",
+            recordedAt: new Date().toISOString(),
+            action: command.action,
+            risk: command.risk,
+            rationale: command.rationale,
+            policyDecision: decision,
+            receipt,
+        });
+        if (decision.type !== "allow") {
+            return rejectDecision(
+                run,
+                command,
+                receipt,
+                `policy-${decision.type}`,
+                decision.reason,
+            );
+        }
+        const originFailure = blockedOrigin(
+            command.action,
+            page,
+            options.policy.allowedOrigins,
+        );
+        if (originFailure !== null) {
+            return rejectDecision(
+                run,
+                command,
+                receipt,
+                "origin-not-allowed",
+                originFailure,
+            );
+        }
+        if (
+            command.action.type !== "navigate" &&
+            command.action.type !== "press"
+        ) {
+            await driver.locate(command.action.target);
+        }
+        const result = await driver.act(command.action);
+        await recorder.append({
+            type: "action",
+            recordedAt: new Date().toISOString(),
+            action: command.action,
+            result,
+            rationale: command.rationale,
+            receipt,
+        });
+        return {
+            record: { type: "action-completed", result },
+            terminal: false,
+        };
+    }
+    return {
+        record: { type: "command-error", error: "Unknown session command" },
+        terminal: false,
+    };
+}
+
+/** Record an explicit rejected decision and report the refusal. */
+async function rejectDecision(
+    run: SessionRun,
+    command: Extract<SessionCommand, { type: "act" }>,
+    receipt: DecisionReceipt,
+    reason: string,
+    detail: string,
+): Promise<SessionCommandOutcome> {
+    await run.recorder.append({
+        type: "decision-rejected",
         recordedAt: new Date().toISOString(),
         action: command.action,
         risk: command.risk,
         rationale: command.rationale,
-        policyDecision: decision,
-    });
-    if (decision.type !== "allow") {
-        return {
-            record: { type: "action-rejected", decision },
-            terminal: false,
-        };
-    }
-    const originFailure = blockedOrigin(
-        command.action,
-        page,
-        options.policy.allowedOrigins,
-    );
-    if (originFailure !== null) {
-        return {
-            record: { type: "action-rejected", reason: originFailure },
-            terminal: false,
-        };
-    }
-    if (command.action.type !== "navigate" && command.action.type !== "press") {
-        await driver.locate(command.action.target);
-    }
-    const result = await driver.act(command.action);
-    await recorder.append({
-        type: "action",
-        recordedAt: new Date().toISOString(),
-        action: command.action,
-        result,
-        rationale: command.rationale,
+        reason,
+        receipt,
     });
     return {
-        record: { type: "action-completed", result },
+        record: { type: "action-rejected", reason, detail },
         terminal: false,
     };
 }
@@ -322,12 +398,37 @@ export async function runInteractivePlaywrightSession(
     }
 }
 
+/**
+ * Producer provenance is sealed by the launcher, so commands carrying these
+ * fields are refused before they can touch the ledger or the manifest.
+ */
+const FORBIDDEN_COMMAND_FIELDS = [
+    "producer",
+    "model",
+    "receipt",
+    "nonce",
+    "sessionNonce",
+    "sequence",
+    "receiptHash",
+    "commandHash",
+    "priorObservationHash",
+    "priorObservationSequence",
+] as const;
+
 export function parseSessionCommand(source: string): SessionCommand {
     const value = JSON.parse(source) as unknown;
     if (value === null || typeof value !== "object") {
         throw new Error("Session command must be a JSON object");
     }
     const command = value as Record<string, unknown>;
+    const carried = FORBIDDEN_COMMAND_FIELDS.filter(
+        (field) => field in command,
+    );
+    if (carried.length > 0) {
+        throw new Error(
+            `Producer metadata is sealed by the launcher and cannot be sent by a controller: ${carried.join(", ")}`,
+        );
+    }
     if (
         command.type !== "observe" &&
         command.type !== "act" &&

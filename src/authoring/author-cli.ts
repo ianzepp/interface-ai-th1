@@ -1,7 +1,8 @@
+import { randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import process from "node:process";
-import { runCodexSession } from "./codex-run.js";
+import { runCodexSessionWithCapture } from "./codex-run.js";
 
 import { getTargetProfile } from "../targets/index.js";
 import { buildAuthorPrompt } from "./author-prompt.js";
@@ -161,10 +162,10 @@ async function run(options: AuthorRunOptions): Promise<void> {
     print("");
 
     // Model and reasoning effort are passed only when asked for. Leaving them out
-    // lets codex resolve them from the operator's global configuration, which is why
-    // the resolved values are recorded below: the same goal on a machine with a
-    // different config would otherwise produce different work with nothing in the
-    // evidence saying so.
+    // lets codex resolve them from the operator's global configuration. What is
+    // recorded here is only the request: the model the host actually resolved is
+    // captured from its own JSON event stream after the run and sealed into
+    // producer-attestation.json, next to the producer seal written below.
     const model = flags.get("model");
     const reasoningEffort = flags.get("reasoning-effort");
 
@@ -190,7 +191,31 @@ async function run(options: AuthorRunOptions): Promise<void> {
         "utf8",
     );
 
-    const outcome = await runCodexSession({
+    // The seal exists before the host starts, so every session the model opens
+    // reads a producer record this launcher wrote and nothing else. The nonce is
+    // generated here, and the attestation completed after the run binds it to
+    // the captured stream digest and exit status.
+    const sessionNonce = randomUUID();
+    const producerSealPath = join(laneDirectory, "producer-seal.json");
+    await writeFile(
+        producerSealPath,
+        `${JSON.stringify(
+            {
+                kind: "external-llm",
+                provider: "codex",
+                model: model ?? "codex default (global config)",
+                sessionNonce,
+                lane,
+                sealedAt: new Date().toISOString(),
+            },
+            null,
+            2,
+        )}\n`,
+        "utf8",
+    );
+    print(`producer seal: ${producerSealPath}`);
+
+    const result = await runCodexSessionWithCapture({
         prompt,
         workingDirectory: repoRoot,
         outputPath: lastMessagePath,
@@ -198,22 +223,43 @@ async function run(options: AuthorRunOptions): Promise<void> {
         model,
         reasoningEffort,
         timeoutMs,
+        extraEnv: { CAPABILITY_PRODUCER_SEAL: producerSealPath },
     });
 
-    if (outcome === "timeout") {
+    const attestationPath = join(laneDirectory, "producer-attestation.json");
+    await writeFile(
+        attestationPath,
+        `${JSON.stringify(
+            {
+                sessionNonce,
+                sessionId: result.capture.identity.sessionId,
+                resolvedModel: result.capture.identity.resolvedModel,
+                streamDigest: result.capture.streamDigest,
+                exitStatus: result.status,
+                exitCode: result.exitCode,
+                attestedAt: new Date().toISOString(),
+            },
+            null,
+            2,
+        )}\n`,
+        "utf8",
+    );
+    print(`producer attestation: ${attestationPath}`);
+
+    if (result.status === "timeout") {
         print("");
         print(
             `error: the session exceeded ${String(timeoutMs)}ms and was stopped`,
         );
         process.exitCode = 1;
-    } else if (outcome === "failed") {
+    } else if (result.status === "failed") {
         print("");
         print("error: codex could not be started");
         process.exitCode = 1;
     }
 
     print("");
-    print(`codex status: ${outcome}`);
+    print(`codex status: ${result.status}`);
     print(`final message: ${lastMessagePath}`);
     print("");
     print(await tail(lastMessagePath, 60));

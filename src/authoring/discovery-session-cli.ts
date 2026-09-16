@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { readFile } from "node:fs/promises";
 import process from "node:process";
 
 import type { Page } from "playwright";
@@ -9,6 +10,7 @@ import {
     type InteractiveSession,
     type SessionOptions,
 } from "./interactive-playwright-session.js";
+import type { ProducerRecord } from "./run-recorder.js";
 import { parseFlags, requireFlag } from "./flag-args.js";
 import { SessionControlServer } from "./session-control.js";
 import {
@@ -56,6 +58,29 @@ const socketPath =
     process.env.CAPABILITY_SESSION_SOCKET ??
     join(process.cwd(), "tmp", "session", `${lane}.sock`);
 
+// Producer identity has exactly one source: the record the launcher sealed into
+// the lane directory. Flags and stdin are refuse, not read, because a
+// controller-supplied identity is forgeable.
+const producerFlagNames = [
+    "producer",
+    "model",
+    "receipt",
+    "nonce",
+    "session-nonce",
+    "sequence",
+    "receipt-hash",
+    "command-hash",
+    "prior-observation-hash",
+    "prior-observation-sequence",
+];
+const carriedFlags = producerFlagNames.filter((name) => flags.has(name));
+if (carriedFlags.length > 0) {
+    throw new Error(
+        `Producer metadata is sealed by the launcher and cannot be set on the command line: ${carriedFlags.join(", ")}`,
+    );
+}
+const producer = await readProducerSeal(process.env.CAPABILITY_PRODUCER_SEAL);
+
 const profile = getTargetProfile(target);
 const targetVersion =
     flags.get("target-version") ?? profile.supportedVersions[0];
@@ -79,6 +104,7 @@ const options: SessionOptions = {
     targetProfile: profile.id,
     targetVersion,
     fixtureId,
+    producer,
     policy: {
         allowedOrigins: [origin],
         allowedActionTypes: ["navigate", "activate", "fill", "select", "press"],
@@ -198,6 +224,51 @@ function requireEnvironment(name: string): string {
         throw new Error(`${name} is required to authenticate the fixture`);
     }
     return value;
+}
+
+/**
+ * Load the launcher-sealed producer record from the harness-designated path.
+ *
+ * A discovery session does not start without one: an unsealed run could not
+ * prove who made its decisions, so the refusal happens before the browser comes
+ * up. Only fields the launcher sealed are read; anything else in the file is
+ * ignored rather than trusted.
+ */
+async function readProducerSeal(
+    sealPath: string | undefined,
+): Promise<ProducerRecord> {
+    if (sealPath === undefined || sealPath === "") {
+        throw new Error(
+            "CAPABILITY_PRODUCER_SEAL is required: a discovery session only starts from a launcher-sealed producer record",
+        );
+    }
+    let content: string;
+    try {
+        content = await readFile(sealPath, "utf8");
+    } catch {
+        throw new Error(
+            `The launcher-sealed producer record is unreadable: ${sealPath}`,
+        );
+    }
+    const value = JSON.parse(content) as Record<string, unknown>;
+    const kind = value.kind;
+    const provider = value.provider;
+    const model = value.model;
+    const sessionNonce = value.sessionNonce;
+    if (
+        (kind !== "external-llm" && kind !== "human") ||
+        typeof provider !== "string" ||
+        provider === "" ||
+        typeof model !== "string" ||
+        model === "" ||
+        typeof sessionNonce !== "string" ||
+        sessionNonce === ""
+    ) {
+        throw new Error(
+            `The producer record at ${sealPath} is not a valid launcher seal`,
+        );
+    }
+    return { kind, provider, model, sessionNonce, sealPath };
 }
 
 function describeError(error: unknown): string {

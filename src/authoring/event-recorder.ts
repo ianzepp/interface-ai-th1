@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import type {
     ActionRisk,
     ActionResult,
@@ -18,7 +20,39 @@ import type { PolicyDecision } from "../runtime/policy.js";
  * Actions carry their rationale because a reviewable artifact needs more than
  * an action list. A reviewer asking "why did it click that" needs the reason
  * that was true at the time, not a plausible reconstruction afterwards.
+ *
+ * Decisions carry a receipt because provenance has to be checkable, not
+ * asserted. The harness computes each receipt from what it observed — the prior
+ * observation event, the command it received, and the launcher-sealed session
+ * nonce — so a controller cannot author its own attestation.
  */
+
+/**
+ * Harness-computed binding of one model decision to the observation it followed.
+ *
+ * `sequence` and `receiptHash` are stamped by the recorder when the receipt is
+ * appended, which is what makes the receipt chain append-only.
+ */
+export interface DecisionReceipt {
+    /** Nonce from the launcher-sealed producer record for this session. */
+    sessionNonce: string;
+    /** Ledger position of the observation this decision was bound to. */
+    priorObservationSequence: number | null;
+    /** Chain hash of that observation event. */
+    priorObservationHash: string | null;
+    /** sha256 over the command the harness received for this decision. */
+    commandHash: string;
+    /** Stamped by the recorder: position in the append-only receipt chain. */
+    sequence: number;
+    /** Stamped by the recorder: chain hash sealing this receipt. */
+    receiptHash: string;
+}
+
+/** Where one appended event sits in the ledger's hash chain. */
+export interface EventIdentity {
+    sequence: number;
+    hash: string;
+}
 
 /** One recorded moment: what was seen, what was done and why, or a checkpoint. */
 export type DiscoveryEvent =
@@ -34,6 +68,16 @@ export type DiscoveryEvent =
           risk: ActionRisk;
           rationale: string;
           policyDecision: PolicyDecision;
+          receipt: DecisionReceipt;
+      }
+    | {
+          type: "decision-rejected";
+          recordedAt: string;
+          action: SurfaceAction;
+          risk: ActionRisk;
+          rationale: string;
+          reason: string;
+          receipt: DecisionReceipt;
       }
     | {
           type: "action";
@@ -41,6 +85,8 @@ export type DiscoveryEvent =
           action: SurfaceAction;
           result: ActionResult;
           rationale: string;
+          /** Present when the executed action was a model decision. */
+          receipt?: DecisionReceipt;
       }
     | {
           type: "checkpoint";
@@ -56,7 +102,7 @@ export type DiscoveryEvent =
  * same contract as the in-memory one without changing its callers.
  */
 export interface EventRecorder {
-    append(event: DiscoveryEvent): Promise<void>;
+    append(event: DiscoveryEvent): Promise<EventIdentity>;
     readAll(): Promise<readonly DiscoveryEvent[]>;
 }
 
@@ -64,9 +110,13 @@ export interface EventRecorder {
 export class InMemoryEventRecorder implements EventRecorder {
     readonly #events: DiscoveryEvent[] = [];
 
-    public append(event: DiscoveryEvent): Promise<void> {
+    public append(event: DiscoveryEvent): Promise<EventIdentity> {
+        const sequence = this.#events.length;
+        const hash = createHash("sha256")
+            .update(`${sequence}|${JSON.stringify(event)}`)
+            .digest("hex");
         this.#events.push(event);
-        return Promise.resolve();
+        return Promise.resolve({ sequence, hash });
     }
 
     public readAll(): Promise<readonly DiscoveryEvent[]> {

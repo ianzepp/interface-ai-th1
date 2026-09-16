@@ -4,7 +4,23 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { FileTestRunRecorder } from "../src/authoring/run-recorder.js";
+import {
+    FileTestRunRecorder,
+    type ProducerRecord,
+} from "../src/authoring/run-recorder.js";
+
+const NAVIGATE_ACTION = {
+    type: "navigate",
+    url: "http://127.0.0.1:8080/societe/list.php",
+} as const;
+
+const SEALED_PRODUCER: ProducerRecord = {
+    kind: "external-llm",
+    provider: "codex",
+    model: "gpt-5.6-sol",
+    sessionNonce: "nonce-1234",
+    sealPath: "tmp/discovery/lane-a/producer-seal.json",
+};
 
 test("persists a completed test run and its brief README", async (context) => {
     const rootDirectory = await mkdtemp(join(tmpdir(), "interface-ai-run-"));
@@ -99,5 +115,161 @@ test("rejects events after a run is finalized", async (context) => {
             satisfied: false,
         }),
         /already finalized/,
+    );
+});
+
+test("seals the producer record and receipt chain into the finalized manifest", async (context) => {
+    const rootDirectory = await mkdtemp(join(tmpdir(), "interface-ai-run-"));
+    context.after(async () =>
+        rm(rootDirectory, { recursive: true, force: true }),
+    );
+
+    const recorder = await FileTestRunRecorder.start({
+        rootDirectory,
+        runId: "run-003",
+        goal: "Look up a third party by exact name",
+        situation: "Authenticated demo fixture",
+        targetProfile: "dolibarr",
+        targetVersion: "23.0.4",
+        fixtureId: "dolibarr/demo-install-smoke",
+        producer: SEALED_PRODUCER,
+    });
+
+    const observation = await recorder.append({
+        type: "observation",
+        recordedAt: "2026-09-16T14:00:00.000Z",
+        observation: { url: "http://127.0.0.1:8080/", title: "Home" },
+    });
+    const receipt = recorder.buildDecisionReceipt({
+        action: NAVIGATE_ACTION,
+        risk: "safe",
+        rationale: "Open the third-party list.",
+    });
+    assert.equal(receipt.priorObservationSequence, observation.sequence);
+    assert.equal(receipt.priorObservationHash, observation.hash);
+
+    // A controller-supplied receipt is overwritten, not trusted.
+    const forged = { ...receipt, sequence: 42, receiptHash: "forged" };
+    await recorder.append({
+        type: "proposal",
+        recordedAt: "2026-09-16T14:00:05.000Z",
+        action: NAVIGATE_ACTION,
+        risk: "safe",
+        rationale: "Open the third-party list.",
+        policyDecision: { type: "allow" },
+        receipt: forged,
+    });
+    await recorder.finalize({
+        status: "satisfied",
+        summary: "The list was reachable.",
+        checkpoint: "third-party-list-visible",
+    });
+
+    const manifest = JSON.parse(
+        await readFile(join(rootDirectory, "run-003", "run.json"), "utf8"),
+    ) as {
+        producer?: ProducerRecord;
+        decisionReceipts?: { count: number; digest: string };
+    };
+    assert.deepEqual(manifest.producer, SEALED_PRODUCER);
+    assert.equal(manifest.decisionReceipts?.count, 1);
+    assert.match(manifest.decisionReceipts?.digest ?? "", /^[0-9a-f]{64}$/);
+
+    const events = (
+        await readFile(join(rootDirectory, "run-003", "events.jsonl"), "utf8")
+    )
+        .trimEnd()
+        .split("\n");
+    const proposal = JSON.parse(events[1] ?? "{}") as {
+        receipt: {
+            sessionNonce: string;
+            sequence: number;
+            receiptHash: string;
+            commandHash: string;
+        };
+    };
+    assert.equal(proposal.receipt.sessionNonce, "nonce-1234");
+    assert.equal(proposal.receipt.sequence, 0);
+    assert.match(proposal.receipt.receiptHash, /^[0-9a-f]{64}$/);
+    assert.match(proposal.receipt.commandHash, /^[0-9a-f]{64}$/);
+});
+
+test("a receipt is unbound until an observation is recorded", async (context) => {
+    const rootDirectory = await mkdtemp(join(tmpdir(), "interface-ai-run-"));
+    context.after(async () =>
+        rm(rootDirectory, { recursive: true, force: true }),
+    );
+
+    const recorder = await FileTestRunRecorder.start({
+        rootDirectory,
+        runId: "run-004",
+        goal: "Act only on a seen screen",
+        situation: "No observation yet",
+        targetProfile: "dolibarr",
+        targetVersion: "23.0.4",
+        fixtureId: "dolibarr/demo-install-smoke",
+        producer: SEALED_PRODUCER,
+    });
+
+    const unbound = recorder.buildDecisionReceipt({
+        action: NAVIGATE_ACTION,
+        risk: "safe",
+        rationale: "Jump straight to the list.",
+    });
+    assert.equal(unbound.priorObservationSequence, null);
+    assert.equal(unbound.priorObservationHash, null);
+});
+
+test("receipt-bearing events are refused without a sealed producer", async (context) => {
+    const rootDirectory = await mkdtemp(join(tmpdir(), "interface-ai-run-"));
+    context.after(async () =>
+        rm(rootDirectory, { recursive: true, force: true }),
+    );
+
+    const recorder = await FileTestRunRecorder.start({
+        rootDirectory,
+        runId: "run-005",
+        goal: "No producer was sealed",
+        situation: "Unsealed session",
+        targetProfile: "dolibarr",
+        targetVersion: "23.0.4",
+        fixtureId: "dolibarr/demo-install-smoke",
+    });
+    await recorder.append({
+        type: "observation",
+        recordedAt: "2026-09-16T14:00:00.000Z",
+        observation: { url: "http://127.0.0.1:8080/", title: "Home" },
+    });
+
+    // No receipt can be authored at all, so no decision is attestable.
+    assert.throws(
+        () =>
+            recorder.buildDecisionReceipt({
+                action: NAVIGATE_ACTION,
+                risk: "safe",
+                rationale: "Should not be attestable.",
+            }),
+        /no sealed producer record/,
+    );
+
+    // A hand-made receipt does not get past the recorder either.
+    await assert.rejects(
+        recorder.append({
+            type: "proposal",
+            recordedAt: "2026-09-16T14:00:05.000Z",
+            action: NAVIGATE_ACTION,
+            risk: "safe",
+            rationale: "Should not be attestable.",
+            policyDecision: { type: "allow" },
+            receipt: {
+                sessionNonce: "attacker-nonce",
+                priorObservationSequence: 0,
+                priorObservationHash: "0".repeat(64),
+                commandHash: "0".repeat(64),
+                sequence: 0,
+                receiptHash: "0".repeat(64),
+            },
+        }),
+        /no sealed producer record/,
     );
 });
