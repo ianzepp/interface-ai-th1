@@ -16,7 +16,11 @@ import type {
     SurfaceAction,
 } from "../surfaces/surface-driver.js";
 import { PlaywrightTestRunCapture } from "./playwright-run-capture.js";
-import type { DecisionReceipt } from "./event-recorder.js";
+import type {
+    DecisionReceipt,
+    EventIdentity,
+    ObservationIdentity,
+} from "./event-recorder.js";
 import {
     FileTestRunRecorder,
     type ProducerRecord,
@@ -48,6 +52,8 @@ export type SessionCommand =
           action: SurfaceAction;
           risk: ActionRisk;
           rationale: string;
+          /** Identity returned by the most recent successful observe. */
+          observationIdentity?: ObservationIdentity;
       }
     | { type: "checkpoint"; name: string; satisfied: boolean }
     | { type: "finish"; outcome: TestRunOutcome };
@@ -85,6 +91,7 @@ export interface InteractiveSession {
      * the session already knows.
      */
     initialObservation: Observation;
+    initialObservationIdentity: ObservationIdentity;
     handle(command: SessionCommand): Promise<SessionCommandOutcome>;
     /** Stop tracing and the browser, finalizing the run if it is still open. */
     close(): Promise<void>;
@@ -99,6 +106,10 @@ interface SessionRun {
     driver: PlaywrightBrowserDriver;
     policy: ArtifactPolicy;
     finalized: boolean;
+    /** The last observation issued to the external controller. */
+    currentObservationIdentity: ObservationIdentity | null;
+    /** Whether the current observation has already authorized an action. */
+    observationConsumed: boolean;
 }
 
 /**
@@ -144,6 +155,8 @@ export async function createInteractiveSession(
             driver,
             policy: new ArtifactPolicy(options.policy),
             finalized: false,
+            currentObservationIdentity: null,
+            observationConsumed: false,
         };
         const initialObservation = await driver.observe({
             includeAccessibility: true,
@@ -151,16 +164,18 @@ export async function createInteractiveSession(
         });
         // The screen the controller first saw is ledger event zero, so the first
         // decision always has an observation to bind to.
-        await recorder.append({
+        const initialObservationIdentity = await recorder.append({
             type: "observation",
             recordedAt: new Date().toISOString(),
             observation: initialObservation,
         });
+        run.currentObservationIdentity = initialObservationIdentity;
 
         return {
             runId: basename(recorder.directory),
             runDirectory: recorder.directory,
             initialObservation,
+            initialObservationIdentity,
 
             async handle(
                 command: SessionCommand,
@@ -221,13 +236,15 @@ async function handleCommand(
             includeAccessibility: true,
             includeScreenshot: command.screenshot ?? false,
         });
-        await recorder.append({
+        const observationIdentity = await recorder.append({
             type: "observation",
             recordedAt: new Date().toISOString(),
             observation,
         });
+        run.currentObservationIdentity = observationIdentity;
+        run.observationConsumed = false;
         return {
-            record: { type: "observation", observation },
+            record: { type: "observation", observation, observationIdentity },
             terminal: false,
         };
     }
@@ -260,15 +277,22 @@ async function handleCommand(
         risk: command.risk,
         rationale: command.rationale,
     });
-    if (receipt.priorObservationHash === null) {
+    const observationFailure = observeRequirementFailure(
+        run,
+        command.observationIdentity,
+    );
+    if (observationFailure !== null) {
         return rejectDecision(
             run,
             command,
             receipt,
-            "no-bound-observation",
-            "The decision had no recorded observation to bind to.",
+            "observe-required",
+            observationFailure,
         );
     }
+    // Consume the epoch before evaluating policy or doing any asynchronous work.
+    // A second action cannot race this one and reuse the same observation.
+    run.observationConsumed = true;
     const decision = policy.evaluate(command.action, command.risk);
     await recorder.append({
         type: "proposal",
@@ -320,6 +344,40 @@ async function handleCommand(
     };
 }
 
+function observeRequirementFailure(
+    run: SessionRun,
+    supplied: unknown,
+): string | null {
+    const issued = run.currentObservationIdentity;
+    if (issued === null) {
+        return "The session has not issued an observation identity yet.";
+    }
+    if (!isEventIdentity(supplied)) {
+        return "Act requires the identity returned by the latest observation.";
+    }
+    if (run.observationConsumed) {
+        return "The observation identity was already consumed; observe again before acting.";
+    }
+    if (!sameEventIdentity(supplied, issued)) {
+        return "Act requires the identity returned by the latest observation.";
+    }
+    return null;
+}
+
+function isEventIdentity(value: unknown): value is EventIdentity {
+    if (value === null || typeof value !== "object" || Array.isArray(value)) {
+        return false;
+    }
+    const record = value as Record<string, unknown>;
+    return (
+        typeof record.sequence === "number" && typeof record.hash === "string"
+    );
+}
+
+function sameEventIdentity(left: EventIdentity, right: EventIdentity): boolean {
+    return left.sequence === right.sequence && left.hash === right.hash;
+}
+
 /** Record an explicit rejected decision and report the refusal. */
 async function rejectDecision(
     run: SessionRun,
@@ -362,6 +420,7 @@ export async function runInteractivePlaywrightSession(
             runId: session.runId,
             runDirectory: session.runDirectory,
             observation: session.initialObservation,
+            observationIdentity: session.initialObservationIdentity,
         });
 
         const lines = createInterface({

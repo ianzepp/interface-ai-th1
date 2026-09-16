@@ -54,6 +54,9 @@ export interface EventIdentity {
     hash: string;
 }
 
+/** The identity a controller must carry from an observation into its action. */
+export type ObservationIdentity = EventIdentity;
+
 /** One recorded moment: what was seen, what was done and why, or a checkpoint. */
 export type DiscoveryEvent =
     | {

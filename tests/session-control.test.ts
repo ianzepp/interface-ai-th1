@@ -9,12 +9,14 @@ import {
     parseControlResponse,
     requestSessionControl,
 } from "../src/authoring/session-control.js";
+import type { SessionCommand } from "../src/authoring/interactive-playwright-session.js";
 
 test("sends a command to a session and returns the record it emitted", async (context) => {
     const directory = await mkdtemp(join(tmpdir(), "interface-ai-control-"));
     context.after(async () => rm(directory, { recursive: true, force: true }));
 
     const seen: string[] = [];
+    const observationIdentity = { sequence: 0, hash: "observation-hash" };
     const server = new SessionControlServer({
         socketPath: join(directory, "session.sock"),
         dispatch: (command) => {
@@ -22,6 +24,7 @@ test("sends a command to a session and returns the record it emitted", async (co
             return Promise.resolve({
                 type: "observation",
                 url: "http://local.test",
+                observationIdentity,
             });
         },
     });
@@ -38,6 +41,48 @@ test("sends a command to a session and returns the record it emitted", async (co
     assert.deepEqual(response.record, {
         type: "observation",
         url: "http://local.test",
+        observationIdentity,
+    });
+});
+
+test("carries an observation identity through the socket response path", async (context) => {
+    const directory = await mkdtemp(join(tmpdir(), "interface-ai-control-"));
+    context.after(async () => rm(directory, { recursive: true, force: true }));
+
+    const observationIdentity = { sequence: 2, hash: "observation-hash" };
+    const seen: SessionCommand[] = [];
+    const server = new SessionControlServer({
+        socketPath: join(directory, "session.sock"),
+        dispatch: (command) => {
+            seen.push(command);
+            return Promise.resolve(
+                command.type === "observe"
+                    ? { type: "observation", observationIdentity }
+                    : { type: "action-completed" },
+            );
+        },
+    });
+    await server.listen();
+    context.after(async () => server.close());
+
+    const socketPath = join(directory, "session.sock");
+    await requestSessionControl(socketPath, { type: "observe" });
+    const action = {
+        type: "act" as const,
+        action: {
+            type: "navigate" as const,
+            url: "http://local.test/list",
+        },
+        risk: "safe" as const,
+        rationale: "Open the list.",
+        observationIdentity,
+    };
+    const response = await requestSessionControl(socketPath, action);
+
+    assert.deepEqual(seen[1], action);
+    assert.deepEqual(response, {
+        ok: true,
+        record: { type: "action-completed" },
     });
 });
 
