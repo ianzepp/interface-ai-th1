@@ -89,10 +89,10 @@ const BANNED_PATTERNS: readonly BannedPattern[] = [
     },
     {
         label: "console output",
-        budget: 20,
+        budget: 21,
         pattern: /console\.(log|info|warn|error|debug|trace|table|dir)\s*\(/,
         rationale:
-            "Every one is operator-facing output in a process entry point: the capture pilots, the draft CLI, and the replay runners. Library modules under src/ print nothing. The budget includes the two output lines in the customer-with-contact replay entry point; a new call outside those entry points is the change this budget exists to catch.",
+            "Every one is operator-facing output in a process entry point: the capture pilots, the draft CLI, the replay runners, and the export-artifact CLI. Library modules under src/ print nothing. The budget includes the two output lines in the customer-with-contact replay entry point; a new call outside those entry points is the change this budget exists to catch.",
     },
 ];
 
