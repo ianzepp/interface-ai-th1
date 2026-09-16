@@ -255,76 +255,70 @@ async function handleCommand(
     // A proposed action is receipted against the observation it followed, and
     // recorded before it runs, so a refusal or a thrown locator leaves evidence
     // of the attempt rather than a gap in the ledger.
-    if (command.type === "act") {
-        const receipt = recorder.buildDecisionReceipt({
-            action: command.action,
-            risk: command.risk,
-            rationale: command.rationale,
-        });
-        if (receipt.priorObservationHash === null) {
-            return rejectDecision(
-                run,
-                command,
-                receipt,
-                "no-bound-observation",
-                "The decision had no recorded observation to bind to.",
-            );
-        }
-        const decision = policy.evaluate(command.action, command.risk);
-        await recorder.append({
-            type: "proposal",
-            recordedAt: new Date().toISOString(),
-            action: command.action,
-            risk: command.risk,
-            rationale: command.rationale,
-            policyDecision: decision,
+    const receipt = recorder.buildDecisionReceipt({
+        action: command.action,
+        risk: command.risk,
+        rationale: command.rationale,
+    });
+    if (receipt.priorObservationHash === null) {
+        return rejectDecision(
+            run,
+            command,
             receipt,
-        });
-        if (decision.type !== "allow") {
-            return rejectDecision(
-                run,
-                command,
-                receipt,
-                `policy-${decision.type}`,
-                decision.reason,
-            );
-        }
-        const originFailure = blockedOrigin(
-            command.action,
-            page,
-            options.policy.allowedOrigins,
+            "no-bound-observation",
+            "The decision had no recorded observation to bind to.",
         );
-        if (originFailure !== null) {
-            return rejectDecision(
-                run,
-                command,
-                receipt,
-                "origin-not-allowed",
-                originFailure,
-            );
-        }
-        if (
-            command.action.type !== "navigate" &&
-            command.action.type !== "press"
-        ) {
-            await driver.locate(command.action.target);
-        }
-        const result = await driver.act(command.action);
-        await recorder.append({
-            type: "action",
-            recordedAt: new Date().toISOString(),
-            action: command.action,
-            result,
-            rationale: command.rationale,
-            receipt,
-        });
-        return {
-            record: { type: "action-completed", result },
-            terminal: false,
-        };
     }
+    const decision = policy.evaluate(command.action, command.risk);
+    await recorder.append({
+        type: "proposal",
+        recordedAt: new Date().toISOString(),
+        action: command.action,
+        risk: command.risk,
+        rationale: command.rationale,
+        policyDecision: decision,
+        receipt,
+    });
+    if (decision.type !== "allow") {
+        return rejectDecision(
+            run,
+            command,
+            receipt,
+            `policy-${decision.type}`,
+            decision.reason,
+        );
+    }
+    const originFailure = blockedOrigin(
+        command.action,
+        page,
+        options.policy.allowedOrigins,
+    );
+    if (originFailure !== null) {
+        return rejectDecision(
+            run,
+            command,
+            receipt,
+            "origin-not-allowed",
+            originFailure,
+        );
+    }
+    if (
+        command.action.type !== "navigate" &&
+        command.action.type !== "press"
+    ) {
+        await driver.locate(command.action.target);
+    }
+    const result = await driver.act(command.action);
+    await recorder.append({
+        type: "action",
+        recordedAt: new Date().toISOString(),
+        action: command.action,
+        result,
+        rationale: command.rationale,
+        receipt,
+    });
     return {
-        record: { type: "command-error", error: "Unknown session command" },
+        record: { type: "action-completed", result },
         terminal: false,
     };
 }

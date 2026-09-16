@@ -328,7 +328,7 @@ export class FileTestRunRecorder implements EventRecorder {
         }
         const sequence = this.#eventSequence;
         const hash = createHash("sha256")
-            .update(`${this.#eventChainHash}|${sequence}|${JSON.stringify(clean)}`)
+            .update(`${this.#eventChainHash}|${String(sequence)}|${JSON.stringify(clean)}`)
             .digest("hex");
         this.#eventChainHash = hash;
         this.#eventSequence = sequence + 1;

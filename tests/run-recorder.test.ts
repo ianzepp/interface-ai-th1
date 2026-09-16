@@ -173,7 +173,7 @@ test("seals the producer record and receipt chain into the finalized manifest", 
     };
     assert.deepEqual(manifest.producer, SEALED_PRODUCER);
     assert.equal(manifest.decisionReceipts?.count, 1);
-    assert.match(manifest.decisionReceipts?.digest ?? "", /^[0-9a-f]{64}$/);
+    assert.match(manifest.decisionReceipts.digest, /^[0-9a-f]{64}$/);
 
     const events = (
         await readFile(join(rootDirectory, "run-003", "events.jsonl"), "utf8")

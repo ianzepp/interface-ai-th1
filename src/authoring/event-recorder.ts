@@ -113,7 +113,7 @@ export class InMemoryEventRecorder implements EventRecorder {
     public append(event: DiscoveryEvent): Promise<EventIdentity> {
         const sequence = this.#events.length;
         const hash = createHash("sha256")
-            .update(`${sequence}|${JSON.stringify(event)}`)
+            .update(`${String(sequence)}|${JSON.stringify(event)}`)
             .digest("hex");
         this.#events.push(event);
         return Promise.resolve({ sequence, hash });

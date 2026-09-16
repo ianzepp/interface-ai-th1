@@ -141,7 +141,9 @@ export function runCodexSessionWithCapture(
             finish("timeout", null);
         }, options.timeoutMs);
 
-        child.on("error", () => finish("failed", null));
+        child.on("error", () => {
+            finish("failed", null);
+        });
         child.on("close", (code) => {
             for (const line of buffer.split("\n")) {
                 scanHostIdentityLine(line, identity);
