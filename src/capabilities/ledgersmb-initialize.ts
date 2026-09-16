@@ -53,7 +53,7 @@ export const ledgerSmbInitializeArtifact: CapabilityArtifact = {
     capabilityVersion: "0.1.0",
     id: "ledgersmb.initialize-company",
     title: "Initialize a fresh LedgerSMB company",
-    targetProfile: "ledgersmb-1.13.7",
+    targetProfile: "ledgersmb",
     contract: {
         goal: "Create a LedgerSMB company and its first administrator, then prove the account can authenticate.",
         inputs: {

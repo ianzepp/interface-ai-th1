@@ -61,7 +61,7 @@ export const dolibarrCreateCustomerWithContactArtifact: CapabilityArtifact = {
     capabilityVersion: "0.1.0",
     id: "dolibarr.create-customer-with-contact",
     title: "Create a Dolibarr customer and linked contact",
-    targetProfile: "dolibarr-23.0.4",
+    targetProfile: "dolibarr",
     contract: {
         goal: "Create a new customer third-party record and add one contact linked to it.",
         inputs: {

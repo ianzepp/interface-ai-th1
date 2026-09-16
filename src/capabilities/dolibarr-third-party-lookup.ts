@@ -102,7 +102,7 @@ export const dolibarrThirdPartyLookupArtifact: CapabilityArtifact = {
     capabilityVersion: "0.1.0",
     id: "dolibarr.lookup-third-party",
     title: "Look up a Dolibarr third party by exact name",
-    targetProfile: "dolibarr-23.0.4",
+    targetProfile: "dolibarr",
     contract: {
         goal: "Look up a Dolibarr third party by exact name and return its account profile.",
         inputs: { baseUrl: "string", name: "string" },

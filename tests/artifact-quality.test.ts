@@ -31,19 +31,12 @@ const BLOCKING_BASELINE: Readonly<
     Record<string, Readonly<Record<string, number>>>
 > = {
     // Authored by a Codex session on an isolated lane. Both creates resolve their
-    // submit by position, and the artifact pins that lane's port.
+    // submit by position.
     "dolibarr.create-customer-with-contact": {
-        "target-profile-unresolvable": 1,
         "positional-selector-on-mutating-stage": 2,
     },
-    // Declares <profile>-<version> while the registry resolves a bare id.
-    "dolibarr.lookup-third-party": {
-        "target-profile-unresolvable": 1,
-    },
-    // Same profile-format drift, and it records no corroborating evidence runs
-    // even though the skill requires at least two.
+    // Records no corroborating evidence runs, though the skill requires two.
     "ledgersmb.initialize-company": {
-        "target-profile-unresolvable": 1,
         "insufficient-corroborating-runs": 1,
     },
 };

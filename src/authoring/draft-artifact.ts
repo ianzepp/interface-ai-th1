@@ -263,7 +263,10 @@ export function buildDraftArtifact(
         capabilityVersion: "0.0.0-draft",
         id: input.capabilityId,
         title: input.manifest.goal,
-        targetProfile: `${input.manifest.targetProfile}-${input.manifest.targetVersion}`,
+        // The profile id alone. Composing '<id>-<version>' here produced a value no
+        // registry could resolve, and the version is already recorded separately in
+        // the source block below.
+        targetProfile: input.manifest.targetProfile,
         contract: {
             goal: input.manifest.goal,
             inputs,

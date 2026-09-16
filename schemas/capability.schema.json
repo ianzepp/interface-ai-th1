@@ -2,6 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://interface-ai.local/schemas/capability.schema.json",
   "title": "Computer-use capability artifact",
+  "description": "The authoritative contract for a capability artifact. Code is validated against this schema rather than the schema being derived from the code, so that the contract can be designed rather than inherited. The engine's TypeScript types are the same contract expressed for the compiler; where the two disagree, this file is what a reviewer reads and what validation enforces.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -17,27 +18,61 @@
     "provenance"
   ],
   "properties": {
-    "schemaVersion": { "type": "string", "const": "1" },
-    "capabilityVersion": { "type": "string", "minLength": 1 },
-    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9.-]*$" },
+    "schemaVersion": {
+      "description": "Version of this schema the artifact was written against.",
+      "type": "string",
+      "const": "1"
+    },
+    "capabilityVersion": {
+      "description": "Version of the capability itself, raised on review.",
+      "type": "string",
+      "minLength": 1
+    },
+    "id": {
+      "description": "Stable capability identifier, quoted in every invocation.",
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9.-]*$"
+    },
     "title": { "type": "string", "minLength": 1 },
-    "targetProfile": { "type": "string", "minLength": 1 },
+    "targetProfile": {
+      "description": "Registered target profile id. Not a composed '<id>-<version>' string: profile identity and target version are separate facts, and a value nothing can resolve would throw the moment it were read.",
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]*$"
+    },
+    "contract": { "$ref": "#/$defs/contract" },
+    "entryStageId": { "type": "string", "minLength": 1 },
+    "stages": {
+      "description": "Ordered for reading, not for execution. Replay follows transitions, and reachability is a property of the graph rather than of this array.",
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/stage" }
+    },
+    "policy": { "$ref": "#/$defs/policy" },
+    "provenance": { "$ref": "#/$defs/provenance" }
+  },
+  "$defs": {
     "contract": {
       "type": "object",
       "additionalProperties": false,
       "required": ["goal", "inputs", "outputs", "successCondition"],
       "properties": {
         "goal": { "type": "string", "minLength": 1 },
-        "inputs": { "type": "object" },
-        "outputs": { "type": "object" },
-        "successCondition": { "type": "string", "minLength": 1 }
+        "inputs": {
+          "description": "Caller-supplied values, each named with the type it must satisfy. Bound into actions and targets as '{{input.NAME}}'.",
+          "type": "object",
+          "additionalProperties": { "type": "string", "minLength": 1 }
+        },
+        "outputs": {
+          "description": "Values returned on success, each named with its type. Every declared output must be produced by an extraction somewhere in the graph.",
+          "type": "object",
+          "additionalProperties": { "type": "string", "minLength": 1 }
+        },
+        "successCondition": {
+          "description": "Prose, deliberately. It is the claim a reviewer judges the graph against, not a predicate replay evaluates.",
+          "type": "string",
+          "minLength": 1
+        }
       }
-    },
-    "entryStageId": { "type": "string", "minLength": 1 },
-    "stages": {
-      "type": "array",
-      "minItems": 1,
-      "items": { "$ref": "#/$defs/stage" }
     },
     "policy": {
       "type": "object",
@@ -45,15 +80,20 @@
       "required": ["allowedOrigins", "allowedActionTypes", "riskyActionMode"],
       "properties": {
         "allowedOrigins": {
+          "description": "Origins replay may touch. An artifact authored on an isolated lane picks up that lane's port, which binds a reusable capability to one throwaway instance.",
           "type": "array",
-          "items": { "type": "string", "format": "uri" }
+          "minItems": 1,
+          "items": { "type": "string", "format": "uri" },
+          "uniqueItems": true
         },
         "allowedActionTypes": {
           "type": "array",
-          "items": { "type": "string" },
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/actionType" },
           "uniqueItems": true
         },
         "riskyActionMode": {
+          "description": "There is deliberately no mode in which an irreversible action runs unattended.",
           "enum": ["block", "require-confirmation"]
         }
       }
@@ -66,19 +106,19 @@
         "discoveryRunId": { "type": "string", "minLength": 1 },
         "createdAt": { "type": "string", "format": "date-time" },
         "evidenceRunIds": {
+          "description": "The corpus that grounds the graph. The method requires at least two successful captures that agree, so a lone run is not corroboration.",
           "type": "array",
-          "items": { "type": "string" },
+          "items": { "type": "string", "minLength": 1 },
           "uniqueItems": true
         },
         "validatedRunIds": {
+          "description": "Replays that validated the artifact. A capability with no entry here has not been validated, however much exploration it holds.",
           "type": "array",
-          "items": { "type": "string" },
+          "items": { "type": "string", "minLength": 1 },
           "uniqueItems": true
         }
       }
-    }
-  },
-  "$defs": {
+    },
     "stage": {
       "type": "object",
       "additionalProperties": false,
@@ -94,12 +134,316 @@
       "properties": {
         "id": { "type": "string", "minLength": 1 },
         "description": { "type": "string", "minLength": 1 },
-        "risk": { "enum": ["safe", "reversible", "irreversible"] },
-        "action": { "type": "object" },
-        "detectors": { "type": "array", "items": { "type": "object" } },
-        "transitions": { "type": "array", "items": { "type": "object" } },
-        "otherwise": { "type": "object" },
-        "extractions": { "type": "array", "items": { "type": "object" } }
+        "risk": { "$ref": "#/$defs/actionRisk" },
+        "action": {
+          "description": "Optional: a stage may only observe and extract, which is how a terminal read stage is expressed.",
+          "$ref": "#/$defs/action"
+        },
+        "detectors": {
+          "description": "The states this stage listens for after acting.",
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/detector" }
+        },
+        "transitions": {
+          "description": "One destination per recognized state. Every detectorId must name a detector this stage declares.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/transition" }
+        },
+        "otherwise": {
+          "description": "Where an unrecognized state goes. Required, so the graph cannot continue by default.",
+          "$ref": "#/$defs/destination"
+        },
+        "extractions": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/extraction" }
+        }
+      }
+    },
+    "action": {
+      "description": "The action vocabulary, deliberately small. A new capability should need a new target or value rather than a new verb, because expanding this union widens what every allowlist has to consider.",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "url"],
+          "properties": {
+            "type": { "const": "navigate" },
+            "url": {
+              "description": "An absolute URL, or one whose origin is bound from an input. A relative URL is not permitted: leaving the allowlisted origin has to be deliberate.",
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^(https?://|\\{\\{input\\.[A-Za-z0-9_]+\\}\\})"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "target"],
+          "properties": {
+            "type": { "const": "activate" },
+            "target": { "$ref": "#/$defs/target" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "target", "value"],
+          "properties": {
+            "type": { "const": "fill" },
+            "target": { "$ref": "#/$defs/target" },
+            "value": { "type": "string" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "target", "value"],
+          "properties": {
+            "type": { "const": "select" },
+            "target": { "$ref": "#/$defs/target" },
+            "value": { "type": "string" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "key"],
+          "properties": {
+            "type": { "const": "press" },
+            "key": { "type": "string", "minLength": 1 }
+          }
+        }
+      ]
+    },
+    "actionType": {
+      "enum": ["navigate", "activate", "fill", "select", "press"]
+    },
+    "actionRisk": {
+      "enum": ["safe", "reversible", "irreversible"]
+    },
+    "target": {
+      "description": "'require' is pinned to a single match on purpose. An ambiguous target is a defect in the recorded capability, and resolving it silently would make replay non-deterministic.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["candidates", "require"],
+      "properties": {
+        "candidates": {
+          "description": "Ordered from most to least meaningful. Accessible role and name first, CSS last.",
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/candidate" }
+        },
+        "require": { "const": "exactly-one" }
+      }
+    },
+    "candidate": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "role", "name"],
+          "properties": {
+            "kind": { "const": "role" },
+            "role": { "type": "string", "minLength": 1 },
+            "name": { "type": "string", "minLength": 1 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "text"],
+          "properties": {
+            "kind": { "const": "label" },
+            "text": { "type": "string", "minLength": 1 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "text", "exact"],
+          "properties": {
+            "kind": { "const": "text" },
+            "text": { "type": "string", "minLength": 1 },
+            "exact": { "type": "boolean" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "selector"],
+          "properties": {
+            "kind": { "const": "css" },
+            "selector": { "type": "string", "minLength": 1 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "anchor", "relation"],
+          "properties": {
+            "kind": { "const": "relative" },
+            "anchor": { "type": "string", "minLength": 1 },
+            "relation": { "type": "string", "minLength": 1 }
+          }
+        }
+      ]
+    },
+    "detector": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "description", "scope", "signals"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "description": { "type": "string", "minLength": 1 },
+        "scope": {
+          "description": "How widely the state applies. A lost session is a property of the application and belongs to a shared target profile; a results-are-visible state belongs to one capability.",
+          "enum": ["runtime", "target", "capability"]
+        },
+        "signals": {
+          "description": "All signals must hold for the detector to match. At least one must observe page content rather than the address, or the stage cannot show that its own action took effect.",
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/signal" }
+        }
+      }
+    },
+    "signal": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "pattern"],
+          "properties": {
+            "kind": { "const": "url" },
+            "pattern": { "type": "string", "minLength": 1 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "value", "exact"],
+          "properties": {
+            "kind": { "const": "text" },
+            "value": { "type": "string", "minLength": 1 },
+            "exact": { "type": "boolean" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "role", "name"],
+          "properties": {
+            "kind": { "const": "role" },
+            "role": { "type": "string", "minLength": 1 },
+            "name": { "type": "string", "minLength": 1 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "target", "operator", "value"],
+          "properties": {
+            "kind": { "const": "count" },
+            "target": { "$ref": "#/$defs/target" },
+            "operator": { "enum": ["equal", "greater-than"] },
+            "value": { "type": "integer", "minimum": 0 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "status"],
+          "properties": {
+            "kind": { "const": "response-status" },
+            "status": { "type": "integer", "minimum": 100, "maximum": 599 }
+          }
+        }
+      ]
+    },
+    "transition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["detectorId", "destination"],
+      "properties": {
+        "detectorId": { "type": "string", "minLength": 1 },
+        "destination": { "$ref": "#/$defs/destination" }
+      }
+    },
+    "destination": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "stageId"],
+          "properties": {
+            "type": { "const": "stage" },
+            "stageId": { "type": "string", "minLength": 1 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "outcome"],
+          "properties": {
+            "type": { "const": "terminal" },
+            "outcome": { "$ref": "#/$defs/outcome" }
+          }
+        }
+      ]
+    },
+    "outcome": {
+      "description": "A legitimate answer is not an error. 'business-outcome' carries a real result such as no matching record, and exists so callers do not have to read prose to tell an answer from a defect.",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type"],
+          "properties": { "type": { "const": "success" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "code"],
+          "properties": {
+            "type": { "const": "business-outcome" },
+            "code": { "$ref": "#/$defs/code" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "code"],
+          "properties": {
+            "type": { "const": "intervention-required" },
+            "code": { "$ref": "#/$defs/code" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "code"],
+          "properties": {
+            "type": { "const": "failure" },
+            "code": { "$ref": "#/$defs/code" }
+          }
+        }
+      ]
+    },
+    "code": {
+      "description": "A stable machine-readable code, not a sentence.",
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]*$"
+    },
+    "extraction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "type", "target"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "type": { "enum": ["string", "number", "money", "boolean"] },
+        "target": { "$ref": "#/$defs/target" }
       }
     }
   }
