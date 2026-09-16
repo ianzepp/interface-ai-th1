@@ -201,9 +201,7 @@ function scanHostIdentityLine(
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
-    return value !== null &&
-        typeof value === "object" &&
-        !Array.isArray(value)
+    return value !== null && typeof value === "object" && !Array.isArray(value)
         ? (value as Record<string, unknown>)
         : undefined;
 }

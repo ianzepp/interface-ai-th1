@@ -302,10 +302,7 @@ async function handleCommand(
             originFailure,
         );
     }
-    if (
-        command.action.type !== "navigate" &&
-        command.action.type !== "press"
-    ) {
+    if (command.action.type !== "navigate" && command.action.type !== "press") {
         await driver.locate(command.action.target);
     }
     const result = await driver.act(command.action);

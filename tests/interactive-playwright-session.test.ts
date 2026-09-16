@@ -61,10 +61,7 @@ test("rejects producer metadata on action commands", () => {
 
 test("rejects producer metadata on non-action commands", () => {
     assert.throws(
-        () =>
-            parseSessionCommand(
-                '{"type":"observe","model":"gpt-5.6-sol"}',
-            ),
+        () => parseSessionCommand('{"type":"observe","model":"gpt-5.6-sol"}'),
         /cannot be sent by a controller/,
     );
     assert.throws(
