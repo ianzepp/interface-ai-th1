@@ -2,10 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import type {
-    ActionRisk,
-    SurfaceAction,
-} from "../surfaces/surface-driver.js";
+import type { ActionRisk, SurfaceAction } from "../surfaces/surface-driver.js";
 import type {
     DecisionReceipt,
     DiscoveryEvent,
@@ -226,7 +223,10 @@ export class FileTestRunRecorder implements EventRecorder {
             return appendFile(
                 this.eventsPath,
                 `${JSON.stringify(identity.event)}\n`,
-            ).then(() => ({ sequence: identity.sequence, hash: identity.hash }));
+            ).then(() => ({
+                sequence: identity.sequence,
+                hash: identity.hash,
+            }));
         });
         // The caller sees the rejection; the queue itself proceeds, so one
         // refused event cannot poison the appends behind it or sit unhandled.
@@ -281,10 +281,7 @@ export class FileTestRunRecorder implements EventRecorder {
         if (source.trim() === "") {
             return [];
         }
-        return source
-            .trimEnd()
-            .split("\n")
-            .map((line) => JSON.parse(line) as DiscoveryEvent);
+        return source.trimEnd().split("\n").map(parseDiscoveryEventLine);
     }
 
     /**
@@ -319,16 +316,15 @@ export class FileTestRunRecorder implements EventRecorder {
         event: DiscoveryEvent;
     } {
         const clean = redactKnownSecrets(event) as DiscoveryEvent;
-        if (
-            clean.type === "proposal" ||
-            clean.type === "decision-rejected"
-        ) {
+        if (clean.type === "proposal" || clean.type === "decision-rejected") {
             clean.receipt = this.#sealReceipt(clean.receipt);
             this.#receiptCount += 1;
         }
         const sequence = this.#eventSequence;
         const hash = createHash("sha256")
-            .update(`${this.#eventChainHash}|${String(sequence)}|${JSON.stringify(clean)}`)
+            .update(
+                `${this.#eventChainHash}|${String(sequence)}|${JSON.stringify(clean)}`,
+            )
             .digest("hex");
         this.#eventChainHash = hash;
         this.#eventSequence = sequence + 1;
@@ -368,6 +364,57 @@ export class FileTestRunRecorder implements EventRecorder {
             "utf8",
         );
         await writeFile(this.readmePath, renderReadme(this.manifest), "utf8");
+    }
+}
+
+function parseDiscoveryEventLine(line: string): DiscoveryEvent {
+    const value: unknown = JSON.parse(line);
+    if (!isDiscoveryEvent(value)) {
+        throw new Error(
+            "Event ledger line must be a recognized discovery event",
+        );
+    }
+    return value;
+}
+
+function isDiscoveryEvent(value: unknown): value is DiscoveryEvent {
+    if (value === null || typeof value !== "object" || Array.isArray(value)) {
+        return false;
+    }
+    const record = value as Record<string, unknown>;
+    if (typeof record.recordedAt !== "string") return false;
+    switch (record.type) {
+        case "observation":
+            return "observation" in record;
+        case "proposal":
+            return (
+                "action" in record &&
+                "risk" in record &&
+                typeof record.rationale === "string" &&
+                "policyDecision" in record &&
+                "receipt" in record
+            );
+        case "decision-rejected":
+            return (
+                "action" in record &&
+                "risk" in record &&
+                typeof record.rationale === "string" &&
+                typeof record.reason === "string" &&
+                "receipt" in record
+            );
+        case "action":
+            return (
+                "action" in record &&
+                "result" in record &&
+                typeof record.rationale === "string"
+            );
+        case "checkpoint":
+            return (
+                typeof record.name === "string" &&
+                typeof record.satisfied === "boolean"
+            );
+        default:
+            return false;
     }
 }
 

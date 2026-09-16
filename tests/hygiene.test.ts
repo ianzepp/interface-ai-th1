@@ -82,10 +82,10 @@ const BANNED_PATTERNS: readonly BannedPattern[] = [
     },
     {
         label: "unvalidated parse",
-        budget: 8,
+        budget: 10,
         pattern: /JSON\.parse\s*\(/,
         rationale:
-            "Every one is a boundary read whose result is immediately narrowed rather than trusted: run manifests, event ledger lines, trace entries, external controller commands, the control-channel response envelope, and the session state file. The budget is a ceiling, not an endorsement: it was raised from six to eight to admit the control bridge, and a ninth call site should have to argue for itself the same way.",
+            "Every one is a boundary read whose result is narrowed before use: draft-artifact reads a run manifest, event ledger lines, and trace entries; codex-run reads host JSON event-stream lines; discovery-session-cli reads the launcher-sealed producer record; run-recorder reads its own event ledger lines; interactive-playwright-session reads external controller commands; evidence-promotion reads a run manifest; session-state reads the session state file; and session-control reads the control-channel response envelope. The budget is a ceiling, not an endorsement: it was raised from eight to ten to admit the host-stream and recorder-ledger boundaries, and an eleventh call site should have to argue for itself the same way.",
     },
     {
         label: "console output",
