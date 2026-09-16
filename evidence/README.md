@@ -25,7 +25,11 @@ scripts/promote-run <run-id> [<run-id> ...]
 The command accepts only finalized runs and never overwrites an existing evidence
 copy. Review the trace and logs for sensitive data before promotion.
 
-The assignment also requires a saved example capability artifact in this
-directory. That export has not been added yet; the current reviewed artifacts
-live under `src/capabilities/`. Track this and other submission gaps in
-[`../assignment-proof.md`](../assignment-proof.md).
+Export every reviewed capability artifact into byte-stable JSON with:
+
+```sh
+npm run export:artifact
+```
+
+The command discovers all committed artifacts under `src/capabilities/` and writes
+one document per artifact to `evidence/capabilities/<id>.json`.

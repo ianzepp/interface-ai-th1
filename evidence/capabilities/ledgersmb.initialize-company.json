@@ -1,0 +1,1496 @@
+{
+  "capabilityVersion": "0.1.0",
+  "contract": {
+    "goal": "Create a LedgerSMB company and its first administrator, then prove the account can authenticate.",
+    "inputs": {
+      "baseUrl": "string",
+      "company": "string",
+      "databaseAdmin": "string",
+      "databasePassword": "string",
+      "password": "string",
+      "username": "string"
+    },
+    "outputs": {},
+    "successCondition": "The new administrator reaches the LedgerSMB home screen."
+  },
+  "entryStageId": "open-setup",
+  "id": "ledgersmb.initialize-company",
+  "policy": {
+    "allowedActionTypes": [
+      "navigate",
+      "activate",
+      "fill"
+    ],
+    "allowedOrigins": [
+      "http://127.0.0.1:5762"
+    ],
+    "riskyActionMode": "block"
+  },
+  "provenance": {
+    "createdAt": "2026-09-15T16:24:57.450Z",
+    "discoveryRunId": "20260915162457450-f9c72fa6",
+    "validatedRunIds": [
+      "20260915170358856-fe344f46",
+      "20260915170434612-2d03545d"
+    ]
+  },
+  "schemaVersion": "1",
+  "stages": [
+    {
+      "action": {
+        "type": "navigate",
+        "url": "{{input.baseUrl}}/setup.pl"
+      },
+      "description": "Open the setup console.",
+      "detectors": [
+        {
+          "description": "Expected state after open-setup",
+          "id": "open-setup-complete",
+          "scope": "capability",
+          "signals": [
+            {
+              "kind": "role",
+              "name": "Create",
+              "role": "button"
+            }
+          ]
+        }
+      ],
+      "extractions": [],
+      "id": "open-setup",
+      "otherwise": {
+        "outcome": {
+          "code": "unexpected-screen",
+          "type": "failure"
+        },
+        "type": "terminal"
+      },
+      "risk": "reversible",
+      "transitions": [
+        {
+          "destination": {
+            "stageId": "fill-db-admin",
+            "type": "stage"
+          },
+          "detectorId": "open-setup-complete"
+        }
+      ]
+    },
+    {
+      "action": {
+        "target": {
+          "candidates": [
+            {
+              "kind": "css",
+              "selector": "#s-user"
+            }
+          ],
+          "require": "exactly-one"
+        },
+        "type": "fill",
+        "value": "{{input.databaseAdmin}}"
+      },
+      "description": "Enter the database administrator.",
+      "detectors": [
+        {
+          "description": "Expected state after fill-db-admin",
+          "id": "fill-db-admin-complete",
+          "scope": "capability",
+          "signals": [
+            {
+              "kind": "role",
+              "name": "Create",
+              "role": "button"
+            }
+          ]
+        }
+      ],
+      "extractions": [],
+      "id": "fill-db-admin",
+      "otherwise": {
+        "outcome": {
+          "code": "unexpected-screen",
+          "type": "failure"
+        },
+        "type": "terminal"
+      },
+      "risk": "reversible",
+      "transitions": [
+        {
+          "destination": {
+            "stageId": "fill-db-password",
+            "type": "stage"
+          },
+          "detectorId": "fill-db-admin-complete"
+        }
+      ]
+    },
+    {
+      "action": {
+        "target": {
+          "candidates": [
+            {
+              "kind": "css",
+              "selector": "#s-password"
+            }
+          ],
+          "require": "exactly-one"
+        },
+        "type": "fill",
+        "value": "{{input.databasePassword}}"
+      },
+      "description": "Enter the database password.",
+      "detectors": [
+        {
+          "description": "Expected state after fill-db-password",
+          "id": "fill-db-password-complete",
+          "scope": "capability",
+          "signals": [
+            {
+              "kind": "role",
+              "name": "Create",
+              "role": "button"
+            }
+          ]
+        }
+      ],
+      "extractions": [],
+      "id": "fill-db-password",
+      "otherwise": {
+        "outcome": {
+          "code": "unexpected-screen",
+          "type": "failure"
+        },
+        "type": "terminal"
+      },
+      "risk": "reversible",
+      "transitions": [
+        {
+          "destination": {
+            "stageId": "fill-company",
+            "type": "stage"
+          },
+          "detectorId": "fill-db-password-complete"
+        }
+      ]
+    },
+    {
+      "action": {
+        "target": {
+          "candidates": [
+            {
+              "kind": "css",
+              "selector": "#database"
+            }
+          ],
+          "require": "exactly-one"
+        },
+        "type": "fill",
+        "value": "{{input.company}}"
+      },
+      "description": "Enter the company database name.",
+      "detectors": [
+        {
+          "description": "Expected state after fill-company",
+          "id": "fill-company-complete",
+          "scope": "capability",
+          "signals": [
+            {
+              "kind": "role",
+              "name": "Create",
+              "role": "button"
+            }
+          ]
+        }
+      ],
+      "extractions": [],
+      "id": "fill-company",
+      "otherwise": {
+        "outcome": {
+          "code": "unexpected-screen",
+          "type": "failure"
+        },
+        "type": "terminal"
+      },
+      "risk": "reversible",
+      "transitions": [
+        {
+          "destination": {
+            "stageId": "create-company",
+            "type": "stage"
+          },
+          "detectorId": "fill-company-complete"
+        }
+      ]
+    },
+    {
+      "action": {
+        "target": {
+          "candidates": [
+            {
+              "kind": "role",
+              "name": "Create",
+              "role": "button"
+            }
+          ],
+          "require": "exactly-one"
+        },
+        "type": "activate"
+      },
+      "description": "Create the company database.",
+      "detectors": [
+        {
+          "description": "Expected state after create-company",
+          "id": "create-company-complete",
+          "scope": "capability",
+          "signals": [
+            {
+              "kind": "role",
+              "name": "Argentina",
+              "role": "option"
+            }
+          ]
+        }
+      ],
+      "extractions": [],
+      "id": "create-company",
+      "otherwise": {
+        "outcome": {
+          "code": "unexpected-screen",
+          "type": "failure"
+        },
+        "type": "terminal"
+      },
+      "risk": "reversible",
+      "transitions": [
+        {
+          "destination": {
+            "stageId": "open-country-list",
+            "type": "stage"
+          },
+          "detectorId": "create-company-complete"
+        }
+      ]
+    },
+    {
+      "action": {
+        "target": {
+          "candidates": [
+            {
+              "kind": "role",
+              "name": "Argentina",
+              "role": "option"
+            }
+          ],
+          "require": "exactly-one"
+        },
+        "type": "activate"
+      },
+      "description": "Open the chart country list.",
+      "detectors": [
+        {
+          "description": "Expected state after open-country-list",
+          "id": "open-country-list-complete",
+          "scope": "capability",
+          "signals": [
+            {
+              "kind": "role",
+              "name": "United States",
+              "role": "option"
+            }
+          ]
+        }
+      ],
+      "extractions": [],
+      "id": "open-country-list",
+      "otherwise": {
+        "outcome": {
+          "code": "unexpected-screen",
+          "type": "failure"
+        },
+        "type": "terminal"
+      },
+      "risk": "reversible",
+      "transitions": [
+        {
+          "destination": {
+            "stageId": "choose-chart-country",
+            "type": "stage"
+          },
+          "detectorId": "open-country-list-complete"
+        }
+      ]
+    },
+    {
+      "action": {
+        "target": {
+          "candidates": [
+            {
+              "kind": "role",
+              "name": "United States",
+              "role": "option"
+            }
+          ],
+          "require": "exactly-one"
+        },
+        "type": "activate"
+      },
+      "description": "Choose the United States chart family.",
+      "detectors": [
+        {
+          "description": "Expected state after choose-chart-country",
+          "id": "choose-chart-country-complete",
+          "scope": "capability",
+          "signals": [
+            {
+              "kind": "role",
+              "name": "Next",
+              "role": "button"
+            }
+          ]
+        }
+      ],
+      "extractions": [],
+      "id": "choose-chart-country",
+      "otherwise": {
+        "outcome": {
+          "code": "unexpected-screen",
+          "type": "failure"
+        },
+        "type": "terminal"
+      },
+      "risk": "reversible",
+      "transitions": [
+        {
+          "destination": {
+            "stageId": "confirm-chart-country",
+            "type": "stage"
+          },
+          "detectorId": "choose-chart-country-complete"
+        }
+      ]
+    },
+    {
+      "action": {
+        "target": {
+          "candidates": [
+            {
+              "kind": "role",
+              "name": "Next",
+              "role": "button"
+            }
+          ],
+          "require": "exactly-one"
+        },
+        "type": "activate"
+      },
+      "description": "Continue from the chart country selection.",
+      "detectors": [
+        {
+          "description": "Expected state after confirm-chart-country",
+          "id": "confirm-chart-country-complete",
+          "scope": "capability",
+          "signals": [
+            {
+              "exact": false,
+              "kind": "text",
+              "value": "The selected country ('us') has"
+            }
+          ]
+        }
+      ],
+      "extractions": [],
+      "id": "confirm-chart-country",
+      "otherwise": {
+        "outcome": {
+          "code": "unexpected-screen",
+          "type": "failure"
+        },
+        "type": "terminal"
+      },
+      "risk": "reversible",
+      "transitions": [
+        {
+          "destination": {
+            "stageId": "confirm-chart",
+            "type": "stage"
+          },
+          "detectorId": "confirm-chart-country-complete"
+        }
+      ]
+    },
+    {
+      "action": {
+        "target": {
+          "candidates": [
+            {
+              "kind": "role",
+              "name": "Next",
+              "role": "button"
+            }
+          ],
+          "require": "exactly-one"
+        },
+        "type": "activate"
+      },
+      "description": "Accept the General chart of accounts.",
+      "detectors": [
+        {
+          "description": "Expected state after confirm-chart",
+          "id": "confirm-chart-complete",
+          "scope": "capability",
+          "signals": [
+            {
+              "kind": "role",
+              "name": "Load Templates",
+              "role": "button"
+            }
+          ]
+        }
+      ],
+      "extractions": [],
+      "id": "confirm-chart",
+      "otherwise": {
+        "outcome": {
+          "code": "unexpected-screen",
+          "type": "failure"
+        },
+        "type": "terminal"
+      },
+      "risk": "reversible",
+      "transitions": [
+        {
+          "destination": {
+            "stageId": "load-templates",
+            "type": "stage"
+          },
+          "detectorId": "confirm-chart-complete"
+        }
+      ]
+    },
+    {
+      "action": {
+        "target": {
+          "candidates": [
+            {
+              "kind": "role",
+              "name": "Load Templates",
+              "role": "button"
+            }
+          ],
+          "require": "exactly-one"
+        },
+        "type": "activate"
+      },
+      "description": "Load the demo templates.",
+      "detectors": [
+        {
+          "description": "Expected state after load-templates",
+          "id": "load-templates-complete",
+          "scope": "capability",
+          "signals": [
+            {
+              "exact": false,
+              "kind": "text",
+              "value": "Create new user"
+            }
+          ]
+        }
+      ],
+      "extractions": [],
+      "id": "load-templates",
+      "otherwise": {
+        "outcome": {
+          "code": "unexpected-screen",
+          "type": "failure"
+        },
+        "type": "terminal"
+      },
+      "risk": "reversible",
+      "transitions": [
+        {
+          "destination": {
+            "stageId": "fill-username",
+            "type": "stage"
+          },
+          "detectorId": "load-templates-complete"
+        }
+      ]
+    },
+    {
+      "action": {
+        "target": {
+          "candidates": [
+            {
+              "kind": "css",
+              "selector": "#username"
+            }
+          ],
+          "require": "exactly-one"
+        },
+        "type": "fill",
+        "value": "{{input.username}}"
+      },
+      "description": "Enter the initial username.",
+      "detectors": [
+        {
+          "description": "Expected state after fill-username",
+          "id": "fill-username-complete",
+          "scope": "capability",
+          "signals": [
+            {
+              "exact": false,
+              "kind": "text",
+              "value": "Create new user"
+            }
+          ]
+        }
+      ],
+      "extractions": [],
+      "id": "fill-username",
+      "otherwise": {
+        "outcome": {
+          "code": "unexpected-screen",
+          "type": "failure"
+        },
+        "type": "terminal"
+      },
+      "risk": "reversible",
+      "transitions": [
+        {
+          "destination": {
+            "stageId": "fill-user-password",
+            "type": "stage"
+          },
+          "detectorId": "fill-username-complete"
+        }
+      ]
+    },
+    {
+      "action": {
+        "target": {
+          "candidates": [
+            {
+              "kind": "css",
+              "selector": "#password"
+            }
+          ],
+          "require": "exactly-one"
+        },
+        "type": "fill",
+        "value": "{{input.password}}"
+      },
+      "description": "Enter the initial user password.",
+      "detectors": [
+        {
+          "description": "Expected state after fill-user-password",
+          "id": "fill-user-password-complete",
+          "scope": "capability",
+          "signals": [
+            {
+              "exact": false,
+              "kind": "text",
+              "value": "Create new user"
+            }
+          ]
+        }
+      ],
+      "extractions": [],
+      "id": "fill-user-password",
+      "otherwise": {
+        "outcome": {
+          "code": "unexpected-screen",
+          "type": "failure"
+        },
+        "type": "terminal"
+      },
+      "risk": "reversible",
+      "transitions": [
+        {
+          "destination": {
+            "stageId": "fill-first-name",
+            "type": "stage"
+          },
+          "detectorId": "fill-user-password-complete"
+        }
+      ]
+    },
+    {
+      "action": {
+        "target": {
+          "candidates": [
+            {
+              "kind": "css",
+              "selector": "#first-name"
+            }
+          ],
+          "require": "exactly-one"
+        },
+        "type": "fill",
+        "value": "Fixture"
+      },
+      "description": "Enter the administrator first name.",
+      "detectors": [
+        {
+          "description": "Expected state after fill-first-name",
+          "id": "fill-first-name-complete",
+          "scope": "capability",
+          "signals": [
+            {
+              "exact": false,
+              "kind": "text",
+              "value": "Create new user"
+            }
+          ]
+        }
+      ],
+      "extractions": [],
+      "id": "fill-first-name",
+      "otherwise": {
+        "outcome": {
+          "code": "unexpected-screen",
+          "type": "failure"
+        },
+        "type": "terminal"
+      },
+      "risk": "reversible",
+      "transitions": [
+        {
+          "destination": {
+            "stageId": "fill-last-name",
+            "type": "stage"
+          },
+          "detectorId": "fill-first-name-complete"
+        }
+      ]
+    },
+    {
+      "action": {
+        "target": {
+          "candidates": [
+            {
+              "kind": "css",
+              "selector": "#last-name"
+            }
+          ],
+          "require": "exactly-one"
+        },
+        "type": "fill",
+        "value": "Administrator"
+      },
+      "description": "Enter the administrator last name.",
+      "detectors": [
+        {
+          "description": "Expected state after fill-last-name",
+          "id": "fill-last-name-complete",
+          "scope": "capability",
+          "signals": [
+            {
+              "exact": false,
+              "kind": "text",
+              "value": "Create new user"
+            }
+          ]
+        }
+      ],
+      "extractions": [],
+      "id": "fill-last-name",
+      "otherwise": {
+        "outcome": {
+          "code": "unexpected-screen",
+          "type": "failure"
+        },
+        "type": "terminal"
+      },
+      "risk": "reversible",
+      "transitions": [
+        {
+          "destination": {
+            "stageId": "fill-employee-number",
+            "type": "stage"
+          },
+          "detectorId": "fill-last-name-complete"
+        }
+      ]
+    },
+    {
+      "action": {
+        "target": {
+          "candidates": [
+            {
+              "kind": "css",
+              "selector": "#employeenumber"
+            }
+          ],
+          "require": "exactly-one"
+        },
+        "type": "fill",
+        "value": "EMP-001"
+      },
+      "description": "Enter the administrator employee number.",
+      "detectors": [
+        {
+          "description": "Expected state after fill-employee-number",
+          "id": "fill-employee-number-complete",
+          "scope": "capability",
+          "signals": [
+            {
+              "exact": false,
+              "kind": "text",
+              "value": "Create new user"
+            }
+          ]
+        }
+      ],
+      "extractions": [],
+      "id": "fill-employee-number",
+      "otherwise": {
+        "outcome": {
+          "code": "unexpected-screen",
+          "type": "failure"
+        },
+        "type": "terminal"
+      },
+      "risk": "reversible",
+      "transitions": [
+        {
+          "destination": {
+            "stageId": "fill-birth-date",
+            "type": "stage"
+          },
+          "detectorId": "fill-employee-number-complete"
+        }
+      ]
+    },
+    {
+      "action": {
+        "target": {
+          "candidates": [
+            {
+              "kind": "css",
+              "selector": "#dob"
+            }
+          ],
+          "require": "exactly-one"
+        },
+        "type": "fill",
+        "value": "1980-01-01"
+      },
+      "description": "Enter the synthetic birth date.",
+      "detectors": [
+        {
+          "description": "Expected state after fill-birth-date",
+          "id": "fill-birth-date-complete",
+          "scope": "capability",
+          "signals": [
+            {
+              "exact": false,
+              "kind": "text",
+              "value": "Create new user"
+            }
+          ]
+        }
+      ],
+      "extractions": [],
+      "id": "fill-birth-date",
+      "otherwise": {
+        "outcome": {
+          "code": "unexpected-screen",
+          "type": "failure"
+        },
+        "type": "terminal"
+      },
+      "risk": "reversible",
+      "transitions": [
+        {
+          "destination": {
+            "stageId": "fill-tax-id",
+            "type": "stage"
+          },
+          "detectorId": "fill-birth-date-complete"
+        }
+      ]
+    },
+    {
+      "action": {
+        "target": {
+          "candidates": [
+            {
+              "kind": "css",
+              "selector": "#ssn"
+            }
+          ],
+          "require": "exactly-one"
+        },
+        "type": "fill",
+        "value": "000-00-0000"
+      },
+      "description": "Enter the synthetic tax identifier.",
+      "detectors": [
+        {
+          "description": "Expected state after fill-tax-id",
+          "id": "fill-tax-id-complete",
+          "scope": "capability",
+          "signals": [
+            {
+              "exact": false,
+              "kind": "text",
+              "value": "Create new user"
+            }
+          ]
+        }
+      ],
+      "extractions": [],
+      "id": "fill-tax-id",
+      "otherwise": {
+        "outcome": {
+          "code": "unexpected-screen",
+          "type": "failure"
+        },
+        "type": "terminal"
+      },
+      "risk": "reversible",
+      "transitions": [
+        {
+          "destination": {
+            "stageId": "open-salutation",
+            "type": "stage"
+          },
+          "detectorId": "fill-tax-id-complete"
+        }
+      ]
+    },
+    {
+      "action": {
+        "target": {
+          "candidates": [
+            {
+              "kind": "role",
+              "name": "Salutation",
+              "role": "listbox"
+            }
+          ],
+          "require": "exactly-one"
+        },
+        "type": "activate"
+      },
+      "description": "Open the salutation list.",
+      "detectors": [
+        {
+          "description": "Expected state after open-salutation",
+          "id": "open-salutation-complete",
+          "scope": "capability",
+          "signals": [
+            {
+              "kind": "role",
+              "name": "Mr.",
+              "role": "option"
+            }
+          ]
+        }
+      ],
+      "extractions": [],
+      "id": "open-salutation",
+      "otherwise": {
+        "outcome": {
+          "code": "unexpected-screen",
+          "type": "failure"
+        },
+        "type": "terminal"
+      },
+      "risk": "reversible",
+      "transitions": [
+        {
+          "destination": {
+            "stageId": "choose-salutation",
+            "type": "stage"
+          },
+          "detectorId": "open-salutation-complete"
+        }
+      ]
+    },
+    {
+      "action": {
+        "target": {
+          "candidates": [
+            {
+              "kind": "role",
+              "name": "Mr.",
+              "role": "option"
+            }
+          ],
+          "require": "exactly-one"
+        },
+        "type": "activate"
+      },
+      "description": "Choose the salutation.",
+      "detectors": [
+        {
+          "description": "Expected state after choose-salutation",
+          "id": "choose-salutation-complete",
+          "scope": "capability",
+          "signals": [
+            {
+              "kind": "role",
+              "name": "Salutation",
+              "role": "listbox"
+            }
+          ]
+        }
+      ],
+      "extractions": [],
+      "id": "choose-salutation",
+      "otherwise": {
+        "outcome": {
+          "code": "unexpected-screen",
+          "type": "failure"
+        },
+        "type": "terminal"
+      },
+      "risk": "reversible",
+      "transitions": [
+        {
+          "destination": {
+            "stageId": "open-country",
+            "type": "stage"
+          },
+          "detectorId": "choose-salutation-complete"
+        }
+      ]
+    },
+    {
+      "action": {
+        "target": {
+          "candidates": [
+            {
+              "kind": "role",
+              "name": "Country",
+              "role": "listbox"
+            }
+          ],
+          "require": "exactly-one"
+        },
+        "type": "activate"
+      },
+      "description": "Open the administrator country list.",
+      "detectors": [
+        {
+          "description": "Expected state after open-country",
+          "id": "open-country-complete",
+          "scope": "capability",
+          "signals": [
+            {
+              "kind": "role",
+              "name": "United States",
+              "role": "option"
+            }
+          ]
+        }
+      ],
+      "extractions": [],
+      "id": "open-country",
+      "otherwise": {
+        "outcome": {
+          "code": "unexpected-screen",
+          "type": "failure"
+        },
+        "type": "terminal"
+      },
+      "risk": "reversible",
+      "transitions": [
+        {
+          "destination": {
+            "stageId": "choose-country",
+            "type": "stage"
+          },
+          "detectorId": "open-country-complete"
+        }
+      ]
+    },
+    {
+      "action": {
+        "target": {
+          "candidates": [
+            {
+              "kind": "role",
+              "name": "United States",
+              "role": "option"
+            }
+          ],
+          "require": "exactly-one"
+        },
+        "type": "activate"
+      },
+      "description": "Choose the administrator country.",
+      "detectors": [
+        {
+          "description": "Expected state after choose-country",
+          "id": "choose-country-complete",
+          "scope": "capability",
+          "signals": [
+            {
+              "kind": "role",
+              "name": "Country",
+              "role": "listbox"
+            }
+          ]
+        }
+      ],
+      "extractions": [],
+      "id": "choose-country",
+      "otherwise": {
+        "outcome": {
+          "code": "unexpected-screen",
+          "type": "failure"
+        },
+        "type": "terminal"
+      },
+      "risk": "reversible",
+      "transitions": [
+        {
+          "destination": {
+            "stageId": "open-permissions",
+            "type": "stage"
+          },
+          "detectorId": "choose-country-complete"
+        }
+      ]
+    },
+    {
+      "action": {
+        "target": {
+          "candidates": [
+            {
+              "kind": "role",
+              "name": "Assign Permissions",
+              "role": "listbox"
+            }
+          ],
+          "require": "exactly-one"
+        },
+        "type": "activate"
+      },
+      "description": "Open the permission profile list.",
+      "detectors": [
+        {
+          "description": "Expected state after open-permissions",
+          "id": "open-permissions-complete",
+          "scope": "capability",
+          "signals": [
+            {
+              "kind": "role",
+              "name": "Full Permissions",
+              "role": "option"
+            }
+          ]
+        }
+      ],
+      "extractions": [],
+      "id": "open-permissions",
+      "otherwise": {
+        "outcome": {
+          "code": "unexpected-screen",
+          "type": "failure"
+        },
+        "type": "terminal"
+      },
+      "risk": "reversible",
+      "transitions": [
+        {
+          "destination": {
+            "stageId": "choose-permissions",
+            "type": "stage"
+          },
+          "detectorId": "open-permissions-complete"
+        }
+      ]
+    },
+    {
+      "action": {
+        "target": {
+          "candidates": [
+            {
+              "kind": "role",
+              "name": "Full Permissions",
+              "role": "option"
+            }
+          ],
+          "require": "exactly-one"
+        },
+        "type": "activate"
+      },
+      "description": "Choose full fixture permissions.",
+      "detectors": [
+        {
+          "description": "Expected state after choose-permissions",
+          "id": "choose-permissions-complete",
+          "scope": "capability",
+          "signals": [
+            {
+              "kind": "role",
+              "name": "Create User",
+              "role": "button"
+            }
+          ]
+        }
+      ],
+      "extractions": [],
+      "id": "choose-permissions",
+      "otherwise": {
+        "outcome": {
+          "code": "unexpected-screen",
+          "type": "failure"
+        },
+        "type": "terminal"
+      },
+      "risk": "reversible",
+      "transitions": [
+        {
+          "destination": {
+            "stageId": "create-user",
+            "type": "stage"
+          },
+          "detectorId": "choose-permissions-complete"
+        }
+      ]
+    },
+    {
+      "action": {
+        "target": {
+          "candidates": [
+            {
+              "kind": "role",
+              "name": "Create User",
+              "role": "button"
+            }
+          ],
+          "require": "exactly-one"
+        },
+        "type": "activate"
+      },
+      "description": "Create the first administrator.",
+      "detectors": [
+        {
+          "description": "Expected state after create-user",
+          "id": "create-user-complete",
+          "scope": "capability",
+          "signals": [
+            {
+              "exact": false,
+              "kind": "text",
+              "value": "Database Operation Complete"
+            }
+          ]
+        }
+      ],
+      "extractions": [],
+      "id": "create-user",
+      "otherwise": {
+        "outcome": {
+          "code": "unexpected-screen",
+          "type": "failure"
+        },
+        "type": "terminal"
+      },
+      "risk": "reversible",
+      "transitions": [
+        {
+          "destination": {
+            "stageId": "open-login",
+            "type": "stage"
+          },
+          "detectorId": "create-user-complete"
+        }
+      ]
+    },
+    {
+      "action": {
+        "type": "navigate",
+        "url": "{{input.baseUrl}}/login.pl"
+      },
+      "description": "Open the LedgerSMB login page.",
+      "detectors": [
+        {
+          "description": "Expected state after open-login",
+          "id": "open-login-complete",
+          "scope": "capability",
+          "signals": [
+            {
+              "kind": "role",
+              "name": "Login",
+              "role": "button"
+            }
+          ]
+        }
+      ],
+      "extractions": [],
+      "id": "open-login",
+      "otherwise": {
+        "outcome": {
+          "code": "unexpected-screen",
+          "type": "failure"
+        },
+        "type": "terminal"
+      },
+      "risk": "reversible",
+      "transitions": [
+        {
+          "destination": {
+            "stageId": "fill-login-user",
+            "type": "stage"
+          },
+          "detectorId": "open-login-complete"
+        }
+      ]
+    },
+    {
+      "action": {
+        "target": {
+          "candidates": [
+            {
+              "kind": "css",
+              "selector": "#username"
+            }
+          ],
+          "require": "exactly-one"
+        },
+        "type": "fill",
+        "value": "{{input.username}}"
+      },
+      "description": "Enter the administrator username for verification.",
+      "detectors": [
+        {
+          "description": "Expected state after fill-login-user",
+          "id": "fill-login-user-complete",
+          "scope": "capability",
+          "signals": [
+            {
+              "kind": "role",
+              "name": "Login",
+              "role": "button"
+            }
+          ]
+        }
+      ],
+      "extractions": [],
+      "id": "fill-login-user",
+      "otherwise": {
+        "outcome": {
+          "code": "unexpected-screen",
+          "type": "failure"
+        },
+        "type": "terminal"
+      },
+      "risk": "reversible",
+      "transitions": [
+        {
+          "destination": {
+            "stageId": "fill-login-password",
+            "type": "stage"
+          },
+          "detectorId": "fill-login-user-complete"
+        }
+      ]
+    },
+    {
+      "action": {
+        "target": {
+          "candidates": [
+            {
+              "kind": "css",
+              "selector": "#password"
+            }
+          ],
+          "require": "exactly-one"
+        },
+        "type": "fill",
+        "value": "{{input.password}}"
+      },
+      "description": "Enter the administrator password for verification.",
+      "detectors": [
+        {
+          "description": "Expected state after fill-login-password",
+          "id": "fill-login-password-complete",
+          "scope": "capability",
+          "signals": [
+            {
+              "kind": "role",
+              "name": "Login",
+              "role": "button"
+            }
+          ]
+        }
+      ],
+      "extractions": [],
+      "id": "fill-login-password",
+      "otherwise": {
+        "outcome": {
+          "code": "unexpected-screen",
+          "type": "failure"
+        },
+        "type": "terminal"
+      },
+      "risk": "reversible",
+      "transitions": [
+        {
+          "destination": {
+            "stageId": "fill-login-company",
+            "type": "stage"
+          },
+          "detectorId": "fill-login-password-complete"
+        }
+      ]
+    },
+    {
+      "action": {
+        "target": {
+          "candidates": [
+            {
+              "kind": "css",
+              "selector": "#company"
+            }
+          ],
+          "require": "exactly-one"
+        },
+        "type": "fill",
+        "value": "{{input.company}}"
+      },
+      "description": "Enter the initialized company for verification.",
+      "detectors": [
+        {
+          "description": "Expected state after fill-login-company",
+          "id": "fill-login-company-complete",
+          "scope": "capability",
+          "signals": [
+            {
+              "kind": "role",
+              "name": "Login",
+              "role": "button"
+            }
+          ]
+        }
+      ],
+      "extractions": [],
+      "id": "fill-login-company",
+      "otherwise": {
+        "outcome": {
+          "code": "unexpected-screen",
+          "type": "failure"
+        },
+        "type": "terminal"
+      },
+      "risk": "reversible",
+      "transitions": [
+        {
+          "destination": {
+            "stageId": "authenticate",
+            "type": "stage"
+          },
+          "detectorId": "fill-login-company-complete"
+        }
+      ]
+    },
+    {
+      "action": {
+        "target": {
+          "candidates": [
+            {
+              "kind": "role",
+              "name": "Login",
+              "role": "button"
+            }
+          ],
+          "require": "exactly-one"
+        },
+        "type": "activate"
+      },
+      "description": "Authenticate the new administrator.",
+      "detectors": [
+        {
+          "description": "Expected state after authenticate",
+          "id": "authenticate-complete",
+          "scope": "capability",
+          "signals": [
+            {
+              "kind": "role",
+              "name": "OK",
+              "role": "button"
+            }
+          ]
+        }
+      ],
+      "extractions": [],
+      "id": "authenticate",
+      "otherwise": {
+        "outcome": {
+          "code": "unexpected-screen",
+          "type": "failure"
+        },
+        "type": "terminal"
+      },
+      "risk": "reversible",
+      "transitions": [
+        {
+          "destination": {
+            "stageId": "dismiss-expiry",
+            "type": "stage"
+          },
+          "detectorId": "authenticate-complete"
+        }
+      ]
+    },
+    {
+      "action": {
+        "target": {
+          "candidates": [
+            {
+              "kind": "role",
+              "name": "OK",
+              "role": "button"
+            }
+          ],
+          "require": "exactly-one"
+        },
+        "type": "activate"
+      },
+      "description": "Dismiss the disposable-password expiry notice.",
+      "detectors": [
+        {
+          "description": "Expected state after dismiss-expiry",
+          "id": "dismiss-expiry-complete",
+          "scope": "capability",
+          "signals": [
+            {
+              "exact": false,
+              "kind": "text",
+              "value": "Welcome to LedgerSMB"
+            }
+          ]
+        }
+      ],
+      "extractions": [],
+      "id": "dismiss-expiry",
+      "otherwise": {
+        "outcome": {
+          "code": "unexpected-screen",
+          "type": "failure"
+        },
+        "type": "terminal"
+      },
+      "risk": "reversible",
+      "transitions": [
+        {
+          "destination": {
+            "outcome": {
+              "type": "success"
+            },
+            "type": "terminal"
+          },
+          "detectorId": "dismiss-expiry-complete"
+        }
+      ]
+    }
+  ],
+  "targetProfile": "ledgersmb",
+  "title": "Initialize a fresh LedgerSMB company"
+}

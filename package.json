@@ -15,6 +15,7 @@
     "session": "scripts/session",
     "audit:artifact": "scripts/audit-artifact",
     "draft:artifact": "npm run build && node dist/src/authoring/draft-artifact-cli.js",
+    "export:artifact": "npm run build && node dist/src/authoring/export-artifact-cli.js",
     "discover:dolibarr:third-party": "npm run build && node dist/src/authoring/dolibarr-third-party-session.js",
     "replay:dolibarr:create-party": "npm run build && scripts/target stop --lane create-party --port 8126 dolibarr && scripts/target reset --lane create-party --port 8126 dolibarr demo-install-smoke && node dist/src/runtime/dolibarr-create-customer-with-contact-replay.js",
     "replay:ledgersmb:initialize": "npm run build && scripts/target fresh ledgersmb && node dist/src/runtime/ledgersmb-initialize-replay.js",

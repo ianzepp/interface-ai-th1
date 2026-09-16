@@ -1,0 +1,498 @@
+{
+  "capabilityVersion": "0.1.0",
+  "contract": {
+    "goal": "Create a new customer third-party record and add one contact linked to it.",
+    "inputs": {
+      "baseUrl": "string",
+      "contactFirstName": "string",
+      "contactLastName": "string",
+      "thirdPartyId": "string",
+      "thirdPartyName": "string"
+    },
+    "outputs": {
+      "contactName": "string",
+      "thirdPartyName": "string"
+    },
+    "successCondition": "The created contact card visibly names the requested contact and links it to the requested customer."
+  },
+  "entryStageId": "open-third-party-area",
+  "id": "dolibarr.create-customer-with-contact",
+  "policy": {
+    "allowedActionTypes": [
+      "navigate",
+      "activate",
+      "fill",
+      "select"
+    ],
+    "allowedOrigins": [
+      "http://127.0.0.1:8126"
+    ],
+    "riskyActionMode": "block"
+  },
+  "provenance": {
+    "createdAt": "2026-09-15T21:54:00.000Z",
+    "discoveryRunId": "20260915214829952-cc922cc2",
+    "evidenceRunIds": [
+      "20260915214829952-cc922cc2",
+      "20260915215250640-fea3b05a"
+    ],
+    "validatedRunIds": [
+      "20260915215946224-05d43891"
+    ]
+  },
+  "schemaVersion": "1",
+  "stages": [
+    {
+      "action": {
+        "type": "navigate",
+        "url": "{{input.baseUrl}}/societe/index.php?mainmenu=companies&leftmenu="
+      },
+      "description": "Open the authenticated Dolibarr third-party area.",
+      "detectors": [
+        {
+          "description": "Third-party area is open and authenticated.",
+          "id": "dolibarr-create-party-area-ready",
+          "scope": "capability",
+          "signals": [
+            {
+              "kind": "url",
+              "pattern": "/societe/index\\.php\\?mainmenu=companies"
+            }
+          ]
+        }
+      ],
+      "extractions": [],
+      "id": "open-third-party-area",
+      "otherwise": {
+        "outcome": {
+          "code": "third-party-area-unavailable",
+          "type": "failure"
+        },
+        "type": "terminal"
+      },
+      "risk": "safe",
+      "transitions": [
+        {
+          "destination": {
+            "stageId": "open-customer-form",
+            "type": "stage"
+          },
+          "detectorId": "dolibarr-create-party-area-ready"
+        }
+      ]
+    },
+    {
+      "action": {
+        "target": {
+          "candidates": [
+            {
+              "kind": "role",
+              "name": "New Customer",
+              "role": "link"
+            }
+          ],
+          "require": "exactly-one"
+        },
+        "type": "activate"
+      },
+      "description": "Open the customer-specific third-party form.",
+      "detectors": [
+        {
+          "description": "The customer third-party creation form is visible.",
+          "id": "dolibarr-create-customer-form-ready",
+          "scope": "capability",
+          "signals": [
+            {
+              "kind": "url",
+              "pattern": "/societe/card\\.php\\?leftmenu=customers&action=create&type=c"
+            }
+          ]
+        }
+      ],
+      "extractions": [],
+      "id": "open-customer-form",
+      "otherwise": {
+        "outcome": {
+          "code": "customer-form-unavailable",
+          "type": "failure"
+        },
+        "type": "terminal"
+      },
+      "risk": "safe",
+      "transitions": [
+        {
+          "destination": {
+            "stageId": "fill-customer-name",
+            "type": "stage"
+          },
+          "detectorId": "dolibarr-create-customer-form-ready"
+        }
+      ]
+    },
+    {
+      "action": {
+        "target": {
+          "candidates": [
+            {
+              "kind": "css",
+              "selector": "input[name=\"name\"]"
+            }
+          ],
+          "require": "exactly-one"
+        },
+        "type": "fill",
+        "value": "{{input.thirdPartyName}}"
+      },
+      "description": "Enter the caller-provided customer name.",
+      "detectors": [
+        {
+          "description": "The customer third-party creation form is visible.",
+          "id": "dolibarr-create-customer-form-ready",
+          "scope": "capability",
+          "signals": [
+            {
+              "kind": "url",
+              "pattern": "/societe/card\\.php\\?leftmenu=customers&action=create&type=c"
+            }
+          ]
+        }
+      ],
+      "extractions": [],
+      "id": "fill-customer-name",
+      "otherwise": {
+        "outcome": {
+          "code": "customer-form-left-before-name-entry",
+          "type": "failure"
+        },
+        "type": "terminal"
+      },
+      "risk": "safe",
+      "transitions": [
+        {
+          "destination": {
+            "stageId": "create-customer",
+            "type": "stage"
+          },
+          "detectorId": "dolibarr-create-customer-form-ready"
+        }
+      ]
+    },
+    {
+      "action": {
+        "target": {
+          "candidates": [
+            {
+              "kind": "css",
+              "selector": "input[type=\"submit\"]:first-of-type"
+            }
+          ],
+          "require": "exactly-one"
+        },
+        "type": "activate"
+      },
+      "description": "Submit the customer form through the reviewed first submit control.",
+      "detectors": [
+        {
+          "description": "Dolibarr opened the newly created customer card.",
+          "id": "dolibarr-created-customer-card-ready",
+          "scope": "capability",
+          "signals": [
+            {
+              "kind": "url",
+              "pattern": "/societe/card\\.php\\?id=[^&]+&socid=\\d+"
+            }
+          ]
+        }
+      ],
+      "extractions": [],
+      "id": "create-customer",
+      "otherwise": {
+        "outcome": {
+          "code": "customer-creation-not-confirmed",
+          "type": "failure"
+        },
+        "type": "terminal"
+      },
+      "risk": "reversible",
+      "transitions": [
+        {
+          "destination": {
+            "stageId": "open-contact-form",
+            "type": "stage"
+          },
+          "detectorId": "dolibarr-created-customer-card-ready"
+        }
+      ]
+    },
+    {
+      "action": {
+        "target": {
+          "candidates": [
+            {
+              "kind": "role",
+              "name": "New Contact/Address",
+              "role": "link"
+            }
+          ],
+          "require": "exactly-one"
+        },
+        "type": "activate"
+      },
+      "description": "Open a new contact from the created customer card.",
+      "detectors": [
+        {
+          "description": "The contact creation form is visible.",
+          "id": "dolibarr-create-contact-form-ready",
+          "scope": "capability",
+          "signals": [
+            {
+              "kind": "url",
+              "pattern": "/contact/card\\.php\\?leftmenu=contacts&action=create"
+            }
+          ]
+        }
+      ],
+      "extractions": [],
+      "id": "open-contact-form",
+      "otherwise": {
+        "outcome": {
+          "code": "contact-form-unavailable",
+          "type": "failure"
+        },
+        "type": "terminal"
+      },
+      "risk": "safe",
+      "transitions": [
+        {
+          "destination": {
+            "stageId": "select-created-party",
+            "type": "stage"
+          },
+          "detectorId": "dolibarr-create-contact-form-ready"
+        }
+      ]
+    },
+    {
+      "action": {
+        "target": {
+          "candidates": [
+            {
+              "kind": "css",
+              "selector": "select[name=\"socid\"]"
+            }
+          ],
+          "require": "exactly-one"
+        },
+        "type": "select",
+        "value": "{{input.thirdPartyId}}"
+      },
+      "description": "Link the contact to the caller-provided party ID.",
+      "detectors": [
+        {
+          "description": "The contact creation form is visible.",
+          "id": "dolibarr-create-contact-form-ready",
+          "scope": "capability",
+          "signals": [
+            {
+              "kind": "url",
+              "pattern": "/contact/card\\.php\\?leftmenu=contacts&action=create"
+            }
+          ]
+        }
+      ],
+      "extractions": [],
+      "id": "select-created-party",
+      "otherwise": {
+        "outcome": {
+          "code": "created-party-not-selectable",
+          "type": "failure"
+        },
+        "type": "terminal"
+      },
+      "risk": "safe",
+      "transitions": [
+        {
+          "destination": {
+            "stageId": "fill-contact-last-name",
+            "type": "stage"
+          },
+          "detectorId": "dolibarr-create-contact-form-ready"
+        }
+      ]
+    },
+    {
+      "action": {
+        "target": {
+          "candidates": [
+            {
+              "kind": "css",
+              "selector": "input[name=\"lastname\"]"
+            }
+          ],
+          "require": "exactly-one"
+        },
+        "type": "fill",
+        "value": "{{input.contactLastName}}"
+      },
+      "description": "Enter the caller-provided contact family name.",
+      "detectors": [
+        {
+          "description": "The contact creation form is visible.",
+          "id": "dolibarr-create-contact-form-ready",
+          "scope": "capability",
+          "signals": [
+            {
+              "kind": "url",
+              "pattern": "/contact/card\\.php\\?leftmenu=contacts&action=create"
+            }
+          ]
+        }
+      ],
+      "extractions": [],
+      "id": "fill-contact-last-name",
+      "otherwise": {
+        "outcome": {
+          "code": "contact-last-name-field-unavailable",
+          "type": "failure"
+        },
+        "type": "terminal"
+      },
+      "risk": "safe",
+      "transitions": [
+        {
+          "destination": {
+            "stageId": "fill-contact-first-name",
+            "type": "stage"
+          },
+          "detectorId": "dolibarr-create-contact-form-ready"
+        }
+      ]
+    },
+    {
+      "action": {
+        "target": {
+          "candidates": [
+            {
+              "kind": "css",
+              "selector": "input[name=\"firstname\"]"
+            }
+          ],
+          "require": "exactly-one"
+        },
+        "type": "fill",
+        "value": "{{input.contactFirstName}}"
+      },
+      "description": "Enter the caller-provided contact given name.",
+      "detectors": [
+        {
+          "description": "The contact creation form is visible.",
+          "id": "dolibarr-create-contact-form-ready",
+          "scope": "capability",
+          "signals": [
+            {
+              "kind": "url",
+              "pattern": "/contact/card\\.php\\?leftmenu=contacts&action=create"
+            }
+          ]
+        }
+      ],
+      "extractions": [],
+      "id": "fill-contact-first-name",
+      "otherwise": {
+        "outcome": {
+          "code": "contact-first-name-field-unavailable",
+          "type": "failure"
+        },
+        "type": "terminal"
+      },
+      "risk": "safe",
+      "transitions": [
+        {
+          "destination": {
+            "stageId": "create-contact",
+            "type": "stage"
+          },
+          "detectorId": "dolibarr-create-contact-form-ready"
+        }
+      ]
+    },
+    {
+      "action": {
+        "target": {
+          "candidates": [
+            {
+              "kind": "css",
+              "selector": "input[type=\"submit\"]:first-of-type"
+            }
+          ],
+          "require": "exactly-one"
+        },
+        "type": "activate"
+      },
+      "description": "Submit the contact form and verify the linked contact card.",
+      "detectors": [
+        {
+          "description": "Dolibarr opened the newly created contact card.",
+          "id": "dolibarr-created-contact-card-ready",
+          "scope": "capability",
+          "signals": [
+            {
+              "kind": "url",
+              "pattern": "/contact/card\\.php\\?id=\\d+"
+            }
+          ]
+        }
+      ],
+      "extractions": [
+        {
+          "name": "contactName",
+          "target": {
+            "candidates": [
+              {
+                "kind": "css",
+                "selector": "div.refid > span.valignmiddle"
+              }
+            ],
+            "require": "exactly-one"
+          },
+          "type": "string"
+        },
+        {
+          "name": "thirdPartyName",
+          "target": {
+            "candidates": [
+              {
+                "kind": "css",
+                "selector": "div.refidno a.refurl"
+              }
+            ],
+            "require": "exactly-one"
+          },
+          "type": "string"
+        }
+      ],
+      "id": "create-contact",
+      "otherwise": {
+        "outcome": {
+          "code": "contact-creation-not-confirmed",
+          "type": "failure"
+        },
+        "type": "terminal"
+      },
+      "risk": "reversible",
+      "transitions": [
+        {
+          "destination": {
+            "outcome": {
+              "type": "success"
+            },
+            "type": "terminal"
+          },
+          "detectorId": "dolibarr-created-contact-card-ready"
+        }
+      ]
+    }
+  ],
+  "targetProfile": "dolibarr",
+  "title": "Create a Dolibarr customer and linked contact"
+}

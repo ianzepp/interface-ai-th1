@@ -1,0 +1,505 @@
+{
+  "capabilityVersion": "0.1.0",
+  "contract": {
+    "goal": "Look up a Dolibarr third party by exact name and return its account profile.",
+    "inputs": {
+      "baseUrl": "string",
+      "name": "string"
+    },
+    "outputs": {
+      "currency": "string",
+      "customerCode": "string",
+      "name": "string",
+      "nature": "string",
+      "status": "string",
+      "vendorCode": "string"
+    },
+    "successCondition": "Exactly one matching third party is opened and its visible account fields are returned."
+  },
+  "entryStageId": "open-list",
+  "id": "dolibarr.lookup-third-party",
+  "policy": {
+    "allowedActionTypes": [
+      "navigate",
+      "fill",
+      "activate"
+    ],
+    "allowedOrigins": [
+      "http://127.0.0.1:8080"
+    ],
+    "riskyActionMode": "block"
+  },
+  "provenance": {
+    "createdAt": "2026-09-15T20:17:27.769Z",
+    "discoveryRunId": "20260915201727769-f02bcb33",
+    "evidenceRunIds": [
+      "20260915201727769-f02bcb33",
+      "20260915201943054-c67afa9b",
+      "20260915202031432-6995a2e8",
+      "20260915202113470-97cf9873",
+      "20260915202202470-9abd1d52",
+      "20260915202607595-f1eee304"
+    ],
+    "validatedRunIds": [
+      "20260915202650455-004445ba",
+      "20260915202710527-48b0cf0c",
+      "20260915202725488-7b93abd6",
+      "20260915202742493-769ba7f6",
+      "20260915202758596-ed9759b5"
+    ]
+  },
+  "schemaVersion": "1",
+  "stages": [
+    {
+      "action": {
+        "type": "navigate",
+        "url": "{{input.baseUrl}}/societe/list.php?mainmenu=companies"
+      },
+      "description": "Open the protected third-party list.",
+      "detectors": [
+        {
+          "description": "Dolibarr redirected the protected operation to its login page.",
+          "id": "dolibarr-authentication-required",
+          "scope": "target",
+          "signals": [
+            {
+              "exact": true,
+              "kind": "text",
+              "value": "Password forgotten?"
+            }
+          ]
+        },
+        {
+          "description": "dolibarr-third-party-search-ready observed by target cardinality.",
+          "id": "dolibarr-third-party-search-ready",
+          "scope": "capability",
+          "signals": [
+            {
+              "kind": "count",
+              "operator": "equal",
+              "target": {
+                "candidates": [
+                  {
+                    "kind": "css",
+                    "selector": "input[name=\"search_nom\"]"
+                  }
+                ],
+                "require": "exactly-one"
+              },
+              "value": 1
+            }
+          ]
+        }
+      ],
+      "extractions": [],
+      "id": "open-list",
+      "otherwise": {
+        "outcome": {
+          "code": "unexpected-list-state",
+          "type": "failure"
+        },
+        "type": "terminal"
+      },
+      "risk": "safe",
+      "transitions": [
+        {
+          "destination": {
+            "outcome": {
+              "code": "authentication-required",
+              "type": "intervention-required"
+            },
+            "type": "terminal"
+          },
+          "detectorId": "dolibarr-authentication-required"
+        },
+        {
+          "destination": {
+            "stageId": "fill-name",
+            "type": "stage"
+          },
+          "detectorId": "dolibarr-third-party-search-ready"
+        }
+      ]
+    },
+    {
+      "action": {
+        "target": {
+          "candidates": [
+            {
+              "kind": "css",
+              "selector": "input[name=\"search_nom\"]"
+            }
+          ],
+          "require": "exactly-one"
+        },
+        "type": "fill",
+        "value": "{{input.name}}"
+      },
+      "description": "Enter the caller-provided exact third-party name.",
+      "detectors": [
+        {
+          "description": "dolibarr-third-party-submit-ready observed by target cardinality.",
+          "id": "dolibarr-third-party-submit-ready",
+          "scope": "capability",
+          "signals": [
+            {
+              "kind": "count",
+              "operator": "equal",
+              "target": {
+                "candidates": [
+                  {
+                    "kind": "css",
+                    "selector": "button[name=\"button_search_x\"]"
+                  }
+                ],
+                "require": "exactly-one"
+              },
+              "value": 1
+            }
+          ]
+        }
+      ],
+      "extractions": [],
+      "id": "fill-name",
+      "otherwise": {
+        "outcome": {
+          "code": "search-form-unavailable",
+          "type": "failure"
+        },
+        "type": "terminal"
+      },
+      "risk": "safe",
+      "transitions": [
+        {
+          "destination": {
+            "stageId": "submit-search",
+            "type": "stage"
+          },
+          "detectorId": "dolibarr-third-party-submit-ready"
+        }
+      ]
+    },
+    {
+      "action": {
+        "target": {
+          "candidates": [
+            {
+              "kind": "css",
+              "selector": "button[name=\"button_search_x\"]"
+            }
+          ],
+          "require": "exactly-one"
+        },
+        "type": "activate"
+      },
+      "description": "Submit the name filter and classify the result cardinality.",
+      "detectors": [
+        {
+          "description": "Dolibarr redirected the protected operation to its login page.",
+          "id": "dolibarr-authentication-required",
+          "scope": "target",
+          "signals": [
+            {
+              "exact": true,
+              "kind": "text",
+              "value": "Password forgotten?"
+            }
+          ]
+        },
+        {
+          "description": "Dolibarr reported that the filtered list has no records.",
+          "id": "dolibarr-third-party-no-match",
+          "scope": "capability",
+          "signals": [
+            {
+              "exact": true,
+              "kind": "text",
+              "value": "No record found"
+            }
+          ]
+        },
+        {
+          "description": "dolibarr-third-party-ambiguous-match observed by target cardinality.",
+          "id": "dolibarr-third-party-ambiguous-match",
+          "scope": "capability",
+          "signals": [
+            {
+              "kind": "count",
+              "operator": "greater-than",
+              "target": {
+                "candidates": [
+                  {
+                    "exact": true,
+                    "kind": "text",
+                    "text": "{{input.name}}"
+                  }
+                ],
+                "require": "exactly-one"
+              },
+              "value": 1
+            }
+          ]
+        },
+        {
+          "description": "dolibarr-third-party-unique-match observed by target cardinality.",
+          "id": "dolibarr-third-party-unique-match",
+          "scope": "capability",
+          "signals": [
+            {
+              "kind": "count",
+              "operator": "equal",
+              "target": {
+                "candidates": [
+                  {
+                    "exact": true,
+                    "kind": "text",
+                    "text": "{{input.name}}"
+                  }
+                ],
+                "require": "exactly-one"
+              },
+              "value": 1
+            }
+          ]
+        }
+      ],
+      "extractions": [],
+      "id": "submit-search",
+      "otherwise": {
+        "outcome": {
+          "code": "unrecognized-search-result",
+          "type": "failure"
+        },
+        "type": "terminal"
+      },
+      "risk": "safe",
+      "transitions": [
+        {
+          "destination": {
+            "outcome": {
+              "code": "authentication-required",
+              "type": "intervention-required"
+            },
+            "type": "terminal"
+          },
+          "detectorId": "dolibarr-authentication-required"
+        },
+        {
+          "destination": {
+            "outcome": {
+              "code": "third-party-not-found",
+              "type": "business-outcome"
+            },
+            "type": "terminal"
+          },
+          "detectorId": "dolibarr-third-party-no-match"
+        },
+        {
+          "destination": {
+            "outcome": {
+              "code": "third-party-ambiguous",
+              "type": "business-outcome"
+            },
+            "type": "terminal"
+          },
+          "detectorId": "dolibarr-third-party-ambiguous-match"
+        },
+        {
+          "destination": {
+            "stageId": "open-result",
+            "type": "stage"
+          },
+          "detectorId": "dolibarr-third-party-unique-match"
+        }
+      ]
+    },
+    {
+      "action": {
+        "target": {
+          "candidates": [
+            {
+              "exact": true,
+              "kind": "text",
+              "text": "{{input.name}}"
+            }
+          ],
+          "require": "exactly-one"
+        },
+        "type": "activate"
+      },
+      "description": "Open the sole exact-name result and return its account profile.",
+      "detectors": [
+        {
+          "description": "Dolibarr redirected the protected operation to its login page.",
+          "id": "dolibarr-authentication-required",
+          "scope": "target",
+          "signals": [
+            {
+              "exact": true,
+              "kind": "text",
+              "value": "Password forgotten?"
+            }
+          ]
+        },
+        {
+          "description": "The selected third-party card is visible.",
+          "id": "dolibarr-third-party-profile-visible",
+          "scope": "capability",
+          "signals": [
+            {
+              "kind": "url",
+              "pattern": "/societe/card\\.php"
+            }
+          ]
+        }
+      ],
+      "extractions": [],
+      "id": "open-result",
+      "otherwise": {
+        "outcome": {
+          "code": "unexpected-profile-state",
+          "type": "failure"
+        },
+        "type": "terminal"
+      },
+      "risk": "safe",
+      "transitions": [
+        {
+          "destination": {
+            "outcome": {
+              "code": "authentication-required",
+              "type": "intervention-required"
+            },
+            "type": "terminal"
+          },
+          "detectorId": "dolibarr-authentication-required"
+        },
+        {
+          "destination": {
+            "stageId": "extract-profile",
+            "type": "stage"
+          },
+          "detectorId": "dolibarr-third-party-profile-visible"
+        }
+      ]
+    },
+    {
+      "description": "Extract the requested fields from the recognized profile card.",
+      "detectors": [
+        {
+          "description": "The selected third-party card is visible.",
+          "id": "dolibarr-third-party-profile-visible",
+          "scope": "capability",
+          "signals": [
+            {
+              "kind": "url",
+              "pattern": "/societe/card\\.php"
+            }
+          ]
+        }
+      ],
+      "extractions": [
+        {
+          "name": "name",
+          "target": {
+            "candidates": [
+              {
+                "kind": "css",
+                "selector": "div.refid > span.valignmiddle"
+              }
+            ],
+            "require": "exactly-one"
+          },
+          "type": "string"
+        },
+        {
+          "name": "customerCode",
+          "target": {
+            "candidates": [
+              {
+                "kind": "css",
+                "selector": "tr:has(> td:text-is(\"Customer Code\")) > td:nth-child(2) .clipboardCPValue"
+              }
+            ],
+            "require": "exactly-one"
+          },
+          "type": "string"
+        },
+        {
+          "name": "vendorCode",
+          "target": {
+            "candidates": [
+              {
+                "kind": "css",
+                "selector": "tr:has(> td:text-is(\"Vendor Code\")) > td:nth-child(2) .clipboardCPValue"
+              }
+            ],
+            "require": "exactly-one"
+          },
+          "type": "string"
+        },
+        {
+          "name": "currency",
+          "target": {
+            "candidates": [
+              {
+                "kind": "css",
+                "selector": "tr:has(> td:text-is(\"Currency\")) > td:nth-child(2)"
+              }
+            ],
+            "require": "exactly-one"
+          },
+          "type": "string"
+        },
+        {
+          "name": "status",
+          "target": {
+            "candidates": [
+              {
+                "kind": "css",
+                "selector": "div.statusref .badge-status4"
+              }
+            ],
+            "require": "exactly-one"
+          },
+          "type": "string"
+        },
+        {
+          "name": "nature",
+          "target": {
+            "candidates": [
+              {
+                "kind": "css",
+                "selector": "tr:has(> td:text-is(\"Nature of Third party\")) > td:nth-child(2)"
+              }
+            ],
+            "require": "exactly-one"
+          },
+          "type": "string"
+        }
+      ],
+      "id": "extract-profile",
+      "otherwise": {
+        "outcome": {
+          "code": "profile-no-longer-visible",
+          "type": "failure"
+        },
+        "type": "terminal"
+      },
+      "risk": "safe",
+      "transitions": [
+        {
+          "destination": {
+            "outcome": {
+              "type": "success"
+            },
+            "type": "terminal"
+          },
+          "detectorId": "dolibarr-third-party-profile-visible"
+        }
+      ]
+    }
+  ],
+  "targetProfile": "dolibarr",
+  "title": "Look up a Dolibarr third party by exact name"
+}
