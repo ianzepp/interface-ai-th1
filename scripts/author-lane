@@ -325,19 +325,30 @@ node dist/src/authoring/author-cli.js \
     --origin "${origin}" \
     ${forwarded_arguments[@]+"${forwarded_arguments[@]}"}
 
+# The lane's own output, which is everything the agent changed since its baseline.
+produced="$(git -C "${workspace}" status --porcelain |
+    awk '{print $2}' | grep '^src/capabilities/.*\.ts$' || true)"
+
+# A session that produced no capability has not succeeded, however quietly it
+# exited. Without this the wrapper reported success for a lane whose four runs all
+# errored and which never wrote an artifact at all — the fastest lane in a sweep,
+# and the emptiest.
+lane_status=0
+if ((run_author == 1)) && [[ -z "${produced}" ]]; then
+    printf '\nerror: the session produced no capability artifact\n' >&2
+    lane_status=1
+fi
+
 # Optional independent review. Opt-in because it costs a second model pass, and
 # it reports rather than repairs, so the artifact is left exactly as authored.
-audit_status=0
 if ((run_audit == 1)); then
     printf '\nAuditing what lane %s produced\n' "${lane_name}"
-    produced="$(git -C "${workspace}" status --porcelain |
-        awk '{print $2}' | grep '^src/capabilities/.*\.ts$' || true)"
     if [[ -z "${produced}" ]]; then
         printf 'no capability artifact was produced, so there is nothing to audit\n'
     else
         for source_path in ${produced}; do
             scripts/audit-artifact --source "${source_path}" --model-review ||
-                audit_status=$?
+                lane_status=$?
         done
     fi
 fi
@@ -347,10 +358,11 @@ fi
 if [[ "${workspace}" != "${ROOT_DIRECTORY}" ]]; then
     printf '\n--- lane %s workspace ---\n' "${lane_name}"
     printf 'path: %s\n' "${workspace}"
+    printf 'capability artifacts produced: %s\n' "$(printf '%s' "${produced}" | wc -w | tr -d ' ')"
     printf 'changed files:\n'
     git -C "${workspace}" status --short | sed 's/^/  /' || true
     printf 'diffstat:\n'
     git -C "${workspace}" diff HEAD --stat | sed 's/^/  /' || true
 fi
 
-exit "${audit_status}"
+exit "${lane_status}"
