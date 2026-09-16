@@ -1,6 +1,8 @@
 import { cp, lstat, mkdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 
+import { validateRunAttestation } from "./run-recorder.js";
+
 /**
  * Promoting scratch runs into the committed evidence set.
  *
@@ -102,6 +104,13 @@ async function validateCompletedRun(
         throw new Error(`Run ${expectedRunId} is not finalized`);
     }
 
+    const outcome = manifest.outcome;
+    if (manifest.status === "error" && isSensitiveEvidenceOutcome(outcome)) {
+        throw new Error(
+            `Run ${expectedRunId} has terminal outcome sensitive-evidence-detected and cannot be promoted`,
+        );
+    }
+
     await Promise.all(
         REQUIRED_RUN_FILES.map(async (name) => {
             const file = await stat(join(sourceDirectory, name));
@@ -110,7 +119,21 @@ async function validateCompletedRun(
             }
         }),
     );
+    validateRunAttestation(
+        manifest,
+        await readFile(join(sourceDirectory, "events.jsonl"), "utf8"),
+    );
     return manifest.status;
+}
+
+function isSensitiveEvidenceOutcome(value: unknown): boolean {
+    if (value === null || typeof value !== "object" || Array.isArray(value)) {
+        return false;
+    }
+    return (
+        (value as Record<string, unknown>).code ===
+        "sensitive-evidence-detected"
+    );
 }
 
 function parseManifest(source: string): Record<string, unknown> {

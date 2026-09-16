@@ -122,6 +122,11 @@ export class FileTestRunRecorder implements EventRecorder {
     #eventSequence = 0;
     #receiptCount = 0;
     #lastObservation: EventIdentity | null = null;
+    #pendingDecision: {
+        action: SurfaceAction;
+        rationale: string;
+        receipt: DecisionReceipt;
+    } | null = null;
 
     private constructor(
         public readonly directory: string,
@@ -316,9 +321,32 @@ export class FileTestRunRecorder implements EventRecorder {
         event: DiscoveryEvent;
     } {
         const clean = redactKnownSecrets(event) as DiscoveryEvent;
-        if (clean.type === "proposal" || clean.type === "decision-rejected") {
-            clean.receipt = this.#sealReceipt(clean.receipt);
+        if (clean.type === "proposal") {
+            const receipt = this.#sealReceipt(clean.receipt);
+            clean.receipt = receipt;
+            this.#pendingDecision = {
+                action: clean.action,
+                rationale: clean.rationale,
+                receipt,
+            };
             this.#receiptCount += 1;
+        } else if (clean.type === "decision-rejected") {
+            clean.receipt = this.#sealReceipt(clean.receipt);
+            this.#pendingDecision = null;
+            this.#receiptCount += 1;
+        } else if (clean.type === "action") {
+            if (clean.receipt !== undefined) {
+                const pending = this.#pendingDecision;
+                if (
+                    pending?.receipt.commandHash !== clean.receipt.commandHash
+                ) {
+                    throw new Error(
+                        `Run ${this.manifest.runId} action receipt has no matching proposal`,
+                    );
+                }
+                clean.receipt = pending.receipt;
+            }
+            this.#pendingDecision = null;
         }
         const sequence = this.#eventSequence;
         const hash = createHash("sha256")
@@ -365,6 +393,230 @@ export class FileTestRunRecorder implements EventRecorder {
         );
         await writeFile(this.readmePath, renderReadme(this.manifest), "utf8");
     }
+}
+
+/**
+ * Verify the persisted producer and decision evidence before promotion.
+ *
+ * The recorder is the authority for the two genesis values and the receipt
+ * construction. Replaying those calculations here makes a copied run prove the
+ * same event and receipt history that the recorder wrote, rather than merely
+ * carrying plausible metadata.
+ */
+export function validateRunAttestation(
+    manifest: Record<string, unknown>,
+    eventsSource: string,
+): void {
+    const runId = manifest.runId;
+    const startedAt = manifest.startedAt;
+    const producer = manifest.producer;
+    if (typeof runId !== "string" || typeof startedAt !== "string") {
+        throw new Error("Run manifest is missing its recorder identity");
+    }
+    if (!isLauncherSealedProducer(producer)) {
+        throw new Error(
+            `Run ${runId} has no valid launcher-sealed producer record`,
+        );
+    }
+
+    const decisionReceipts = manifest.decisionReceipts;
+    if (!isDecisionReceiptSummary(decisionReceipts)) {
+        throw new Error(`Run ${runId} has no valid decision receipt summary`);
+    }
+
+    const events = parseEventLedger(eventsSource);
+    let eventChainHash = createHash("sha256")
+        .update(`events:${runId}:${startedAt}`)
+        .digest("hex");
+    let receiptChainHash = createHash("sha256")
+        .update(`decision-receipts:${runId}:${producer.sessionNonce}`)
+        .digest("hex");
+    let receiptCount = 0;
+    const observations = new Map<number, string>();
+    let previousProposal: Extract<DiscoveryEvent, { type: "proposal" }> | null =
+        null;
+
+    for (const [sequence, event] of events.entries()) {
+        const eventHash = createHash("sha256")
+            .update(
+                `${eventChainHash}|${String(sequence)}|${JSON.stringify(event)}`,
+            )
+            .digest("hex");
+        eventChainHash = eventHash;
+
+        if (event.type === "observation") {
+            observations.set(sequence, eventHash);
+            previousProposal = null;
+            continue;
+        }
+
+        if (event.type === "proposal" || event.type === "decision-rejected") {
+            const receipt = event.receipt;
+            verifyDecisionReceipt(
+                runId,
+                producer.sessionNonce,
+                receipt,
+                sequence,
+                observations,
+                event.action,
+                event.risk,
+                event.rationale,
+                receiptCount,
+                receiptChainHash,
+            );
+            receiptChainHash = advanceReceiptChain(receiptChainHash, receipt);
+            receiptCount += 1;
+            previousProposal = event.type === "proposal" ? event : null;
+            continue;
+        }
+
+        if (event.type === "action" && event.receipt !== undefined) {
+            if (
+                previousProposal === null ||
+                !sameDecisionReceipt(event.receipt, previousProposal.receipt) ||
+                JSON.stringify(event.action) !==
+                    JSON.stringify(previousProposal.action) ||
+                event.rationale !== previousProposal.rationale
+            ) {
+                throw new Error(
+                    `Run ${runId} action receipt does not match an earlier proposal`,
+                );
+            }
+        }
+        previousProposal = null;
+    }
+
+    if (receiptCount !== decisionReceipts.count) {
+        throw new Error(
+            `Run ${runId} receipt count does not match its manifest digest`,
+        );
+    }
+    if (receiptChainHash !== decisionReceipts.digest) {
+        throw new Error(`Run ${runId} decision receipt digest does not match`);
+    }
+}
+
+function verifyDecisionReceipt(
+    runId: string,
+    sessionNonce: string,
+    receipt: DecisionReceipt,
+    eventSequence: number,
+    observations: ReadonlyMap<number, string>,
+    action: SurfaceAction,
+    risk: ActionRisk,
+    rationale: string,
+    expectedSequence: number,
+    previousChainHash: string,
+): void {
+    const priorObservationSequence = receipt.priorObservationSequence;
+    if (
+        receipt.sessionNonce !== sessionNonce ||
+        !Number.isInteger(receipt.sequence) ||
+        receipt.sequence !== expectedSequence ||
+        typeof priorObservationSequence !== "number" ||
+        !Number.isInteger(priorObservationSequence) ||
+        priorObservationSequence < 0 ||
+        priorObservationSequence >= eventSequence ||
+        typeof receipt.priorObservationHash !== "string" ||
+        typeof receipt.commandHash !== "string" ||
+        typeof receipt.receiptHash !== "string"
+    ) {
+        throw new Error(`Run ${runId} contains an invalid decision receipt`);
+    }
+
+    const observationHash = observations.get(priorObservationSequence);
+    if (
+        observationHash === undefined ||
+        observationHash !== receipt.priorObservationHash
+    ) {
+        throw new Error(
+            `Run ${runId} decision receipt is not bound to an earlier observation`,
+        );
+    }
+
+    const commandHash = createHash("sha256")
+        .update(JSON.stringify({ action, risk, rationale }))
+        .digest("hex");
+    if (commandHash !== receipt.commandHash) {
+        throw new Error(`Run ${runId} decision command digest does not match`);
+    }
+
+    const expectedReceiptHash = createHash("sha256")
+        .update(
+            `${previousChainHash}|${JSON.stringify({
+                sessionNonce: receipt.sessionNonce,
+                priorObservationSequence: receipt.priorObservationSequence,
+                priorObservationHash: receipt.priorObservationHash,
+                commandHash: receipt.commandHash,
+                sequence: receipt.sequence,
+            })}`,
+        )
+        .digest("hex");
+    if (expectedReceiptHash !== receipt.receiptHash) {
+        throw new Error(`Run ${runId} decision receipt chain is broken`);
+    }
+}
+
+function advanceReceiptChain(
+    previousChainHash: string,
+    receipt: DecisionReceipt,
+): string {
+    return createHash("sha256")
+        .update(`${previousChainHash}|${receipt.receiptHash}`)
+        .digest("hex");
+}
+
+function sameDecisionReceipt(
+    left: DecisionReceipt,
+    right: DecisionReceipt,
+): boolean {
+    return (
+        left.sessionNonce === right.sessionNonce &&
+        left.priorObservationSequence === right.priorObservationSequence &&
+        left.priorObservationHash === right.priorObservationHash &&
+        left.commandHash === right.commandHash &&
+        left.sequence === right.sequence &&
+        left.receiptHash === right.receiptHash
+    );
+}
+
+function parseEventLedger(source: string): readonly DiscoveryEvent[] {
+    if (source.trim() === "") return [];
+    return source.trimEnd().split("\n").map(parseDiscoveryEventLine);
+}
+
+function isLauncherSealedProducer(value: unknown): value is ProducerRecord {
+    if (value === null || typeof value !== "object" || Array.isArray(value)) {
+        return false;
+    }
+    const record = value as Record<string, unknown>;
+    return (
+        (record.kind === "external-llm" || record.kind === "human") &&
+        typeof record.provider === "string" &&
+        record.provider !== "" &&
+        typeof record.model === "string" &&
+        record.model !== "" &&
+        typeof record.sessionNonce === "string" &&
+        record.sessionNonce !== "" &&
+        typeof record.sealPath === "string" &&
+        record.sealPath !== ""
+    );
+}
+
+function isDecisionReceiptSummary(
+    value: unknown,
+): value is { count: number; digest: string } {
+    if (value === null || typeof value !== "object" || Array.isArray(value)) {
+        return false;
+    }
+    const record = value as Record<string, unknown>;
+    return (
+        typeof record.count === "number" &&
+        Number.isInteger(record.count) &&
+        record.count >= 0 &&
+        typeof record.digest === "string" &&
+        /^[0-9a-f]{64}$/.test(record.digest)
+    );
 }
 
 function parseDiscoveryEventLine(line: string): DiscoveryEvent {

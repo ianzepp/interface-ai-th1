@@ -7,8 +7,22 @@ import test from "node:test";
 import { promoteTestRuns } from "../src/authoring/evidence-promotion.js";
 import {
     FileTestRunRecorder,
+    type ProducerRecord,
     type TestRunOutcome,
 } from "../src/authoring/run-recorder.js";
+
+const SEALED_PRODUCER: ProducerRecord = {
+    kind: "external-llm",
+    provider: "codex",
+    model: "gpt-5.6-sol",
+    sessionNonce: "promotion-nonce",
+    sealPath: "tmp/discovery/lane-a/producer-seal.json",
+};
+
+const NAVIGATE_ACTION = {
+    type: "navigate",
+    url: "http://127.0.0.1:8080/societe/list.php",
+} as const;
 
 test("promotes multiple completed runs without changing the raw runs", async (context) => {
     const rootDirectory = await mkdtemp(
@@ -81,6 +95,7 @@ test("refuses to promote a running or already-promoted run", async (context) => 
         targetProfile: "ledgersmb",
         targetVersion: "1.13",
         fixtureId: "baseline-v1",
+        producer: SEALED_PRODUCER,
     });
     await writeFile(running.tracePath, "incomplete trace", "utf8");
 
@@ -113,6 +128,157 @@ test("refuses to promote a running or already-promoted run", async (context) => 
     );
 });
 
+test("refuses runs without a launcher-sealed producer record", async (context) => {
+    const rootDirectory = await mkdtemp(
+        join(tmpdir(), "interface-ai-evidence-"),
+    );
+    context.after(async () =>
+        rm(rootDirectory, { recursive: true, force: true }),
+    );
+    const runsDirectory = join(rootDirectory, "runs");
+    const evidenceDirectory = join(rootDirectory, "evidence");
+    await createCompletedRun(runsDirectory, "missing-producer", {
+        status: "satisfied",
+        summary: "The balance was visible.",
+        checkpoint: "balance-visible",
+    });
+    await createCompletedRun(runsDirectory, "invalid-producer", {
+        status: "satisfied",
+        summary: "The balance was visible.",
+        checkpoint: "balance-visible",
+    });
+
+    const missingManifest = await readManifest(
+        join(runsDirectory, "missing-producer", "run.json"),
+    );
+    delete missingManifest.producer;
+    await writeManifest(
+        join(runsDirectory, "missing-producer", "run.json"),
+        missingManifest,
+    );
+    const invalidManifest = await readManifest(
+        join(runsDirectory, "invalid-producer", "run.json"),
+    );
+    invalidManifest.producer = { ...SEALED_PRODUCER, sessionNonce: "" };
+    await writeManifest(
+        join(runsDirectory, "invalid-producer", "run.json"),
+        invalidManifest,
+    );
+
+    await assert.rejects(
+        promoteTestRuns({
+            runsDirectory,
+            evidenceDirectory,
+            runIds: ["missing-producer"],
+        }),
+        /launcher-sealed producer/,
+    );
+    await assert.rejects(
+        promoteTestRuns({
+            runsDirectory,
+            evidenceDirectory,
+            runIds: ["invalid-producer"],
+        }),
+        /launcher-sealed producer/,
+    );
+});
+
+test("refuses a broken, mismatched, or unbound decision receipt chain", async (context) => {
+    const rootDirectory = await mkdtemp(
+        join(tmpdir(), "interface-ai-evidence-"),
+    );
+    context.after(async () =>
+        rm(rootDirectory, { recursive: true, force: true }),
+    );
+    const runsDirectory = join(rootDirectory, "runs");
+    const evidenceDirectory = join(rootDirectory, "evidence");
+    await createReceiptedRun(runsDirectory, "broken-chain");
+    await createReceiptedRun(runsDirectory, "mismatched-digest");
+    await createUnboundRun(runsDirectory, "unbound-receipt");
+
+    const eventsPath = join(runsDirectory, "broken-chain", "events.jsonl");
+    const events = (await readFile(eventsPath, "utf8")).trimEnd().split("\n");
+    const proposal = JSON.parse(events[1] ?? "{}") as {
+        receipt?: Record<string, unknown>;
+    };
+    proposal.receipt = {
+        ...proposal.receipt,
+        receiptHash: "f".repeat(64),
+    };
+    events[1] = JSON.stringify(proposal);
+    await writeFile(eventsPath, `${events.join("\n")}\n`, "utf8");
+
+    const mismatchedManifest = await readManifest(
+        join(runsDirectory, "mismatched-digest", "run.json"),
+    );
+    const receipts = mismatchedManifest.decisionReceipts as {
+        count: number;
+        digest: string;
+    };
+    mismatchedManifest.decisionReceipts = {
+        count: receipts.count,
+        digest: "0".repeat(64),
+    };
+    await writeManifest(
+        join(runsDirectory, "mismatched-digest", "run.json"),
+        mismatchedManifest,
+    );
+
+    await assert.rejects(
+        promoteTestRuns({
+            runsDirectory,
+            evidenceDirectory,
+            runIds: ["broken-chain"],
+        }),
+        /receipt chain is broken/,
+    );
+    await assert.rejects(
+        promoteTestRuns({
+            runsDirectory,
+            evidenceDirectory,
+            runIds: ["mismatched-digest"],
+        }),
+        /receipt digest does not match/,
+    );
+    await assert.rejects(
+        promoteTestRuns({
+            runsDirectory,
+            evidenceDirectory,
+            runIds: ["unbound-receipt"],
+        }),
+        /earlier observation/,
+    );
+});
+
+test("refuses a run finalized with a sensitive-evidence outcome", async (context) => {
+    const rootDirectory = await mkdtemp(
+        join(tmpdir(), "interface-ai-evidence-"),
+    );
+    context.after(async () =>
+        rm(rootDirectory, { recursive: true, force: true }),
+    );
+    const runsDirectory = join(rootDirectory, "runs");
+    const evidenceDirectory = join(rootDirectory, "evidence");
+    await createCompletedRun(runsDirectory, "sensitive-run", {
+        status: "error",
+        summary: "The trace contained a declared sensitive value.",
+        code: "sensitive-evidence-detected",
+    });
+
+    await assert.rejects(
+        promoteTestRuns({
+            runsDirectory,
+            evidenceDirectory,
+            runIds: ["sensitive-run"],
+        }),
+        /sensitive-evidence-detected/,
+    );
+    await assert.rejects(
+        readFile(join(evidenceDirectory, "runs", "sensitive-run", "run.json")),
+        /ENOENT/,
+    );
+});
+
 test("preflights a batch before copying any requested run", async (context) => {
     const rootDirectory = await mkdtemp(
         join(tmpdir(), "interface-ai-evidence-"),
@@ -142,6 +308,112 @@ test("preflights a batch before copying any requested run", async (context) => {
     );
 });
 
+async function createReceiptedRun(
+    runsDirectory: string,
+    runId: string,
+): Promise<void> {
+    const recorder = await FileTestRunRecorder.start({
+        rootDirectory: runsDirectory,
+        runId,
+        goal: "Find a customer balance",
+        situation: `Scenario for ${runId}`,
+        targetProfile: "dolibarr",
+        targetVersion: "23.0.4",
+        fixtureId: "dolibarr/demo-install-smoke",
+        producer: SEALED_PRODUCER,
+    });
+    await writeFile(recorder.tracePath, `trace for ${runId}`, "utf8");
+    const observation = await recorder.append({
+        type: "observation",
+        recordedAt: "2026-09-16T14:00:00.000Z",
+        observation: { url: "http://127.0.0.1:8080/", title: "Home" },
+    });
+    const receipt = recorder.buildDecisionReceipt({
+        action: NAVIGATE_ACTION,
+        risk: "safe",
+        rationale: "Open the third-party list.",
+    });
+    if (receipt.priorObservationSequence !== observation.sequence) {
+        throw new Error(
+            "Test setup did not bind its decision to the observation",
+        );
+    }
+    await recorder.append({
+        type: "proposal",
+        recordedAt: "2026-09-16T14:00:05.000Z",
+        action: NAVIGATE_ACTION,
+        risk: "safe",
+        rationale: "Open the third-party list.",
+        policyDecision: { type: "allow" },
+        receipt,
+    });
+    await recorder.append({
+        type: "action",
+        recordedAt: "2026-09-16T14:00:06.000Z",
+        action: NAVIGATE_ACTION,
+        result: {
+            completed: true,
+            observation: {
+                url: NAVIGATE_ACTION.url,
+                title: "Third parties",
+            },
+        },
+        rationale: "Open the third-party list.",
+        receipt,
+    });
+    await recorder.finalize({
+        status: "satisfied",
+        summary: "The list was reachable.",
+        checkpoint: "third-party-list-visible",
+    });
+}
+
+async function createUnboundRun(
+    runsDirectory: string,
+    runId: string,
+): Promise<void> {
+    const recorder = await FileTestRunRecorder.start({
+        rootDirectory: runsDirectory,
+        runId,
+        goal: "Find a customer balance",
+        situation: `Scenario for ${runId}`,
+        targetProfile: "dolibarr",
+        targetVersion: "23.0.4",
+        fixtureId: "dolibarr/demo-install-smoke",
+        producer: SEALED_PRODUCER,
+    });
+    await writeFile(recorder.tracePath, `trace for ${runId}`, "utf8");
+    await recorder.append({
+        type: "proposal",
+        recordedAt: "2026-09-16T14:00:05.000Z",
+        action: NAVIGATE_ACTION,
+        risk: "safe",
+        rationale: "Open the third-party list without observing.",
+        policyDecision: { type: "allow" },
+        receipt: recorder.buildDecisionReceipt({
+            action: NAVIGATE_ACTION,
+            risk: "safe",
+            rationale: "Open the third-party list without observing.",
+        }),
+    });
+    await recorder.finalize({
+        status: "error",
+        summary: "The decision was not bound to an observation.",
+        code: "unbound-decision",
+    });
+}
+
+async function readManifest(path: string): Promise<Record<string, unknown>> {
+    return JSON.parse(await readFile(path, "utf8")) as Record<string, unknown>;
+}
+
+async function writeManifest(
+    path: string,
+    manifest: Record<string, unknown>,
+): Promise<void> {
+    await writeFile(path, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+}
+
 async function createCompletedRun(
     runsDirectory: string,
     runId: string,
@@ -155,6 +427,7 @@ async function createCompletedRun(
         targetProfile: "ledgersmb",
         targetVersion: "1.13",
         fixtureId: "baseline-v1",
+        producer: SEALED_PRODUCER,
     });
     await writeFile(recorder.tracePath, `trace for ${runId}`, "utf8");
     await recorder.finalize(outcome);
