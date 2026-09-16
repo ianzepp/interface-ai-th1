@@ -5,3 +5,6 @@ package-lock.json
 
 # Captured run evidence is data, not source. Never reformat it.
 evidence/
+
+# The local agent mailspace is coordination state, not source.
+.vivi/
