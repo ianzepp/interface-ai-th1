@@ -18,11 +18,14 @@ import { join } from "node:path";
 
 import { chromium } from "playwright";
 
+import { PlaywrightTestRunCapture } from "../authoring/playwright-run-capture.js";
 import { FileTestRunRecorder } from "../authoring/run-recorder.js";
 import { ledgerSmbInitializeArtifact } from "../capabilities/ledgersmb-initialize.js";
 import { PlaywrightBrowserDriver } from "../surfaces/playwright-driver.js";
 import { DeterministicEngine } from "./engine.js";
 import { ArtifactPolicy } from "./policy.js";
+
+const PASSWORD = requireFixturePassword();
 
 const recorder = await FileTestRunRecorder.start({
     rootDirectory: join(process.cwd(), "runs"),
@@ -31,18 +34,18 @@ const recorder = await FileTestRunRecorder.start({
     targetProfile: "ledgersmb",
     targetVersion: "1.13.7",
     fixtureId: "ledgersmb/fresh",
+    sensitiveInputValues: [PASSWORD],
 });
 await mkdir(join(recorder.directory, "screenshots"), { recursive: true });
 
 const browser = await chromium.launch({ headless: true });
 const context = await browser.newContext({ locale: "en-US" });
 const page = await context.newPage();
-await context.tracing.start({
-    screenshots: true,
-    snapshots: true,
-    sources: true,
-});
-let traceStopped = false;
+const capture = await PlaywrightTestRunCapture.start(
+    context.tracing,
+    recorder,
+    [PASSWORD],
+);
 
 const driver = new PlaywrightBrowserDriver(
     context,
@@ -76,17 +79,20 @@ const engine = new DeterministicEngine(
 );
 
 try {
-    const result = await engine.run(ledgerSmbInitializeArtifact, {
+    const invocation = {
         capabilityId: ledgerSmbInitializeArtifact.id,
         inputs: {
             baseUrl: "http://127.0.0.1:5762",
             databaseAdmin: "postgres",
-            databasePassword: "interface-ai-local",
+            databasePassword: PASSWORD,
             company: "interface_ai",
             username: "admin",
-            password: "interface-ai-local",
+            password: PASSWORD,
         },
-    });
+    };
+    const result = await capture.execute(invocation, () =>
+        engine.run(ledgerSmbInitializeArtifact, invocation),
+    );
     if (result.type !== "success") {
         throw new Error(`${result.type}: ${JSON.stringify(result)}`);
     }
@@ -94,24 +100,14 @@ try {
         path: join(recorder.directory, "screenshots", "authenticated.png"),
         fullPage: true,
     });
-    await context.tracing.stop({ path: recorder.tracePath });
-    traceStopped = true;
-    await recorder.finalize({
+    await capture.finish({
         status: "satisfied",
         summary:
             "The deterministic artifact initialized LedgerSMB and reached the authenticated home screen.",
         checkpoint: "authenticated-ledgersmb-home",
     });
 } catch (error) {
-    if (!traceStopped) {
-        await context.tracing
-            .stop({ path: recorder.tracePath })
-            .then(() => {
-                traceStopped = true;
-            })
-            .catch(() => undefined);
-    }
-    await recorder.finalize({
+    await capture.finish({
         status: "error",
         code: "deterministic-replay-failed",
         summary:
@@ -121,11 +117,17 @@ try {
     });
     throw error;
 } finally {
-    if (!traceStopped)
-        await context.tracing
-            .stop({ path: recorder.tracePath })
-            .catch(() => undefined);
     await context.close();
     await browser.close();
     console.log(`Run directory: ${recorder.directory}`);
+}
+
+function requireFixturePassword(): string {
+    const password = process.env.LEDGERSMB_FIXTURE_PASSWORD;
+    if (password === undefined || password === "") {
+        throw new Error(
+            "LEDGERSMB_FIXTURE_PASSWORD is required for npm run replay:ledgersmb:initialize",
+        );
+    }
+    return password;
 }

@@ -24,10 +24,20 @@ import type {
     SurfaceAction,
     TargetDescriptor,
 } from "../surfaces/surface-driver.js";
-import { PlaywrightTestRunCapture } from "./playwright-run-capture.js";
+import {
+    executePolicyBoundAction,
+    PlaywrightTestRunCapture,
+} from "./playwright-run-capture.js";
+import { ArtifactPolicy } from "../runtime/policy.js";
 import { FileTestRunRecorder } from "./run-recorder.js";
 
 const BASE_URL = "http://127.0.0.1:5762";
+const policy = new ArtifactPolicy({
+    allowedOrigins: [BASE_URL],
+    allowedActionTypes: ["navigate", "activate", "fill", "select", "press"],
+    riskyActionMode: "block",
+});
+const PASSWORD = requireFixturePassword();
 const recorder = await FileTestRunRecorder.start({
     rootDirectory: join(process.cwd(), "runs"),
     goal: "Create the synthetic customer and vendor accounts required by the LedgerSMB inventory scenarios.",
@@ -36,12 +46,17 @@ const recorder = await FileTestRunRecorder.start({
     targetProfile: "ledgersmb",
     targetVersion: "1.13.7",
     fixtureId: "ledgersmb/initialized-company",
+    sensitiveInputValues: [PASSWORD],
 });
 
 const browser = await chromium.launch({ headless: true });
 const context = await browser.newContext({ locale: "en-US" });
 const page = await context.newPage();
-const capture = await PlaywrightTestRunCapture.start(context.tracing, recorder);
+const capture = await PlaywrightTestRunCapture.start(
+    context.tracing,
+    recorder,
+    [PASSWORD],
+);
 
 try {
     await login(page);
@@ -104,12 +119,7 @@ async function login(page: Page): Promise<void> {
         () => page.goto(`${BASE_URL}/login.pl`).then(() => undefined),
     );
     await fill(page, "#username", "admin", "Enter the fixture administrator.");
-    await fill(
-        page,
-        "#password",
-        "interface-ai-local",
-        "Enter the fixture password.",
-    );
+    await fill(page, "#password", PASSWORD, "Enter the fixture password.");
     await fill(
         page,
         "#company",
@@ -271,7 +281,9 @@ async function action(
     rationale: string,
     execute: () => Promise<void>,
 ): Promise<void> {
-    await execute();
+    await executePolicyBoundAction(policy, browserAction, () =>
+        capture.execute(browserAction, execute),
+    );
     const result: ActionResult = {
         completed: true,
         observation: {
@@ -303,4 +315,14 @@ function cssTarget(selector: string): TargetDescriptor {
 function conciseError(error: unknown): string {
     const message = error instanceof Error ? error.message : String(error);
     return message.split("\n", 1)[0] ?? "Unknown partner creation failure";
+}
+
+function requireFixturePassword(): string {
+    const password = process.env.LEDGERSMB_FIXTURE_PASSWORD;
+    if (password === undefined || password === "") {
+        throw new Error(
+            "LEDGERSMB_FIXTURE_PASSWORD is required for npm run capture:ledgersmb:partners",
+        );
+    }
+    return password;
 }

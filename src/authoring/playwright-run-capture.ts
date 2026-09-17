@@ -2,8 +2,23 @@ import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { ArtifactPolicy } from "../runtime/policy.js";
+import type { SurfaceAction } from "../surfaces/surface-driver.js";
 import { containsSensitiveValue } from "./redaction.js";
 import type { FileTestRunRecorder, TestRunOutcome } from "./run-recorder.js";
+
+/** Evaluate a scripted action before allowing its browser operation to begin. */
+export async function executePolicyBoundAction<T>(
+    policy: ArtifactPolicy,
+    action: SurfaceAction,
+    operation: () => Promise<T>,
+): Promise<T> {
+    const decision = policy.evaluate(action);
+    if (decision.type !== "allow") {
+        throw new Error(`Action blocked by policy: ${decision.reason}`);
+    }
+    return operation();
+}
 
 export interface TraceStartOptions {
     screenshots: true;

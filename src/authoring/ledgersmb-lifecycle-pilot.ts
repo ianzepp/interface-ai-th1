@@ -33,10 +33,20 @@ import type {
     SurfaceAction,
     TargetDescriptor,
 } from "../surfaces/surface-driver.js";
-import { PlaywrightTestRunCapture } from "./playwright-run-capture.js";
+import {
+    executePolicyBoundAction,
+    PlaywrightTestRunCapture,
+} from "./playwright-run-capture.js";
+import { ArtifactPolicy } from "../runtime/policy.js";
 import { FileTestRunRecorder } from "./run-recorder.js";
 
 const BASE_URL = "http://127.0.0.1:5762";
+const policy = new ArtifactPolicy({
+    allowedOrigins: [BASE_URL],
+    allowedActionTypes: ["navigate", "activate", "fill", "select", "press"],
+    riskyActionMode: "block",
+});
+const PASSWORD = requireFixturePassword();
 const TODAY = new Date().toISOString().slice(0, 10);
 const recorder = await FileTestRunRecorder.start({
     rootDirectory: join(process.cwd(), "runs"),
@@ -45,20 +55,21 @@ const recorder = await FileTestRunRecorder.start({
     targetProfile: "ledgersmb",
     targetVersion: "1.13.7",
     fixtureId: "ledgersmb/catalog-ready",
+    sensitiveInputValues: [PASSWORD],
 });
 const browser = await chromium.launch({ headless: true });
 const context = await browser.newContext({ locale: "en-US" });
 const page = await context.newPage();
-const capture = await PlaywrightTestRunCapture.start(context.tracing, recorder);
+const capture = await PlaywrightTestRunCapture.start(
+    context.tracing,
+    recorder,
+    [PASSWORD],
+);
 
 try {
     await navigate(`${BASE_URL}/login.pl`, "Open the LedgerSMB login surface.");
     await fill("#username", "admin", "Enter the fixture administrator.");
-    await fill(
-        "#password",
-        "interface-ai-local",
-        "Enter the fixture password.",
-    );
+    await fill("#password", PASSWORD, "Enter the fixture password.");
     await fill("#company", "interface_ai", "Enter the catalog-ready company.");
     await click(
         roleTarget("button", "Login"),
@@ -334,7 +345,9 @@ async function record(
     rationale: string,
     execute: () => Promise<void>,
 ): Promise<void> {
-    await execute();
+    await executePolicyBoundAction(policy, action, () =>
+        capture.execute(action, execute),
+    );
     const result: ActionResult = {
         completed: true,
         observation: {
@@ -365,4 +378,14 @@ function cssTarget(selector: string): TargetDescriptor {
 function conciseError(error: unknown): string {
     const message = error instanceof Error ? error.message : String(error);
     return message.split("\n", 1)[0] ?? "Unknown lifecycle failure";
+}
+
+function requireFixturePassword(): string {
+    const password = process.env.LEDGERSMB_FIXTURE_PASSWORD;
+    if (password === undefined || password === "") {
+        throw new Error(
+            "LEDGERSMB_FIXTURE_PASSWORD is required for npm run capture:ledgersmb:lifecycle",
+        );
+    }
+    return password;
 }
