@@ -67,12 +67,34 @@ async function run(): Promise<void> {
             });
             return;
         case "act":
-            await send({
+            await sendWithCurrentEpoch({
                 type: "act",
                 action: buildAction(flags),
                 risk: readRisk(),
                 rationale: requireFlag(flags, "rationale"),
             });
+            return;
+        case "take-control":
+            await sendWithCurrentEpoch({ type: "take-control" });
+            return;
+        case "human-observe":
+            await sendWithCurrentEpoch({
+                type: "human-observe",
+                screenshot: flags.has("screenshot"),
+            });
+            return;
+        case "human-act":
+            await sendWithCurrentEpoch({
+                type: "human-act",
+                action: buildAction(flags),
+                rationale: requireFlag(flags, "rationale"),
+            });
+            return;
+        case "resume":
+            await sendWithCurrentEpoch({ type: "resume" });
+            return;
+        case "release-control":
+            await sendWithCurrentEpoch({ type: "release-control" });
             return;
         case "checkpoint":
             await send({
@@ -208,6 +230,8 @@ async function status(): Promise<void> {
     print(`socket: ${state.socketPath}`);
     print(`pid: ${String(state.pid)}`);
     print(`goal: ${state.goal}`);
+    print(`controller: ${state.controller}`);
+    print(`control epoch: ${String(state.controlEpoch)}`);
 }
 
 async function stop(): Promise<void> {
@@ -261,6 +285,38 @@ async function stop(): Promise<void> {
     print(`session stopped: run ${state.runId}`);
 }
 
+/** Send a lease-bound command using the epoch from the live session state. */
+async function sendWithCurrentEpoch(
+    command:
+        | Omit<Extract<SessionCommand, { type: "act" }>, "controlEpoch">
+        | Omit<
+              Extract<SessionCommand, { type: "take-control" }>,
+              "controlEpoch"
+          >
+        | Omit<
+              Extract<SessionCommand, { type: "human-observe" }>,
+              "controlEpoch"
+          >
+        | Omit<Extract<SessionCommand, { type: "human-act" }>, "controlEpoch">
+        | Omit<Extract<SessionCommand, { type: "resume" }>, "controlEpoch">
+        | Omit<
+              Extract<SessionCommand, { type: "release-control" }>,
+              "controlEpoch"
+          >,
+): Promise<void> {
+    const state = await readState();
+    const response = await requestSessionControl(state.socketPath, {
+        ...command,
+        controlEpoch: state.controlEpoch,
+    });
+    if (!response.ok) {
+        print(`error: ${response.error}`);
+        process.exitCode = 1;
+        return;
+    }
+    render(response.record);
+}
+
 /** Send one command to the running session and render its answer. */
 async function send(command: SessionCommand): Promise<void> {
     const state = await readState();
@@ -293,7 +349,8 @@ function render(record: unknown): void {
             }
             return;
         }
-        case "action-completed": {
+        case "action-completed":
+        case "human-action-completed": {
             const result = asRecord(value.result);
             const observation = asRecord(result.observation);
             print("completed");
@@ -308,6 +365,20 @@ function render(record: unknown): void {
         }
         case "checkpoint-recorded":
             print(`checkpoint recorded: ${String(value.name)}`);
+            return;
+        case "control-taken":
+        case "control-released": {
+            const control = asRecord(value.control);
+            print(
+                `${type}: ${String(control.controller)} epoch ${String(control.epoch)}`,
+            );
+            return;
+        }
+        case "resume-requested":
+            print("resume requested");
+            return;
+        case "control-rejected":
+            print(`rejected: ${String(value.reason)}`);
             return;
         case "finished": {
             const outcome = asRecord(value.outcome);
@@ -488,6 +559,11 @@ function printUsage(): void {
   scripts/session start --target <ledgersmb|dolibarr> --fixture <name> --goal <text> [--lane <name>]
   scripts/session observe [--screenshot]
   scripts/session act --type <navigate|activate|fill|select|press> [target flags] --rationale <text>
+  scripts/session take-control
+  scripts/session human-observe [--screenshot]
+  scripts/session human-act --type <navigate|activate|fill|select|press> [target flags] --rationale <text>
+  scripts/session resume
+  scripts/session release-control
   scripts/session checkpoint --name <name> [--satisfied true|false]
   scripts/session finish --status <satisfied|error> --summary <text> (--checkpoint <name> | --code <code>)
   scripts/session status

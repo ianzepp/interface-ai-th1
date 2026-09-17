@@ -112,3 +112,47 @@ test("refuses an action without a bound control lease epoch", () => {
         /Act requires the current control lease epoch/,
     );
 });
+
+test("parses human-control commands only with a current lease epoch", () => {
+    const action = {
+        type: "navigate",
+        url: "http://127.0.0.1:8080/societe/list.php",
+    };
+    const observationIdentity = { sequence: 4, hash: "human-observation" };
+
+    const command = parseSessionCommand(
+        JSON.stringify({
+            type: "human-act",
+            action,
+            rationale: "Inspect the matching record.",
+            observationIdentity,
+            controlEpoch: 1,
+        }),
+    );
+    assert.equal(command.type, "human-act");
+    assert.deepEqual(command.observationIdentity, observationIdentity);
+
+    for (const type of [
+        "take-control",
+        "human-observe",
+        "human-act",
+        "resume",
+        "release-control",
+    ]) {
+        assert.throws(
+            () =>
+                parseSessionCommand(
+                    JSON.stringify({
+                        type,
+                        ...(type === "human-act"
+                            ? {
+                                  action,
+                                  rationale: "Inspect the matching record.",
+                              }
+                            : {}),
+                    }),
+                ),
+            new RegExp(`${type} requires the current control lease epoch`),
+        );
+    }
+});

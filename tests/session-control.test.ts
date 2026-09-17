@@ -76,6 +76,7 @@ test("carries an observation identity through the socket response path", async (
         risk: "safe" as const,
         rationale: "Open the list.",
         observationIdentity,
+        controlEpoch: 0,
     };
     const response = await requestSessionControl(socketPath, action);
 
@@ -84,6 +85,46 @@ test("carries an observation identity through the socket response path", async (
         ok: true,
         record: { type: "action-completed" },
     });
+});
+
+test("carries explicit human-control commands through the shared socket parser", async (context) => {
+    const directory = await mkdtemp(join(tmpdir(), "interface-ai-control-"));
+    context.after(async () => rm(directory, { recursive: true, force: true }));
+
+    const seen: SessionCommand[] = [];
+    const server = new SessionControlServer({
+        socketPath: join(directory, "session.sock"),
+        dispatch: (command) => {
+            seen.push(command);
+            return Promise.resolve({ type: `${command.type}-accepted` });
+        },
+    });
+    await server.listen();
+    context.after(async () => server.close());
+
+    const socketPath = join(directory, "session.sock");
+    await requestSessionControl(socketPath, {
+        type: "take-control",
+        controlEpoch: 0,
+    });
+    await requestSessionControl(socketPath, {
+        type: "human-observe",
+        controlEpoch: 1,
+        screenshot: true,
+    });
+    await requestSessionControl(socketPath, {
+        type: "resume",
+        controlEpoch: 1,
+    });
+    await requestSessionControl(socketPath, {
+        type: "release-control",
+        controlEpoch: 1,
+    });
+
+    assert.deepEqual(
+        seen.map((command) => command.type),
+        ["take-control", "human-observe", "resume", "release-control"],
+    );
 });
 
 test("serializes concurrent requests so one action never overlaps another", async (context) => {

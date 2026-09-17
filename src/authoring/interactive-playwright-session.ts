@@ -56,6 +56,17 @@ export interface SessionOptions {
 
 export type SessionCommand =
     | { type: "observe"; screenshot?: boolean }
+    | { type: "take-control"; controlEpoch: number }
+    | { type: "human-observe"; controlEpoch: number; screenshot?: boolean }
+    | {
+          type: "human-act";
+          action: SurfaceAction;
+          rationale: string;
+          observationIdentity?: ObservationIdentity;
+          controlEpoch: number;
+      }
+    | { type: "resume"; controlEpoch: number }
+    | { type: "release-control"; controlEpoch: number }
     | {
           type: "act";
           action: SurfaceAction;
@@ -245,7 +256,48 @@ async function handleCommand(
 ): Promise<SessionCommandOutcome> {
     const { driver, recorder, capture, page, policy, options } = run;
 
-    if (command.type === "observe") {
+    if (command.type === "take-control") {
+        return transferControl(
+            run,
+            "automation",
+            command.controlEpoch,
+            "human",
+            "control-taken",
+        );
+    }
+
+    if (command.type === "release-control") {
+        return transferControl(
+            run,
+            "human",
+            command.controlEpoch,
+            "automation",
+            "control-released",
+        );
+    }
+
+    if (command.type === "resume") {
+        const failure = humanControlFailure(run, command.controlEpoch);
+        if (failure !== null) {
+            return {
+                record: { type: "control-rejected", reason: failure },
+                terminal: false,
+            };
+        }
+        return { record: { type: "resume-requested" }, terminal: false };
+    }
+
+    if (command.type === "observe" || command.type === "human-observe") {
+        const failure =
+            command.type === "human-observe"
+                ? humanControlFailure(run, command.controlEpoch)
+                : null;
+        if (failure !== null) {
+            return {
+                record: { type: "control-rejected", reason: failure },
+                terminal: false,
+            };
+        }
         const observation = await driver.observe({
             includeAccessibility: true,
             includeScreenshot: command.screenshot ?? false,
@@ -259,6 +311,70 @@ async function handleCommand(
         run.observationConsumed = false;
         return {
             record: { type: "observation", observation, observationIdentity },
+            terminal: false,
+        };
+    }
+
+    if (command.type === "human-act") {
+        const controlFailure = humanControlFailure(run, command.controlEpoch);
+        if (controlFailure !== null) {
+            return {
+                record: {
+                    type: "action-rejected",
+                    reason: "control-lease-refused",
+                    detail: controlFailure,
+                },
+                terminal: false,
+            };
+        }
+        const observationFailure = observeRequirementFailure(
+            run,
+            command.observationIdentity,
+        );
+        if (observationFailure !== null) {
+            return {
+                record: {
+                    type: "action-rejected",
+                    reason: "observe-required",
+                    detail: observationFailure,
+                },
+                terminal: false,
+            };
+        }
+        run.observationConsumed = true;
+        const originFailure = blockedOrigin(
+            command.action,
+            page,
+            options.policy.allowedOrigins,
+        );
+        if (originFailure !== null) {
+            return {
+                record: {
+                    type: "action-rejected",
+                    reason: "origin-not-allowed",
+                    detail: originFailure,
+                },
+                terminal: false,
+            };
+        }
+        if (
+            command.action.type !== "navigate" &&
+            command.action.type !== "press"
+        ) {
+            await driver.locate(command.action.target);
+        }
+        const result = await capture.execute(command.action, () =>
+            driver.act(command.action),
+        );
+        await recorder.append({
+            type: "action",
+            recordedAt: new Date().toISOString(),
+            action: command.action,
+            result,
+            rationale: command.rationale,
+        });
+        return {
+            record: { type: "human-action-completed", result },
             terminal: false,
         };
     }
@@ -417,6 +533,41 @@ async function requireIntervention(
     };
 }
 
+async function transferControl(
+    run: SessionRun,
+    expected: "automation" | "human",
+    epoch: number,
+    next: "automation" | "human",
+    type: "control-taken" | "control-released",
+): Promise<SessionCommandOutcome> {
+    const before = run.lease.current();
+    try {
+        const after = run.lease.transfer(expected, epoch, next);
+        await run.options.onControlChange?.(after);
+        await run.recorder.append({
+            type: "control-transfer",
+            recordedAt: new Date().toISOString(),
+            from: before,
+            to: after,
+        });
+        return { record: { type, control: after }, terminal: false };
+    } catch (error) {
+        return {
+            record: { type: "control-rejected", reason: describeError(error) },
+            terminal: false,
+        };
+    }
+}
+
+function humanControlFailure(run: SessionRun, epoch: number): string | null {
+    try {
+        run.lease.assertOwnedBy("human", epoch);
+        return null;
+    } catch (error) {
+        return describeError(error);
+    }
+}
+
 function automationControlFailure(
     run: SessionRun,
     epoch: unknown,
@@ -569,14 +720,28 @@ export function parseSessionCommand(source: string): SessionCommand {
     }
     if (
         command.type !== "observe" &&
+        command.type !== "take-control" &&
+        command.type !== "human-observe" &&
+        command.type !== "human-act" &&
+        command.type !== "resume" &&
+        command.type !== "release-control" &&
         command.type !== "act" &&
         command.type !== "checkpoint" &&
         command.type !== "finish"
     ) {
         throw new Error("Unknown session command type");
     }
-    if (command.type === "act" && typeof command.controlEpoch !== "number") {
-        throw new Error("Act requires the current control lease epoch");
+    if (
+        (command.type === "act" ||
+            command.type === "take-control" ||
+            command.type === "human-observe" ||
+            command.type === "human-act" ||
+            command.type === "resume" ||
+            command.type === "release-control") &&
+        typeof command.controlEpoch !== "number"
+    ) {
+        const label = command.type === "act" ? "Act" : command.type;
+        throw new Error(`${label} requires the current control lease epoch`);
     }
     return value as SessionCommand;
 }
