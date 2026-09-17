@@ -47,10 +47,19 @@ export type StageDestination =
     | { type: "stage"; stageId: string }
     | { type: "terminal"; outcome: TerminalOutcome };
 
+/** A bounded condition the artifact explicitly permits replay to absorb. */
+export interface RecoveryDeclaration {
+    id: string;
+    condition: string;
+    sourceRunId: string;
+    maxAttempts: number;
+}
+
 /** The destination for one recognized state. */
 export interface StageTransition {
     detectorId: string;
     destination: StageDestination;
+    recovery?: RecoveryDeclaration;
 }
 
 /**
@@ -118,20 +127,18 @@ export interface CapabilityArtifact {
 }
 
 /**
- * Resolve a stage's next step for an observed state.
+ * Resolve a stage's transition for an observed state.
  *
- * A null detector ID means nothing was recognized, which routes to `otherwise`.
+ * A null detector ID means nothing was recognized, which has no transition.
  * Duplicate transitions for one detector are rejected rather than ordered: with
  * two declarations either choice would be arbitrary, and the artifact is meant
  * to be the authority on what happens next.
  */
-export function selectDestination(
+export function selectTransition(
     stage: CapabilityStage,
     detectorId: string | null,
-): StageDestination {
-    if (detectorId === null) {
-        return stage.otherwise;
-    }
+): StageTransition | undefined {
+    if (detectorId === null) return undefined;
 
     const matches = stage.transitions.filter(
         (transition) => transition.detectorId === detectorId,
@@ -143,5 +150,13 @@ export function selectDestination(
         );
     }
 
-    return matches[0]?.destination ?? stage.otherwise;
+    return matches[0];
+}
+
+/** Resolve a stage's next step for an observed state. */
+export function selectDestination(
+    stage: CapabilityStage,
+    detectorId: string | null,
+): StageDestination {
+    return selectTransition(stage, detectorId)?.destination ?? stage.otherwise;
 }

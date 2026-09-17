@@ -85,7 +85,7 @@ test("binds invocation inputs and returns success for a recognized state", async
             capabilityId: artifact.id,
             inputs: { baseUrl: "http://local.test" },
         }),
-        { type: "success", outputs: {} },
+        { type: "success", outputs: {}, recoveries: [] },
     );
     assert.equal(navigated, "http://local.test/start");
 });
@@ -220,3 +220,120 @@ function fakeDriver(overrides: Partial<SurfaceDriver> = {}): SurfaceDriver {
         ...overrides,
     };
 }
+
+test("reports declared recoveries and stops before an exhausted recovery action", async () => {
+    const initialStage = artifact.stages[0];
+    assert.ok(initialStage);
+    const recoveryArtifact: CapabilityArtifact = {
+        ...artifact,
+        stages: [
+            {
+                ...initialStage,
+                detectors: [
+                    {
+                        id: "interstitial",
+                        description: "Password expiry interstitial",
+                        scope: "capability",
+                        signals: [
+                            {
+                                kind: "text",
+                                value: "Password expired",
+                                exact: true,
+                            },
+                        ],
+                    },
+                ],
+                transitions: [
+                    {
+                        detectorId: "interstitial",
+                        recovery: {
+                            id: "dismiss-password-expiry",
+                            condition: "Password expiry interstitial",
+                            sourceRunId: "run-password-expiry",
+                            maxAttempts: 1,
+                        },
+                        destination: { type: "stage", stageId: "dismiss" },
+                    },
+                ],
+            },
+            {
+                id: "dismiss",
+                description: "Dismiss the observed interstitial",
+                risk: "reversible",
+                action: { type: "press", key: "Enter" },
+                detectors: [
+                    {
+                        id: "interstitial-cleared",
+                        description: "Return to the initial page",
+                        scope: "capability",
+                        signals: [
+                            { kind: "text", value: "Start", exact: true },
+                        ],
+                    },
+                ],
+                transitions: [
+                    {
+                        detectorId: "interstitial-cleared",
+                        destination: { type: "stage", stageId: "open" },
+                    },
+                ],
+                otherwise: {
+                    type: "terminal",
+                    outcome: { type: "failure", code: "dismiss-failed" },
+                },
+                extractions: [],
+            },
+        ],
+        policy: {
+            ...artifact.policy,
+            allowedActionTypes: ["navigate", "press"],
+        },
+    };
+    let pressCount = 0;
+    const reports: unknown[] = [];
+    const driver = fakeDriver({
+        act: (action) => {
+            if (action.type === "press") pressCount += 1;
+            return Promise.resolve({
+                completed: true,
+                observation: { url: "http://local.test", title: "Test" },
+            });
+        },
+        waitFor: (detectors) => {
+            const detector = detectors[0];
+            assert.ok(detector);
+            return Promise.resolve({
+                detectorId: detector.id,
+                observedAt: "2026-09-17T00:00:00.000Z",
+            });
+        },
+    });
+
+    const result = await new DeterministicEngine(
+        driver,
+        new ArtifactPolicy(recoveryArtifact.policy),
+        {
+            observer: {
+                actionCompleted: () => Promise.resolve(),
+                checkpoint: () => Promise.resolve(),
+                recoveryOccurred: (report) => {
+                    reports.push(report);
+                    return Promise.resolve();
+                },
+            },
+        },
+    ).run(recoveryArtifact, {
+        capabilityId: recoveryArtifact.id,
+        inputs: { baseUrl: "http://local.test" },
+    });
+
+    assert.equal(result.type, "failure");
+    assert.equal(result.code, "recovery-exhausted");
+    assert.deepEqual(result.detail.recovery, {
+        recoveryId: "dismiss-password-expiry",
+        condition: "Password expiry interstitial",
+    });
+    assert.equal(result.recoveries.length, 1);
+    assert.deepEqual(reports, result.recoveries);
+    assert.equal(pressCount, 1);
+});

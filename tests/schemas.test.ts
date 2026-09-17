@@ -168,6 +168,7 @@ test("the engine intervention result remains typed and schema-valid", async () =
         type: "intervention-required",
         requestId: "dolibarr.lookup-third-party:open-list",
         code: "authentication-required",
+        recoveries: [],
     });
     assert.equal(validate(result), true, ajv.errorsText(validate.errors));
 });
@@ -207,3 +208,53 @@ function authenticationRequiredDriver(): SurfaceDriver {
             }),
     };
 }
+
+test("the published schemas admit declared recovery evidence without requiring it historically", async () => {
+    const ajv = compiler();
+    const capabilitySchema = ajv.compile(
+        await loadSchema("capability.schema.json"),
+    );
+    const resultSchema = ajv.compile(await loadSchema("result.schema.json"));
+    const artifact = JSON.parse(
+        JSON.stringify(dolibarrThirdPartyLookupArtifact),
+    ) as {
+        stages: { transitions: Record<string, unknown>[] }[];
+    };
+    const transition = artifact.stages[0]?.transitions[0];
+    assert.ok(transition);
+    transition.recovery = {
+        id: "dismiss-known-interstitial",
+        condition: "Known interstitial",
+        sourceRunId: "run-interstitial",
+        maxAttempts: 1,
+    };
+
+    assert.equal(
+        capabilitySchema(artifact),
+        true,
+        ajv.errorsText(capabilitySchema.errors),
+    );
+    assert.equal(
+        resultSchema({ type: "success", outputs: {} }),
+        true,
+        "historical results may omit recovery reports",
+    );
+    assert.equal(
+        resultSchema({
+            type: "success",
+            outputs: {},
+            recoveries: [
+                {
+                    recoveryId: "dismiss-known-interstitial",
+                    condition: "Known interstitial",
+                    sourceRunId: "run-interstitial",
+                    detectorId: "interstitial",
+                    attempt: 1,
+                    evidence: [],
+                },
+            ],
+        }),
+        true,
+        ajv.errorsText(resultSchema.errors),
+    );
+});

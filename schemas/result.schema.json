@@ -8,8 +8,18 @@
       "additionalProperties": false,
       "required": ["type", "outputs"],
       "properties": {
-        "type": { "const": "success" },
-        "outputs": { "type": "object" }
+        "type": {
+          "const": "success"
+        },
+        "outputs": {
+          "type": "object"
+        },
+        "recoveries": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/recovery"
+          }
+        }
       }
     },
     {
@@ -17,9 +27,21 @@
       "additionalProperties": false,
       "required": ["type", "code", "details"],
       "properties": {
-        "type": { "const": "business-outcome" },
-        "code": { "type": "string" },
-        "details": { "type": "object" }
+        "type": {
+          "const": "business-outcome"
+        },
+        "code": {
+          "type": "string"
+        },
+        "details": {
+          "type": "object"
+        },
+        "recoveries": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/recovery"
+          }
+        }
       }
     },
     {
@@ -27,9 +49,21 @@
       "additionalProperties": false,
       "required": ["type", "requestId", "code"],
       "properties": {
-        "type": { "const": "intervention-required" },
-        "requestId": { "type": "string" },
-        "code": { "type": "string" }
+        "type": {
+          "const": "intervention-required"
+        },
+        "requestId": {
+          "type": "string"
+        },
+        "code": {
+          "type": "string"
+        },
+        "recoveries": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/recovery"
+          }
+        }
       }
     },
     {
@@ -37,10 +71,61 @@
       "additionalProperties": false,
       "required": ["type", "code", "detail"],
       "properties": {
-        "type": { "const": "failure" },
-        "code": { "type": "string" },
-        "detail": { "type": "object" }
+        "type": {
+          "const": "failure"
+        },
+        "code": {
+          "type": "string"
+        },
+        "detail": {
+          "type": "object"
+        },
+        "recoveries": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/recovery"
+          }
+        }
       }
     }
-  ]
+  ],
+  "$defs": {
+    "recovery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "recoveryId",
+        "condition",
+        "sourceRunId",
+        "detectorId",
+        "attempt",
+        "evidence"
+      ],
+      "properties": {
+        "recoveryId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "condition": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sourceRunId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "detectorId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "attempt": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "evidence": {
+          "type": "array"
+        }
+      }
+    }
+  }
 }

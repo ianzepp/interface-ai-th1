@@ -17,6 +17,16 @@ import type { EvidenceReference } from "../surfaces/surface-driver.js";
  *   reproducing the run.
  */
 
+/** One absorbed, artifact-declared condition during a replay. */
+export interface RecoveryReport {
+    recoveryId: string;
+    condition: string;
+    sourceRunId: string;
+    detectorId: string;
+    attempt: number;
+    evidence: readonly EvidenceReference[];
+}
+
 /**
  * What a maintainer needs to diagnose a hard failure.
  *
@@ -29,16 +39,32 @@ export interface FailureDetail {
     expected: string;
     observed: string;
     evidence: readonly EvidenceReference[];
+    recovery?: Pick<RecoveryReport, "recoveryId" | "condition">;
 }
 
 export type RunResult<
     Outputs extends Record<string, unknown> = Record<string, unknown>,
 > =
-    | { type: "success"; outputs: Outputs }
+    | {
+          type: "success";
+          outputs: Outputs;
+          recoveries: readonly RecoveryReport[];
+      }
     | {
           type: "business-outcome";
           code: string;
           details: Record<string, unknown>;
+          recoveries: readonly RecoveryReport[];
       }
-    | { type: "intervention-required"; requestId: string; code: string }
-    | { type: "failure"; code: string; detail: FailureDetail };
+    | {
+          type: "intervention-required";
+          requestId: string;
+          code: string;
+          recoveries: readonly RecoveryReport[];
+      }
+    | {
+          type: "failure";
+          code: string;
+          detail: FailureDetail;
+          recoveries: readonly RecoveryReport[];
+      };

@@ -4,8 +4,12 @@ import type {
     SurfaceDriver,
 } from "../surfaces/surface-driver.js";
 import type { ArtifactPolicy } from "./policy.js";
-import type { RunResult } from "./result.js";
-import { selectDestination, type CapabilityArtifact } from "./state-machine.js";
+import type { RecoveryReport, RunResult } from "./result.js";
+import {
+    selectDestination,
+    selectTransition,
+    type CapabilityArtifact,
+} from "./state-machine.js";
 
 /**
  * The execution plane: the production path, with no model in the decision loop.
@@ -62,6 +66,7 @@ export interface EngineObserver {
         result: ActionResult,
     ): Promise<void>;
     checkpoint(stageId: string, detectorId: string): Promise<void>;
+    recoveryOccurred?(recovery: RecoveryReport): Promise<void>;
 }
 
 export interface EngineOptions {
@@ -108,6 +113,7 @@ export class DeterministicEngine {
                 artifact.id,
                 invocation.capabilityId,
                 [],
+                [],
             );
         }
         if (
@@ -120,6 +126,7 @@ export class DeterministicEngine {
                 JSON.stringify(artifact.policy),
                 JSON.stringify(this.policy.configuration),
                 [],
+                [],
             );
         }
         const stages = new Map(
@@ -127,6 +134,8 @@ export class DeterministicEngine {
         );
         let stageId = artifact.entryStageId;
         const outputs: Record<string, unknown> = {};
+        const recoveries: RecoveryReport[] = [];
+        const recoveryAttempts = new Map<string, number>();
         // Two steps per stage is the budget the graph needs to reach a terminal
         // from any admitted entry point; anything beyond that is a cycle.
         for (let step = 0; step <= artifact.stages.length * 2; step += 1) {
@@ -138,6 +147,7 @@ export class DeterministicEngine {
                     "declared stage",
                     "missing",
                     [],
+                    recoveries,
                 );
             try {
                 if (stage.action !== undefined) {
@@ -163,6 +173,7 @@ export class DeterministicEngine {
                             artifact.policy.allowedOrigins.join(", "),
                             originFailure,
                             [],
+                            recoveries,
                         );
                     const decision = this.policy.evaluate(action, stage.risk);
                     if (decision.type === "block")
@@ -172,12 +183,14 @@ export class DeterministicEngine {
                             "allow",
                             decision.reason,
                             [],
+                            recoveries,
                         );
                     if (decision.type === "require-confirmation") {
                         return {
                             type: "intervention-required",
                             requestId: `${artifact.id}:${stage.id}`,
                             code: "policy-confirmation-required",
+                            recoveries,
                         };
                     }
                     // Navigating and pressing act on the page rather than on a
@@ -208,28 +221,65 @@ export class DeterministicEngine {
                         stage.id,
                         match.detectorId,
                     );
-                const destination = selectDestination(
-                    stage,
-                    match?.detectorId ?? null,
-                );
+                const detectorId = match?.detectorId ?? null;
+                const transition = selectTransition(stage, detectorId);
+                const destination = selectDestination(stage, detectorId);
+                if (transition?.recovery !== undefined) {
+                    const recovery = transition.recovery;
+                    const attempt =
+                        (recoveryAttempts.get(recovery.id) ?? 0) + 1;
+                    if (attempt > recovery.maxAttempts) {
+                        return failure(
+                            stage.id,
+                            "recovery-exhausted",
+                            recovery.id,
+                            recovery.condition,
+                            [],
+                            recoveries,
+                            {
+                                recoveryId: recovery.id,
+                                condition: recovery.condition,
+                            },
+                        );
+                    }
+                    const evidence = await this.driver
+                        .captureEvidence(
+                            `recovery-${recovery.id}-${String(attempt)}`,
+                        )
+                        .then((item) => [item])
+                        .catch(() => []);
+                    const report: RecoveryReport = {
+                        recoveryId: recovery.id,
+                        condition: recovery.condition,
+                        sourceRunId: recovery.sourceRunId,
+                        detectorId: transition.detectorId,
+                        attempt,
+                        evidence,
+                    };
+                    recoveryAttempts.set(recovery.id, attempt);
+                    recoveries.push(report);
+                    await this.options.observer?.recoveryOccurred?.(report);
+                }
                 if (destination.type === "stage") {
                     stageId = destination.stageId;
                     continue;
                 }
                 switch (destination.outcome.type) {
                     case "success":
-                        return { type: "success", outputs };
+                        return { type: "success", outputs, recoveries };
                     case "business-outcome":
                         return {
                             type: "business-outcome",
                             code: destination.outcome.code,
                             details: outputs,
+                            recoveries,
                         };
                     case "intervention-required":
                         return {
                             type: "intervention-required",
                             requestId: `${artifact.id}:${stage.id}`,
                             code: destination.outcome.code,
+                            recoveries,
                         };
                     case "failure":
                         return failure(
@@ -238,6 +288,7 @@ export class DeterministicEngine {
                             stage.detectors.map((d) => d.id).join(", "),
                             match?.detectorId ?? "unrecognized state",
                             [],
+                            recoveries,
                         );
                 }
             } catch (error) {
@@ -251,6 +302,7 @@ export class DeterministicEngine {
                     stage.description,
                     error instanceof Error ? error.message : String(error),
                     evidence,
+                    recoveries,
                 );
             }
         }
@@ -260,6 +312,7 @@ export class DeterministicEngine {
             "terminating graph",
             "stage limit exceeded",
             [],
+            recoveries,
         );
     }
 }
@@ -391,10 +444,19 @@ function failure(
     expected: string,
     observed: string,
     evidence: Awaited<ReturnType<SurfaceDriver["captureEvidence"]>>[],
+    recoveries: readonly RecoveryReport[],
+    recovery?: { recoveryId: string; condition: string },
 ): RunResult {
     return {
         type: "failure",
         code,
-        detail: { stageId, expected, observed, evidence },
+        detail: {
+            stageId,
+            expected,
+            observed,
+            evidence,
+            ...(recovery === undefined ? {} : { recovery }),
+        },
+        recoveries,
     };
 }
