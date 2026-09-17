@@ -242,6 +242,53 @@ proposal before every action, so a refused action leaves evidence rather than a
 gap. Authentication happens before tracing starts, so a fixture credential
 reaches neither the trace nor the ledger.
 
+### `scripts/audit-secrets` — scan for credential values
+
+Checks the repository for credential values in the places they actually show up,
+using a curated pattern set rather than entropy, and reports whether each file
+would travel with a clone.
+
+```sh
+scripts/audit-secrets           # gate on files a clone would carry
+scripts/audit-secrets --all     # also gate on ignored files, with full detail
+scripts/audit-secrets --json    # machine-readable output
+```
+
+Exit status is 1 when a blocking finding sits on a committable file. A blocking
+finding inside an ignored file — a session cookie in a local trace, a credential
+in a pilot's ledger — is reported and does not gate, because every local capture
+corpus has them and a command that always fails is a command nobody runs. The
+same scan runs inside `npm test`, so a credential reaching a tracked file fails
+the suite.
+
+The rules and their curated path exceptions live in `src/audit/secret-scan.ts`.
+Two limits are stated in the output rather than left implicit: binary files are
+counted and never read, so a clean result says nothing about trace archives,
+snapshots, or screenshot pixels; and Git history is a separate pass. See
+[`SECURITY.md`](SECURITY.md) for the full audit and how to rerun it.
+
+#### Commit hook
+
+`npm run hooks:install` points this clone's `core.hooksPath` at `scripts/hooks`,
+so `scripts/hooks/pre-commit` runs the scan before every commit and refuses the
+commit when a credential would be included.
+
+```sh
+npm run hooks:install              # once per clone; idempotent
+git config --unset core.hooksPath  # to remove it again
+```
+
+Git does not share hooks through history, so this is a per-clone step: a fresh
+clone has no hook until it runs. The installer refuses to replace a hooks path it
+did not set, because silently disabling someone else's hooks is worse than not
+installing this one.
+
+The hook reads the index rather than the working tree, so it checks the content
+the commit would actually contain — including a credential that was staged and
+then removed from the working tree, which a working-tree scan cannot see. If the
+scan cannot run at all, the hook refuses the commit rather than passing silently.
+`git commit --no-verify` is the deliberate escape hatch.
+
 ### `scripts/audit-artifact` — review a capability artifact
 
 Reviews an artifact in two layers, and the difference between them is the point.

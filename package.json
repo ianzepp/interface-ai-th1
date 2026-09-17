@@ -14,6 +14,8 @@
     "author:lane": "scripts/author-lane",
     "session": "scripts/session",
     "audit:artifact": "scripts/audit-artifact",
+    "audit:secrets": "scripts/audit-secrets",
+    "hooks:install": "scripts/install-hooks",
     "draft:artifact": "npm run build && node dist/src/authoring/draft-artifact-cli.js",
     "export:artifact": "npm run build && node dist/src/authoring/export-artifact-cli.js",
     "discover:dolibarr:third-party": "npm run build && node dist/src/authoring/dolibarr-third-party-session.js",

@@ -1,0 +1,28 @@
+#!/bin/sh
+# Point this clone's hooks at the versioned hooks in scripts/hooks.
+#
+# Git never shares hooks through history, so this is a per-clone step rather than
+# something a clone inherits. It is idempotent, and it refuses to replace a hook
+# configuration it did not create: silently disabling someone else's hooks would
+# be worse than not installing this one.
+set -eu
+
+project_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+cd "$project_dir"
+
+if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    echo "install-hooks: not inside a Git work tree" >&2
+    exit 1
+fi
+
+configured=$(git config --get core.hooksPath || true)
+if [ -n "$configured" ] && [ "$configured" != "scripts/hooks" ]; then
+    echo "install-hooks: core.hooksPath is already '$configured'." >&2
+    echo "install-hooks: refusing to replace it. Point it at scripts/hooks" >&2
+    echo "install-hooks: yourself if the hooks there should chain instead." >&2
+    exit 1
+fi
+
+git config core.hooksPath scripts/hooks
+echo "install-hooks: core.hooksPath -> scripts/hooks"
+echo "install-hooks: undo with: git config --unset core.hooksPath"

@@ -112,7 +112,13 @@ npm --version
 docker info
 docker compose version
 npm ci
+npm run hooks:install
 ```
+
+The hook install is per clone, because Git does not share hooks through history.
+It points `core.hooksPath` at `scripts/hooks`, which runs the credential scan over
+the staged index before every commit and refuses a commit that would carry a
+secret. See [`SECURITY.md`](SECURITY.md).
 
 The Compose files use pinned application and database image digests. The first
 target start may pull several images. Browser capture uses Playwright's
@@ -521,6 +527,12 @@ npm run format:check
 npm test
 npm run verify
 ```
+
+`npm run audit:secrets` is the credential scan described in
+[`SECURITY.md`](SECURITY.md). It gates on files a clone would carry, and the same
+scan runs inside `npm test`, so a credential reaching a tracked file fails the
+suite. Use `--all` when the question is about this machine rather than about what
+ships.
 
 `npm test` builds first and then runs the compiled Node test suite. The unit
 suite does not start Docker targets or a real browser; target-facing captures
