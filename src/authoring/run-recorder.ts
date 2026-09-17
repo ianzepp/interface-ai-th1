@@ -510,6 +510,14 @@ function verifyDecisionReceipt(
 ): void {
     const priorObservationSequence = receipt.priorObservationSequence;
     if (
+        priorObservationSequence === null &&
+        receipt.priorObservationHash === null
+    ) {
+        throw new Error(
+            `Run ${runId} decision receipt is not bound to an earlier observation`,
+        );
+    }
+    if (
         receipt.sessionNonce !== sessionNonce ||
         !Number.isInteger(receipt.sequence) ||
         receipt.sequence !== expectedSequence ||
@@ -525,12 +533,14 @@ function verifyDecisionReceipt(
     }
 
     const observationHash = observations.get(priorObservationSequence);
-    if (
-        observationHash === undefined ||
-        observationHash !== receipt.priorObservationHash
-    ) {
+    if (observationHash === undefined) {
         throw new Error(
             `Run ${runId} decision receipt is not bound to an earlier observation`,
+        );
+    }
+    if (observationHash !== receipt.priorObservationHash) {
+        throw new Error(
+            `Run ${runId} decision receipt does not match the earlier observation it claims`,
         );
     }
 

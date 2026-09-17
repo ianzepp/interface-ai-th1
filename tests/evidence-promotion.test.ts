@@ -193,7 +193,7 @@ test("refuses a broken, mismatched, or unbound decision receipt chain", async (c
     const runsDirectory = join(rootDirectory, "runs");
     const evidenceDirectory = join(rootDirectory, "evidence");
     await createReceiptedRun(runsDirectory, "broken-chain");
-    await createReceiptedRun(runsDirectory, "mismatched-digest");
+    await createReceiptedRun(runsDirectory, "mismatched-receipt");
     await createUnboundRun(runsDirectory, "unbound-receipt");
 
     const eventsPath = join(runsDirectory, "broken-chain", "events.jsonl");
@@ -208,20 +208,26 @@ test("refuses a broken, mismatched, or unbound decision receipt chain", async (c
     events[1] = JSON.stringify(proposal);
     await writeFile(eventsPath, `${events.join("\n")}\n`, "utf8");
 
-    const mismatchedManifest = await readManifest(
-        join(runsDirectory, "mismatched-digest", "run.json"),
+    const mismatchedEventsPath = join(
+        runsDirectory,
+        "mismatched-receipt",
+        "events.jsonl",
     );
-    const receipts = mismatchedManifest.decisionReceipts as {
-        count: number;
-        digest: string;
+    const mismatchedEvents = (await readFile(mismatchedEventsPath, "utf8"))
+        .trimEnd()
+        .split("\n");
+    const mismatchedProposal = JSON.parse(mismatchedEvents[1] ?? "{}") as {
+        receipt?: Record<string, unknown>;
     };
-    mismatchedManifest.decisionReceipts = {
-        count: receipts.count,
-        digest: "0".repeat(64),
+    mismatchedProposal.receipt = {
+        ...mismatchedProposal.receipt,
+        priorObservationHash: "0".repeat(64),
     };
-    await writeManifest(
-        join(runsDirectory, "mismatched-digest", "run.json"),
-        mismatchedManifest,
+    mismatchedEvents[1] = JSON.stringify(mismatchedProposal);
+    await writeFile(
+        mismatchedEventsPath,
+        `${mismatchedEvents.join("\n")}\n`,
+        "utf8",
     );
 
     await assert.rejects(
@@ -236,9 +242,9 @@ test("refuses a broken, mismatched, or unbound decision receipt chain", async (c
         promoteTestRuns({
             runsDirectory,
             evidenceDirectory,
-            runIds: ["mismatched-digest"],
+            runIds: ["mismatched-receipt"],
         }),
-        /receipt digest does not match/,
+        /receipt does not match the earlier observation it claims/,
     );
     await assert.rejects(
         promoteTestRuns({
