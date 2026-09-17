@@ -10,7 +10,10 @@ import {
     type InteractiveSession,
     type SessionOptions,
 } from "./interactive-playwright-session.js";
-import type { ProducerRecord } from "./run-recorder.js";
+import {
+    assertDiscoveryProducer,
+    type ProducerRecord,
+} from "./run-recorder.js";
 import { parseFlags, requireFlag } from "./flag-args.js";
 import { SessionControlServer } from "./session-control.js";
 import {
@@ -80,6 +83,7 @@ if (carriedFlags.length > 0) {
     );
 }
 const producer = await readProducerSeal(process.env.CAPABILITY_PRODUCER_SEAL);
+assertDiscoveryProducer(producer);
 
 const profile = getTargetProfile(target);
 const targetVersion =
@@ -288,8 +292,7 @@ async function readProducerSeal(
         (kind !== "external-llm" && kind !== "human") ||
         typeof provider !== "string" ||
         provider === "" ||
-        typeof model !== "string" ||
-        model === "" ||
+        (typeof model !== "string" && model !== null) ||
         typeof sessionNonce !== "string" ||
         sessionNonce === ""
     ) {

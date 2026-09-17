@@ -5,7 +5,10 @@ import { join } from "node:path";
 import test from "node:test";
 
 import {
+    attestDiscoveryRuns,
+    assertDiscoveryProducer,
     FileTestRunRecorder,
+    validateRunAttestation,
     type ProducerRecord,
 } from "../src/authoring/run-recorder.js";
 import type { DiscoveryEvent } from "../src/authoring/event-recorder.js";
@@ -444,4 +447,71 @@ test("redacts declared sensitive values from the ledger and summary files", asyn
         assert.doesNotMatch(content, new RegExp(sentinel));
         assert.match(content, /\[REDACTED\]/);
     }
+});
+
+test("folds host attestation into discovery manifests and rejects absent or divergent attestations", async (context) => {
+    const rootDirectory = await mkdtemp(join(tmpdir(), "interface-ai-run-"));
+    context.after(async () =>
+        rm(rootDirectory, { recursive: true, force: true }),
+    );
+    const recorder = await FileTestRunRecorder.start({
+        rootDirectory,
+        runId: "host-attested-run",
+        goal: "Discover a third-party lookup",
+        situation: "Authenticated fixture",
+        targetProfile: "dolibarr",
+        targetVersion: "23.0.4",
+        fixtureId: "dolibarr/demo-install-smoke",
+        producer: { ...SEALED_PRODUCER, model: null },
+    });
+    await recorder.finalize({
+        status: "satisfied",
+        summary: "The discovery run finished.",
+        checkpoint: "finished",
+    });
+
+    const manifestPath = join(rootDirectory, "host-attested-run", "run.json");
+    const eventsSource = await readFile(recorder.eventsPath, "utf8");
+    const before = JSON.parse(await readFile(manifestPath, "utf8")) as Record<
+        string,
+        unknown
+    >;
+    assert.throws(() => {
+        validateRunAttestation(before, eventsSource);
+    }, /host attestation/);
+
+    assert.deepEqual(
+        await attestDiscoveryRuns(rootDirectory, {
+            sessionNonce: SEALED_PRODUCER.sessionNonce,
+            sessionId: "host-session-42",
+            resolvedModel: "gpt-5.6-sol",
+            streamDigest: "a".repeat(64),
+            exitStatus: "exited",
+            exitCode: 0,
+        }),
+        ["host-attested-run"],
+    );
+    const attested = JSON.parse(await readFile(manifestPath, "utf8")) as Record<
+        string,
+        unknown
+    >;
+    const producer = attested.producer as ProducerRecord;
+    assert.equal(producer.model, "gpt-5.6-sol");
+    assert.equal(producer.hostSessionId, "host-session-42");
+    assert.equal(producer.streamDigest, "a".repeat(64));
+    validateRunAttestation(attested, eventsSource);
+
+    producer.streamDigest = "b".repeat(64);
+    assert.throws(() => {
+        validateRunAttestation(attested, eventsSource);
+    }, /host attestation/);
+});
+
+test("refuses human producers for discovery while preserving them for handoff replays", () => {
+    assert.throws(() => {
+        assertDiscoveryProducer({ ...SEALED_PRODUCER, kind: "human" });
+    }, /external-llm producer/);
+    assert.doesNotThrow(() => {
+        assertDiscoveryProducer(SEALED_PRODUCER);
+    });
 });

@@ -7,6 +7,7 @@ import { runCodexSessionWithCapture } from "./codex-run.js";
 import { getTargetProfile } from "../targets/index.js";
 import { buildAuthorPrompt } from "./author-prompt.js";
 import { parseFlags, requireFlag } from "./flag-args.js";
+import { attestDiscoveryRuns } from "./run-recorder.js";
 
 /**
  * Launch one self-contained authoring session.
@@ -203,7 +204,7 @@ async function run(options: AuthorRunOptions): Promise<void> {
             {
                 kind: "external-llm",
                 provider: "codex",
-                model: model ?? "codex default (global config)",
+                model: null,
                 sessionNonce,
                 lane,
                 sealedAt: new Date().toISOString(),
@@ -245,6 +246,15 @@ async function run(options: AuthorRunOptions): Promise<void> {
         "utf8",
     );
     print(`producer attestation: ${attestationPath}`);
+    const attestedRuns = await attestDiscoveryRuns(join(repoRoot, "runs"), {
+        sessionNonce,
+        sessionId: result.capture.identity.sessionId,
+        resolvedModel: result.capture.identity.resolvedModel,
+        streamDigest: result.capture.streamDigest,
+        exitStatus: result.status,
+        exitCode: result.exitCode,
+    });
+    print(`attested runs: ${attestedRuns.join(", ") || "none"}`);
 
     if (result.status === "timeout") {
         print("");

@@ -1,5 +1,11 @@
 import { createHash, randomUUID } from "node:crypto";
-import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import {
+    appendFile,
+    mkdir,
+    readFile,
+    readdir,
+    writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 
 import type {
@@ -69,11 +75,30 @@ export interface TestRunStart {
 export interface ProducerRecord {
     kind: "external-llm" | "human";
     provider: string;
-    model: string;
+    /** The model the host reported, or null when the host reported no model. */
+    model: string | null;
     /** Harness-generated nonce binding decisions to this producer. */
     sessionNonce: string;
     /** Lane-directory path of the launcher-sealed record this came from. */
     sealPath: string;
+    /** External hosts attest these values after their captured stream closes. */
+    hostSessionId?: string | null;
+    streamDigest?: string;
+    /** Digest over the host-attested fields folded into this manifest. */
+    hostAttestationDigest?: string;
+    hostExitStatus?: CodexHostExitStatus;
+    hostExitCode?: number | null;
+}
+
+export type CodexHostExitStatus = "exited" | "timeout" | "failed";
+
+export interface HostProducerAttestation {
+    sessionNonce: string;
+    sessionId: string | null;
+    resolvedModel: string | null;
+    streamDigest: string;
+    exitStatus: CodexHostExitStatus;
+    exitCode: number | null;
 }
 
 /**
@@ -428,6 +453,64 @@ export class FileTestRunRecorder implements EventRecorder {
  * same event and receipt history that the recorder wrote, rather than merely
  * carrying plausible metadata.
  */
+/** Refuse a human seal where this process records LLM discovery decisions. */
+export function assertDiscoveryProducer(producer: ProducerRecord): void {
+    if (producer.kind !== "external-llm") {
+        throw new Error(
+            "A discovery run requires an external-llm producer; human producers are only valid for handoff replays",
+        );
+    }
+}
+
+/**
+ * Fold one host stream attestation into every finalized run bearing its nonce.
+ * The manifest, not a lane-local sidecar that promotion never reads, is the
+ * reviewed record of what the host actually reported.
+ */
+export async function attestDiscoveryRuns(
+    rootDirectory: string,
+    attestation: HostProducerAttestation,
+): Promise<readonly string[]> {
+    const entries = await readdir(rootDirectory, { withFileTypes: true });
+    const attestedRunIds: string[] = [];
+    for (const entry of entries) {
+        if (!entry.isDirectory() || !RUN_ID_PATTERN.test(entry.name)) continue;
+        const manifestPath = join(rootDirectory, entry.name, "run.json");
+        let manifest: Record<string, unknown>;
+        try {
+            const parsed = parseJson(await readFile(manifestPath, "utf8"));
+            if (!isRecord(parsed)) continue;
+            manifest = parsed;
+        } catch {
+            continue;
+        }
+        const producer = manifest.producer;
+        if (
+            !isLauncherSealedProducer(producer) ||
+            producer.kind !== "external-llm" ||
+            producer.sessionNonce !== attestation.sessionNonce ||
+            (manifest.status !== "satisfied" && manifest.status !== "error")
+        )
+            continue;
+        const attestedProducer: ProducerRecord = {
+            ...producer,
+            model: attestation.resolvedModel,
+            hostSessionId: attestation.sessionId,
+            streamDigest: attestation.streamDigest,
+            hostAttestationDigest: digestHostAttestation(attestation),
+            hostExitStatus: attestation.exitStatus,
+            hostExitCode: attestation.exitCode,
+        };
+        await writeFile(
+            manifestPath,
+            `${JSON.stringify({ ...manifest, producer: attestedProducer }, null, 2)}\n`,
+            "utf8",
+        );
+        attestedRunIds.push(entry.name);
+    }
+    return attestedRunIds;
+}
+
 export function validateRunAttestation(
     manifest: Record<string, unknown>,
     eventsSource: string,
@@ -441,6 +524,11 @@ export function validateRunAttestation(
     if (!isLauncherSealedProducer(producer)) {
         throw new Error(
             `Run ${runId} has no valid launcher-sealed producer record`,
+        );
+    }
+    if (producer.kind === "external-llm" && !isHostAttestedProducer(producer)) {
+        throw new Error(
+            `Run ${runId} has no valid host attestation for its external discovery producer`,
         );
     }
 
@@ -629,12 +717,50 @@ function isLauncherSealedProducer(value: unknown): value is ProducerRecord {
         (record.kind === "external-llm" || record.kind === "human") &&
         typeof record.provider === "string" &&
         record.provider !== "" &&
-        typeof record.model === "string" &&
-        record.model !== "" &&
+        (typeof record.model === "string" || record.model === null) &&
         typeof record.sessionNonce === "string" &&
         record.sessionNonce !== "" &&
         typeof record.sealPath === "string" &&
         record.sealPath !== ""
+    );
+}
+
+function digestHostAttestation(attestation: HostProducerAttestation): string {
+    return createHash("sha256")
+        .update(
+            JSON.stringify({
+                sessionNonce: attestation.sessionNonce,
+                sessionId: attestation.sessionId,
+                resolvedModel: attestation.resolvedModel,
+                streamDigest: attestation.streamDigest,
+                exitStatus: attestation.exitStatus,
+                exitCode: attestation.exitCode,
+            }),
+        )
+        .digest("hex");
+}
+
+function isHostAttestedProducer(producer: ProducerRecord): boolean {
+    return (
+        (typeof producer.hostSessionId === "string" ||
+            producer.hostSessionId === null) &&
+        typeof producer.streamDigest === "string" &&
+        /^[0-9a-f]{64}$/.test(producer.streamDigest) &&
+        typeof producer.hostAttestationDigest === "string" &&
+        producer.hostAttestationDigest ===
+            digestHostAttestation({
+                sessionNonce: producer.sessionNonce,
+                sessionId: producer.hostSessionId,
+                resolvedModel: producer.model,
+                streamDigest: producer.streamDigest,
+                exitStatus: producer.hostExitStatus ?? "failed",
+                exitCode: producer.hostExitCode ?? null,
+            }) &&
+        (producer.hostExitStatus === "exited" ||
+            producer.hostExitStatus === "timeout" ||
+            producer.hostExitStatus === "failed") &&
+        (typeof producer.hostExitCode === "number" ||
+            producer.hostExitCode === null)
     );
 }
 
@@ -654,8 +780,12 @@ function isDecisionReceiptSummary(
     );
 }
 
+function parseJson(source: string): unknown {
+    return JSON.parse(source);
+}
+
 function parseDiscoveryEventLine(line: string): DiscoveryEvent {
-    const value: unknown = JSON.parse(line);
+    const value = parseJson(line);
     if (!isDiscoveryEvent(value)) {
         throw new Error(
             "Event ledger line must be a recognized discovery event",
@@ -810,7 +940,7 @@ function producerLine(manifest: TestRunManifest): string {
     const producer = manifest.producer;
     return producer === undefined
         ? ""
-        : `- Producer: \`${producer.kind}/${producer.provider}\` model \`${producer.model}\` sealed nonce \`${producer.sessionNonce}\`\n`;
+        : `- Producer: \`${producer.kind}/${producer.provider}\` model \`${producer.model ?? "not reported"}\` sealed nonce \`${producer.sessionNonce}\`\n`;
 }
 
 function receiptLine(manifest: TestRunManifest): string {
