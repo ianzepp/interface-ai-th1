@@ -11,10 +11,10 @@ import {
     type TestRunOutcome,
 } from "../src/authoring/run-recorder.js";
 
-const SEALED_PRODUCER: ProducerRecord = {
-    kind: "external-llm",
-    provider: "codex",
-    model: "gpt-5.6-sol",
+const HUMAN_PRODUCER: ProducerRecord = {
+    kind: "human",
+    provider: "operator",
+    model: null,
     sessionNonce: "promotion-nonce",
     sealPath: "tmp/discovery/lane-a/producer-seal.json",
 };
@@ -124,7 +124,7 @@ test("refuses to promote a running or already-promoted run", async (context) => 
         targetProfile: "ledgersmb",
         targetVersion: "1.13",
         fixtureId: "baseline-v1",
-        producer: SEALED_PRODUCER,
+        producer: HUMAN_PRODUCER,
     });
     await writeFile(running.tracePath, "incomplete trace", "utf8");
 
@@ -188,7 +188,7 @@ test("refuses runs without a launcher-sealed producer record", async (context) =
     const invalidManifest = await readManifest(
         join(runsDirectory, "invalid-producer", "run.json"),
     );
-    invalidManifest.producer = { ...SEALED_PRODUCER, sessionNonce: "" };
+    invalidManifest.producer = { ...HUMAN_PRODUCER, sessionNonce: "" };
     await writeManifest(
         join(runsDirectory, "invalid-producer", "run.json"),
         invalidManifest,
@@ -355,7 +355,7 @@ async function createHandoffRun(
         targetProfile: "dolibarr",
         targetVersion: "23.0.4",
         fixtureId: "dolibarr/demo-install-smoke",
-        producer: SEALED_PRODUCER,
+        producer: HUMAN_PRODUCER,
     });
     await writeFile(recorder.tracePath, `trace for ${runId}`, "utf8");
     await recorder.append({
@@ -408,7 +408,7 @@ async function createReceiptedRun(
         targetProfile: "dolibarr",
         targetVersion: "23.0.4",
         fixtureId: "dolibarr/demo-install-smoke",
-        producer: SEALED_PRODUCER,
+        producer: HUMAN_PRODUCER,
     });
     await writeFile(recorder.tracePath, `trace for ${runId}`, "utf8");
     const observation = await recorder.append({
@@ -468,7 +468,7 @@ async function createUnboundRun(
         targetProfile: "dolibarr",
         targetVersion: "23.0.4",
         fixtureId: "dolibarr/demo-install-smoke",
-        producer: SEALED_PRODUCER,
+        producer: HUMAN_PRODUCER,
     });
     await writeFile(recorder.tracePath, `trace for ${runId}`, "utf8");
     await recorder.append({
@@ -515,7 +515,7 @@ async function createCompletedRun(
         targetProfile: "ledgersmb",
         targetVersion: "1.13",
         fixtureId: "baseline-v1",
-        producer: SEALED_PRODUCER,
+        producer: HUMAN_PRODUCER,
     });
     await writeFile(recorder.tracePath, `trace for ${runId}`, "utf8");
     await recorder.finalize(outcome);
