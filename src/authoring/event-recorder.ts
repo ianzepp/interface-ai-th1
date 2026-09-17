@@ -106,6 +106,12 @@ export type DiscoveryEvent =
           requestId?: string;
       }
     | {
+          type: "control-rejected";
+          recordedAt: string;
+          command: "take-control" | "human-observe" | "human-act" | "resume";
+          reason: string;
+      }
+    | {
           type: "resume-validated";
           recordedAt: string;
           observation: Observation;

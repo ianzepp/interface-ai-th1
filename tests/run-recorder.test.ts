@@ -12,6 +12,7 @@ import {
     type ProducerRecord,
 } from "../src/authoring/run-recorder.js";
 import type { DiscoveryEvent } from "../src/authoring/event-recorder.js";
+import { promoteTestRuns } from "../src/authoring/evidence-promotion.js";
 
 const NAVIGATE_ACTION = {
     type: "navigate",
@@ -96,6 +97,13 @@ test("round-trips handoff events through the file ledger", async (context) => {
         targetProfile: "dolibarr",
         targetVersion: "23.0.4",
         fixtureId: "dolibarr/demo-install-smoke",
+        producer: {
+            kind: "human",
+            provider: "operator",
+            model: null,
+            sessionNonce: "handoff-promotion-nonce",
+            sealPath: "tmp/discovery/lane-a/producer-seal.json",
+        },
     });
     const events = [
         {
@@ -131,6 +139,12 @@ test("round-trips handoff events through the file ledger", async (context) => {
             requestId: "intervention:run-handoff-events:0",
         },
         {
+            type: "control-rejected",
+            recordedAt: "2026-09-17T00:00:01.500Z",
+            command: "resume",
+            reason: "Control is owned by automation, not human",
+        },
+        {
             type: "resume-validated",
             recordedAt: "2026-09-17T00:00:02.000Z",
             observation: {
@@ -153,6 +167,30 @@ test("round-trips handoff events through the file ledger", async (context) => {
     for (const event of events) await recorder.append(event);
 
     assert.deepEqual(await recorder.readAll(), events);
+    await writeFile(recorder.tracePath, "handoff trace", "utf8");
+    await recorder.finalize({
+        status: "satisfied",
+        summary: "The human handoff completed the lookup.",
+        checkpoint: "lookup-complete",
+    });
+    const evidenceDirectory = join(rootDirectory, "evidence");
+    await promoteTestRuns({
+        runsDirectory: rootDirectory,
+        evidenceDirectory,
+        runIds: ["run-handoff-events"],
+    });
+    assert.equal(
+        await readFile(
+            join(
+                evidenceDirectory,
+                "runs",
+                "run-handoff-events",
+                "events.jsonl",
+            ),
+            "utf8",
+        ),
+        await readFile(recorder.eventsPath, "utf8"),
+    );
 });
 
 test("rejects malformed handoff events when reading the file ledger", async (context) => {
@@ -171,6 +209,12 @@ test("rejects malformed handoff events when reading the file ledger", async (con
             recordedAt: "2026-09-17T00:00:00.000Z",
             from: { controller: "automation" },
             to: { controller: "human", epoch: 1 },
+        },
+        {
+            type: "control-rejected",
+            recordedAt: "2026-09-17T00:00:00.000Z",
+            command: "release-control",
+            reason: "Control is owned by automation, not human",
         },
         {
             type: "resume-validated",

@@ -75,7 +75,6 @@ export type SessionCommand =
           controlEpoch: number;
       }
     | { type: "resume"; controlEpoch: number }
-    | { type: "release-control"; controlEpoch: number }
     | {
           type: "act";
           action: SurfaceAction;
@@ -275,23 +274,10 @@ async function handleCommand(
         );
     }
 
-    if (command.type === "release-control") {
-        return transferControl(
-            run,
-            "human",
-            command.controlEpoch,
-            "automation",
-            "control-released",
-        );
-    }
-
     if (command.type === "resume") {
         const failure = humanControlFailure(run, command.controlEpoch);
         if (failure !== null) {
-            return {
-                record: { type: "control-rejected", reason: failure },
-                terminal: false,
-            };
+            return rejectControl(run, "resume", failure);
         }
         return validateResume(run, command.controlEpoch);
     }
@@ -302,10 +288,7 @@ async function handleCommand(
                 ? humanControlFailure(run, command.controlEpoch)
                 : null;
         if (failure !== null) {
-            return {
-                record: { type: "control-rejected", reason: failure },
-                terminal: false,
-            };
+            return rejectControl(run, "human-observe", failure);
         }
         const observation = await driver.observe({
             includeAccessibility: true,
@@ -327,6 +310,7 @@ async function handleCommand(
     if (command.type === "human-act") {
         const controlFailure = humanControlFailure(run, command.controlEpoch);
         if (controlFailure !== null) {
+            await recordControlRejection(run, "human-act", controlFailure);
             return {
                 record: {
                     type: "action-rejected",
@@ -621,7 +605,7 @@ async function transferControl(
     expected: "automation" | "human",
     epoch: number,
     next: "automation" | "human",
-    type: "control-taken" | "control-released",
+    type: "control-taken",
 ): Promise<SessionCommandOutcome> {
     const before = run.lease.current();
     try {
@@ -635,11 +619,30 @@ async function transferControl(
         });
         return { record: { type, control: after }, terminal: false };
     } catch (error) {
-        return {
-            record: { type: "control-rejected", reason: describeError(error) },
-            terminal: false,
-        };
+        return rejectControl(run, "take-control", describeError(error));
     }
+}
+
+async function rejectControl(
+    run: SessionRun,
+    command: "take-control" | "human-observe" | "human-act" | "resume",
+    reason: string,
+): Promise<SessionCommandOutcome> {
+    await recordControlRejection(run, command, reason);
+    return { record: { type: "control-rejected", reason }, terminal: false };
+}
+
+function recordControlRejection(
+    run: SessionRun,
+    command: "take-control" | "human-observe" | "human-act" | "resume",
+    reason: string,
+): ReturnType<FileTestRunRecorder["append"]> {
+    return run.recorder.append({
+        type: "control-rejected",
+        recordedAt: new Date().toISOString(),
+        command,
+        reason,
+    });
 }
 
 function humanControlFailure(run: SessionRun, epoch: number): string | null {
@@ -807,7 +810,6 @@ export function parseSessionCommand(source: string): SessionCommand {
         command.type !== "human-observe" &&
         command.type !== "human-act" &&
         command.type !== "resume" &&
-        command.type !== "release-control" &&
         command.type !== "act" &&
         command.type !== "checkpoint" &&
         command.type !== "finish"
@@ -819,8 +821,7 @@ export function parseSessionCommand(source: string): SessionCommand {
             command.type === "take-control" ||
             command.type === "human-observe" ||
             command.type === "human-act" ||
-            command.type === "resume" ||
-            command.type === "release-control") &&
+            command.type === "resume") &&
         typeof command.controlEpoch !== "number"
     ) {
         const label = command.type === "act" ? "Act" : command.type;

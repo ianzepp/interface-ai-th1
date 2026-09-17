@@ -94,9 +94,6 @@ async function run(): Promise<void> {
         case "resume":
             await sendWithCurrentEpoch({ type: "resume" });
             return;
-        case "release-control":
-            await sendWithCurrentEpoch({ type: "release-control" });
-            return;
         case "checkpoint":
             await send({
                 type: "checkpoint",
@@ -308,10 +305,6 @@ async function sendWithCurrentEpoch(
         | Omit<
               Extract<SessionCommand, { type: "resume" }>,
               "controlEpoch" | "observationIdentity"
-          >
-        | Omit<
-              Extract<SessionCommand, { type: "release-control" }>,
-              "controlEpoch"
           >,
 ): Promise<void> {
     const state = await readState();
@@ -414,8 +407,7 @@ function render(record: unknown): void {
         case "checkpoint-recorded":
             print(`checkpoint recorded: ${String(value.name)}`);
             return;
-        case "control-taken":
-        case "control-released": {
+        case "control-taken": {
             const control = asRecord(value.control);
             print(
                 `${type}: ${String(control.controller)} epoch ${String(control.epoch)}`,
@@ -611,7 +603,6 @@ function printUsage(): void {
   scripts/session human-observe [--screenshot]
   scripts/session human-act --type <navigate|activate|fill|select|press> [target flags] --rationale <text>
   scripts/session resume
-  scripts/session release-control
   scripts/session checkpoint --name <name> [--satisfied true|false]
   scripts/session finish --status <satisfied|error> --summary <text> (--checkpoint <name> | --code <code>)
   scripts/session status

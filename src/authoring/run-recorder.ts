@@ -831,6 +831,14 @@ function isDiscoveryEvent(value: unknown): value is DiscoveryEvent {
                 (value.requestId === undefined ||
                     typeof value.requestId === "string")
             );
+        case "control-rejected":
+            return (
+                (value.command === "take-control" ||
+                    value.command === "human-observe" ||
+                    value.command === "human-act" ||
+                    value.command === "resume") &&
+                typeof value.reason === "string"
+            );
         case "resume-validated":
             return (
                 isObservation(value.observation) &&

@@ -116,14 +116,9 @@ test("carries explicit human-control commands through the shared socket parser",
         type: "resume",
         controlEpoch: 1,
     });
-    await requestSessionControl(socketPath, {
-        type: "release-control",
-        controlEpoch: 1,
-    });
-
     assert.deepEqual(
         seen.map((command) => command.type),
-        ["take-control", "human-observe", "resume", "release-control"],
+        ["take-control", "human-observe", "resume"],
     );
 });
 
