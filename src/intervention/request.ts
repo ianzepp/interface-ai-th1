@@ -17,6 +17,12 @@ export interface InterventionRequest {
     stageId: string;
     reason: string;
     requestedAt: string;
+    controlEpoch: number;
+    session: {
+        runId: string;
+        runDirectory: string;
+        socketPath?: string;
+    };
     evidence: readonly EvidenceReference[];
 }
 

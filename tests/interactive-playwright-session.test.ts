@@ -15,6 +15,7 @@ test("parses an external controller action command with its observation identity
                 url: "http://127.0.0.1:8080/societe/list.php",
             },
             observationIdentity,
+            controlEpoch: 0,
         }),
     );
 
@@ -32,6 +33,7 @@ test("keeps an action without an observation identity parseable for the handler"
                 type: "navigate",
                 url: "http://127.0.0.1:8080/societe/list.php",
             },
+            controlEpoch: 0,
         }),
     );
 
@@ -90,5 +92,23 @@ test("rejects producer metadata on non-action commands", () => {
                 '{"type":"finish","outcome":{"status":"satisfied","summary":"x","checkpoint":"c"},"receipt":{}}',
             ),
         /cannot be sent by a controller/,
+    );
+});
+
+test("refuses an action without a bound control lease epoch", () => {
+    assert.throws(
+        () =>
+            parseSessionCommand(
+                JSON.stringify({
+                    type: "act",
+                    risk: "safe",
+                    rationale: "Open the list.",
+                    action: {
+                        type: "navigate",
+                        url: "http://127.0.0.1:8080/societe/list.php",
+                    },
+                }),
+            ),
+        /Act requires the current control lease epoch/,
     );
 });

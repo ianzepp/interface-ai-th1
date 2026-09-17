@@ -112,11 +112,26 @@ const options: SessionOptions = {
     },
     sensitiveInputValues: fixtureSensitiveValues(target),
     prepare: (page) => bootstrapFixture(page, origin, flags),
+    sessionSocketPath: socketPath,
+    async onControlChange(lease) {
+        if (state === undefined) {
+            throw new Error(
+                "Session state was not published before control changed",
+            );
+        }
+        state = {
+            ...state,
+            controller: lease.controller,
+            controlEpoch: lease.epoch,
+        };
+        await writeSessionState(statePath, state);
+    },
 };
 
 let session: InteractiveSession | undefined;
 let server: SessionControlServer | undefined;
 let stopping = false;
+let state: SessionState | undefined;
 
 process.on("SIGTERM", () => {
     shutdown(0).catch(() => undefined);
@@ -135,7 +150,7 @@ try {
     });
     await server.listen();
 
-    const state: SessionState = {
+    state = {
         lane,
         socketPath,
         runDirectory: session.runDirectory,
@@ -145,6 +160,8 @@ try {
         targetVersion,
         fixtureId,
         goal,
+        controller: "automation",
+        controlEpoch: 0,
     };
     await writeSessionState(statePath, state);
 } catch (error) {

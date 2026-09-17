@@ -7,6 +7,8 @@ import type {
     SurfaceAction,
 } from "../surfaces/surface-driver.js";
 import type { PolicyDecision } from "../runtime/policy.js";
+import type { ControlLeaseState } from "../intervention/control-lease.js";
+import type { InterventionRequest } from "../intervention/request.js";
 
 /**
  * The event ledger: the only account of what actually happened.
@@ -90,6 +92,18 @@ export type DiscoveryEvent =
           rationale: string;
           /** Present when the executed action was a model decision. */
           receipt?: DecisionReceipt;
+      }
+    | {
+          type: "intervention-request";
+          recordedAt: string;
+          request: InterventionRequest;
+      }
+    | {
+          type: "control-transfer";
+          recordedAt: string;
+          from: ControlLeaseState;
+          to: ControlLeaseState;
+          requestId?: string;
       }
     | {
           type: "checkpoint";

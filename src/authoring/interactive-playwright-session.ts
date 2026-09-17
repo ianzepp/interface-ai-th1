@@ -9,6 +9,8 @@ import {
 } from "playwright";
 
 import { ArtifactPolicy, type PolicyConfiguration } from "../runtime/policy.js";
+import { ControlLease } from "../intervention/control-lease.js";
+import { createInterventionRequest } from "../intervention/request.js";
 import { PlaywrightBrowserDriver } from "../surfaces/playwright-driver.js";
 import type {
     ActionRisk,
@@ -45,6 +47,11 @@ export interface SessionOptions {
     sensitiveInputValues?: readonly string[];
     policy: PolicyConfiguration;
     prepare(page: Page): Promise<void>;
+    sessionSocketPath?: string;
+    onControlChange?(state: {
+        controller: "automation" | "human";
+        epoch: number;
+    }): Promise<void>;
 }
 
 export type SessionCommand =
@@ -56,6 +63,7 @@ export type SessionCommand =
           rationale: string;
           /** Identity returned by the most recent successful observe. */
           observationIdentity?: ObservationIdentity;
+          controlEpoch?: number;
       }
     | { type: "checkpoint"; name: string; satisfied: boolean }
     | { type: "finish"; outcome: TestRunOutcome };
@@ -112,6 +120,7 @@ interface SessionRun {
     currentObservationIdentity: ObservationIdentity | null;
     /** Whether the current observation has already authorized an action. */
     observationConsumed: boolean;
+    lease: ControlLease;
 }
 
 /**
@@ -161,6 +170,7 @@ export async function createInteractiveSession(
             finalized: false,
             currentObservationIdentity: null,
             observationConsumed: false,
+            lease: new ControlLease(),
         };
         const initialObservation = await driver.observe({
             includeAccessibility: true,
@@ -281,6 +291,16 @@ async function handleCommand(
         risk: command.risk,
         rationale: command.rationale,
     });
+    const controlFailure = automationControlFailure(run, command.controlEpoch);
+    if (controlFailure !== null) {
+        return rejectDecision(
+            run,
+            command,
+            receipt,
+            "control-lease-refused",
+            controlFailure,
+        );
+    }
     const observationFailure = observeRequirementFailure(
         run,
         command.observationIdentity,
@@ -307,12 +327,15 @@ async function handleCommand(
         policyDecision: decision,
         receipt,
     });
-    if (decision.type !== "allow") {
+    if (decision.type === "require-confirmation") {
+        return requireIntervention(run, command, receipt, decision.reason);
+    }
+    if (decision.type === "block") {
         return rejectDecision(
             run,
             command,
             receipt,
-            `policy-${decision.type}`,
+            "policy-block",
             decision.reason,
         );
     }
@@ -348,6 +371,65 @@ async function handleCommand(
         record: { type: "action-completed", result },
         terminal: false,
     };
+}
+
+async function requireIntervention(
+    run: SessionRun,
+    command: Extract<SessionCommand, { type: "act" }>,
+    receipt: DecisionReceipt,
+    reason: string,
+): Promise<SessionCommandOutcome> {
+    const evidence = await run.driver.captureEvidence("intervention");
+    const before = run.lease.current();
+    const request = createInterventionRequest({
+        id: `intervention:${run.recorder.directory}:${String(before.epoch)}`,
+        capabilityId: run.options.targetProfile,
+        goal: run.options.goal,
+        stageId: `action:${command.action.type}`,
+        reason,
+        controlEpoch: before.epoch,
+        session: {
+            runId: basename(run.recorder.directory),
+            runDirectory: run.recorder.directory,
+            ...(run.options.sessionSocketPath === undefined
+                ? {}
+                : { socketPath: run.options.sessionSocketPath }),
+        },
+        evidence: [evidence],
+    });
+    await run.recorder.append({
+        type: "intervention-request",
+        recordedAt: new Date().toISOString(),
+        request,
+    });
+    const after = run.lease.transfer("automation", before.epoch, "human");
+    await run.options.onControlChange?.(after);
+    await run.recorder.append({
+        type: "control-transfer",
+        recordedAt: new Date().toISOString(),
+        from: before,
+        to: after,
+        requestId: request.id,
+    });
+    return {
+        record: { type: "intervention-required", request, receipt },
+        terminal: false,
+    };
+}
+
+function automationControlFailure(
+    run: SessionRun,
+    epoch: unknown,
+): string | null {
+    if (typeof epoch !== "number") {
+        return "Act requires the current control lease epoch.";
+    }
+    try {
+        run.lease.assertOwnedBy("automation", epoch);
+        return null;
+    } catch (error) {
+        return describeError(error);
+    }
 }
 
 function observeRequirementFailure(
@@ -492,6 +574,9 @@ export function parseSessionCommand(source: string): SessionCommand {
         command.type !== "finish"
     ) {
         throw new Error("Unknown session command type");
+    }
+    if (command.type === "act" && typeof command.controlEpoch !== "number") {
+        throw new Error("Act requires the current control lease epoch");
     }
     return value as SessionCommand;
 }

@@ -23,6 +23,8 @@ const state: SessionState = {
     targetVersion: "23.0.4",
     fixtureId: "dolibarr/demo-install-smoke",
     goal: "Look up a third party.",
+    controller: "automation",
+    controlEpoch: 0,
 };
 
 test("round-trips a session state file and clears it", async (context) => {
@@ -62,7 +64,11 @@ test("rejects a state file that is missing a field a caller depends on", () => {
     );
     assert.throws(
         () => parseSessionState({ ...state, pid: "1" }),
-        /missing numeric field pid/,
+        /missing a required numeric field/,
+    );
+    assert.throws(
+        () => parseSessionState({ ...state, controlEpoch: "0" }),
+        /missing a required numeric field/,
     );
     assert.throws(() => parseSessionState([]), /must be a JSON object/);
 });

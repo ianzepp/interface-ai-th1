@@ -35,12 +35,12 @@ export class ControlLease {
      * already owns control is a no-op that would inflate the epoch and mask that
      * staleness.
      */
-    public transfer(expected: Controller, next: Controller): ControlLeaseState {
-        if (this.#state.controller !== expected) {
-            throw new Error(
-                `Control is owned by ${this.#state.controller}, not ${expected}`,
-            );
-        }
+    public transfer(
+        expected: Controller,
+        expectedEpoch: number,
+        next: Controller,
+    ): ControlLeaseState {
+        this.assertOwnedBy(expected, expectedEpoch);
 
         if (expected === next) {
             throw new Error(`Control is already owned by ${next}`);
@@ -48,5 +48,19 @@ export class ControlLease {
 
         this.#state = { controller: next, epoch: this.#state.epoch + 1 };
         return this.current();
+    }
+
+    /** Refuse a command whose caller no longer owns the current lease epoch. */
+    public assertOwnedBy(expected: Controller, expectedEpoch: number): void {
+        if (this.#state.controller !== expected) {
+            throw new Error(
+                `Control is owned by ${this.#state.controller}, not ${expected}`,
+            );
+        }
+        if (this.#state.epoch !== expectedEpoch) {
+            throw new Error(
+                `Control epoch is ${String(this.#state.epoch)}, not ${String(expectedEpoch)}`,
+            );
+        }
     }
 }

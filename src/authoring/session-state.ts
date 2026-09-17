@@ -33,6 +33,8 @@ export interface SessionState {
     targetVersion: string;
     fixtureId: string;
     goal: string;
+    controller: "automation" | "human";
+    controlEpoch: number;
 }
 
 /** Where this lane's session state lives, honoring the launcher's override. */
@@ -90,6 +92,8 @@ export function parseSessionState(value: unknown): SessionState {
         targetVersion,
         fixtureId,
         goal,
+        controller,
+        controlEpoch,
         pid,
     } = value as Record<string, unknown>;
 
@@ -101,12 +105,13 @@ export function parseSessionState(value: unknown): SessionState {
         typeof target !== "string" ||
         typeof targetVersion !== "string" ||
         typeof fixtureId !== "string" ||
-        typeof goal !== "string"
+        typeof goal !== "string" ||
+        (controller !== "automation" && controller !== "human")
     ) {
         throw new Error("Session state is missing a required string field");
     }
-    if (typeof pid !== "number") {
-        throw new Error("Session state is missing numeric field pid");
+    if (typeof pid !== "number" || typeof controlEpoch !== "number") {
+        throw new Error("Session state is missing a required numeric field");
     }
 
     return {
@@ -118,6 +123,8 @@ export function parseSessionState(value: unknown): SessionState {
         targetVersion,
         fixtureId,
         goal,
+        controller,
+        controlEpoch,
         pid,
     };
 }
