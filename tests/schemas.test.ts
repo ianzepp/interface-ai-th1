@@ -8,6 +8,14 @@ import { createRequire } from "node:module";
 
 import { Ajv2020 } from "ajv/dist/2020.js";
 
+import { dolibarrThirdPartyLookupArtifact } from "../src/capabilities/dolibarr-third-party-lookup.js";
+import {
+    DeterministicEngine,
+    type CapabilityInvocation,
+} from "../src/runtime/engine.js";
+import { ArtifactPolicy } from "../src/runtime/policy.js";
+import type { RunResult } from "../src/runtime/result.js";
+import type { SurfaceDriver } from "../src/surfaces/surface-driver.js";
 import { loadCapabilityArtifacts } from "../src/audit/artifact-catalog.js";
 
 /**
@@ -27,9 +35,9 @@ import { loadCapabilityArtifacts } from "../src/audit/artifact-catalog.js";
  * designed rather than inherited, and the types are then the compiler's
  * expression of it.
  *
- * Real documents only. Artifacts and replay results are checked as they exist in
- * the repository; nothing here validates a sample this test invented, because a
- * schema that accepts its own fixture proves nothing.
+ * Artifacts and promoted replay results are checked as they exist in the
+ * repository. The invocation fixture below mirrors the real replay's typed
+ * input, so the engine and schema boundary are checked together.
  */
 
 const repositoryRoot = join(import.meta.dirname, "..", "..");
@@ -57,6 +65,14 @@ async function loadSchema(name: string): Promise<object> {
         await readFile(join(repositoryRoot, "schemas", name), "utf8"),
     ) as object;
 }
+
+const interventionInvocationFixture: CapabilityInvocation = {
+    capabilityId: dolibarrThirdPartyLookupArtifact.id,
+    inputs: {
+        baseUrl: "http://127.0.0.1:8080",
+        name: "Book Keeping Company",
+    },
+};
 
 for (const schemaFile of schemaFiles) {
     test(`${schemaFile} contains valid JSON Schema metadata`, async () => {
@@ -95,6 +111,17 @@ test("every committed artifact satisfies the published capability schema", async
     assert.deepEqual(violations, [], "artifacts violate the capability schema");
 });
 
+test("the intervention invocation fixture satisfies the published invocation schema", async () => {
+    const ajv = compiler();
+    const validate = ajv.compile(await loadSchema("invocation.schema.json"));
+
+    assert.equal(
+        validate(interventionInvocationFixture),
+        true,
+        ajv.errorsText(validate.errors),
+    );
+});
+
 test("every promoted replay result satisfies the published result schema", async () => {
     const ajv = compiler();
     const validate = ajv.compile(await loadSchema("result.schema.json"));
@@ -128,3 +155,55 @@ test("every promoted replay result satisfies the published result schema", async
         "no replay results were found to validate against the result schema",
     );
 });
+
+test("the engine intervention result remains typed and schema-valid", async () => {
+    const ajv = compiler();
+    const validate = ajv.compile(await loadSchema("result.schema.json"));
+    const result: RunResult = await new DeterministicEngine(
+        authenticationRequiredDriver(),
+        new ArtifactPolicy(dolibarrThirdPartyLookupArtifact.policy),
+    ).run(dolibarrThirdPartyLookupArtifact, interventionInvocationFixture);
+
+    assert.deepEqual(result, {
+        type: "intervention-required",
+        requestId: "dolibarr.lookup-third-party:open-list",
+        code: "authentication-required",
+    });
+    assert.equal(validate(result), true, ajv.errorsText(validate.errors));
+});
+
+function authenticationRequiredDriver(): SurfaceDriver {
+    return {
+        observe: () =>
+            Promise.resolve({
+                url: "http://127.0.0.1:8080",
+                title: "Login",
+            }),
+        locate: () =>
+            Promise.resolve({
+                candidateIndex: 0,
+                matchCount: 1,
+                description: "fixture target",
+            }),
+        act: () =>
+            Promise.resolve({
+                completed: true,
+                observation: {
+                    url: "http://127.0.0.1:8080",
+                    title: "Login",
+                },
+            }),
+        waitFor: () =>
+            Promise.resolve({
+                detectorId: "dolibarr-authentication-required",
+                observedAt: "2026-09-17T00:00:00.000Z",
+            }),
+        extract: () => Promise.resolve(undefined),
+        captureEvidence: () =>
+            Promise.resolve({
+                kind: "screenshot",
+                path: "login.png",
+                redacted: true,
+            }),
+    };
+}
