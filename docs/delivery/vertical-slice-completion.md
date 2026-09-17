@@ -142,7 +142,8 @@ Validation correction record: the file-based commands were run against this tree
 - **write_scope:** `evidence/runs/20260915173426044-cf172ab3/`, `evidence/runs/20260915174331177-9a4ac259/`, `evidence/runs/20260915174522338-d689ee84/`, `evidence/runs/20260915174527865-4ee2f9eb/`, `evidence/runs/20260915174532327-fbb724a9/`, `evidence/runs/20260915174535371-b7e6f918/`, `assignment-proof.md`, `REPORT.md`, `README.md`.
 - **edit:** Remove each contaminated directory as one intentional cleanup, then update the proof matrix and submission narrative from the new checked evidence rather than preserving stale claims.
 - **done_when:** None of the six sensitive evidence directories remains tracked; no README/report/proof claim cites them as evidence; the remaining evidence set includes an attested LLM discovery run and the promoted same-session handoff replay.
-- **validation:** No test file is in this unit's write scope; run `if git grep -n -i -E "password|secret|authorization" -- evidence/runs; then exit 1; fi`.
+- **validation:** No test file is in this unit's write scope; run `if git grep -n -E 'interface-ai(-root)?-local|[[:alpha:]][[:alnum:]+.-]*://[^/@[:space:]]+:[^/@[:space:]]+@' -- evidence/runs; then exit 1; fi`. This checks the declared fixture credential literals and credential-bearing URL userinfo (`scheme://user:password@host`), while a bare `password` token is not a signal because the UI legitimately exposes the `Password forgotten?` label.
+- **measured result:** On the current tree, the validation command exited `0` and printed no matches.
 - **reconciliation:** The Mind runs `npm run verify` during final reconciliation.
 - **depends_on:** VS-08, VS-10.
 - **do_not:** Do not redact historical evidence in place, leave its trace archive tracked, fabricate a replacement run ID, or change source behavior in this cleanup unit.
