@@ -4,6 +4,7 @@ import process from "node:process";
 
 import type { Page } from "playwright";
 
+import { dolibarrThirdPartyLookupArtifact } from "../capabilities/dolibarr-third-party-lookup.js";
 import { getTargetProfile } from "../targets/index.js";
 import {
     createInteractiveSession,
@@ -115,6 +116,7 @@ const options: SessionOptions = {
         riskyActionMode: "block",
     },
     sensitiveInputValues: fixtureSensitiveValues(target),
+    ...reviewedResumeConfiguration(target),
     prepare: (page) => bootstrapFixture(page, origin, flags),
     sessionSocketPath: socketPath,
     async onControlChange(lease) {
@@ -131,6 +133,23 @@ const options: SessionOptions = {
         await writeSessionState(statePath, state);
     },
 };
+
+function reviewedResumeConfiguration(
+    targetId: string,
+): Pick<SessionOptions, "resumeBinding" | "resumeCheckpoints"> {
+    if (targetId !== "dolibarr") return {};
+    const checkpoints = dolibarrThirdPartyLookupArtifact.stages;
+    return {
+        resumeBinding: {
+            artifactId: dolibarrThirdPartyLookupArtifact.id,
+            checkpoints: checkpoints.map((stage) => ({
+                stageId: stage.id,
+                detectorIds: stage.detectors.map((detector) => detector.id),
+            })),
+        },
+        resumeCheckpoints: checkpoints,
+    };
+}
 
 let session: InteractiveSession | undefined;
 let server: SessionControlServer | undefined;

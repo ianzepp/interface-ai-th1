@@ -31,6 +31,7 @@ import type {
 import {
     FileTestRunRecorder,
     type ProducerRecord,
+    type ReviewedResumeBinding,
     type TestRunOutcome,
 } from "./run-recorder.js";
 
@@ -53,6 +54,8 @@ export interface SessionOptions {
     policy: PolicyConfiguration;
     prepare(page: Page): Promise<void>;
     sessionSocketPath?: string;
+    /** Committed artifact authority for the stages that may re-admit automation. */
+    resumeBinding?: ReviewedResumeBinding;
     /** Reviewed artifact stages whose detectors may re-admit automation. */
     resumeCheckpoints?: readonly CapabilityStage[];
     /** Maximum time to wait for an admitted checkpoint after human resume. */
@@ -168,6 +171,7 @@ export async function createInteractiveSession(
             fixtureId: options.fixtureId,
             producer: options.producer,
             sensitiveInputValues: options.sensitiveInputValues,
+            resumeBinding: options.resumeBinding,
         });
         const capture = await PlaywrightTestRunCapture.start(
             context.tracing,
@@ -384,10 +388,25 @@ async function handleCommand(
     }
 
     if (command.type === "finish") {
-        await capture.finish(command.outcome);
+        const outcome = await deriveTerminalOutcome(run, command.outcome);
+        if (outcome === null) {
+            const reason =
+                "A satisfied finish requires a validated resume and return of control to automation after human handoff.";
+            await recordControlRejection(run, "finish", reason);
+            return {
+                record: { type: "finish-rejected", reason },
+                terminal: false,
+            };
+        }
+        await recorder.append({
+            type: "terminal",
+            recordedAt: new Date().toISOString(),
+            outcome,
+        });
+        await capture.finish(outcome);
         run.finalized = true;
         return {
-            record: { type: "finished", outcome: command.outcome },
+            record: { type: "finished", outcome },
             terminal: true,
         };
     }
@@ -482,6 +501,69 @@ async function handleCommand(
     };
 }
 
+async function deriveTerminalOutcome(
+    run: SessionRun,
+    requested: TestRunOutcome,
+): Promise<TestRunOutcome | null> {
+    if (requested.status === "error") {
+        return {
+            status: "error",
+            code: requested.code,
+            summary: `Session ended with recorded error ${requested.code}.`,
+        };
+    }
+
+    const events = await run.recorder.readAll();
+    const handoff = events.some((event) => event.type === "control-transfer");
+    if (!handoff) {
+        const checkpoint = [...events]
+            .reverse()
+            .find(
+                (
+                    event,
+                ): event is Extract<typeof event, { type: "checkpoint" }> =>
+                    event.type === "checkpoint" && event.satisfied,
+            );
+        if (checkpoint === undefined) return null;
+        return {
+            status: "satisfied",
+            checkpoint: checkpoint.name,
+            summary: `Recorded checkpoint ${checkpoint.name} satisfied the session goal.`,
+        };
+    }
+    if (run.lease.current().controller !== "automation") return null;
+    const resumes = events.filter(
+        (event): event is Extract<typeof event, { type: "resume-validated" }> =>
+            event.type === "resume-validated",
+    );
+    const handoffs = events.filter(
+        (event) =>
+            event.type === "control-transfer" &&
+            event.from.controller === "automation" &&
+            event.to.controller === "human",
+    );
+    const returns = events.filter(
+        (event) =>
+            event.type === "control-transfer" &&
+            event.from.controller === "human" &&
+            event.to.controller === "automation",
+    );
+    if (resumes.length < handoffs.length || returns.length < handoffs.length) {
+        return null;
+    }
+    const latest = resumes.at(-1);
+    if (latest === undefined) return null;
+    const checkpoint =
+        latest.decision.type === "complete"
+            ? latest.decision.checkpoint
+            : latest.decision.stageId;
+    return {
+        status: "satisfied",
+        checkpoint,
+        summary: `Validated resume returned control to automation at checkpoint ${checkpoint}.`,
+    };
+}
+
 async function requireIntervention(
     run: SessionRun,
     command: Extract<SessionCommand, { type: "act" }>,
@@ -554,17 +636,6 @@ async function validateResume(
             observation,
             decision,
         });
-        if (decision.type === "complete") {
-            const outcome = {
-                status: "satisfied" as const,
-                checkpoint: decision.checkpoint,
-                summary: `Human recovery reached approved checkpoint ${decision.checkpoint}.`,
-            };
-            await run.capture.finish(outcome);
-            run.finalized = true;
-            return { record: { type: "completed", outcome }, terminal: true };
-        }
-
         const before = run.lease.current();
         const after = run.lease.transfer("human", epoch, "automation");
         await run.options.onControlChange?.(after);
@@ -574,6 +645,21 @@ async function validateResume(
             from: before,
             to: after,
         });
+        if (decision.type === "complete") {
+            const outcome = {
+                status: "satisfied" as const,
+                checkpoint: decision.checkpoint,
+                summary: `Human recovery reached approved checkpoint ${decision.checkpoint}.`,
+            };
+            await run.recorder.append({
+                type: "terminal",
+                recordedAt: new Date().toISOString(),
+                outcome,
+            });
+            await run.capture.finish(outcome);
+            run.finalized = true;
+            return { record: { type: "completed", outcome }, terminal: true };
+        }
         return {
             record: { type: "resume-validated", decision, control: after },
             terminal: false,
@@ -634,7 +720,8 @@ async function rejectControl(
 
 function recordControlRejection(
     run: SessionRun,
-    command: "take-control" | "human-observe" | "human-act" | "resume",
+    command:
+        "take-control" | "human-observe" | "human-act" | "resume" | "finish",
     reason: string,
 ): ReturnType<FileTestRunRecorder["append"]> {
     return run.recorder.append({

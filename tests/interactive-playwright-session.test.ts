@@ -174,6 +174,12 @@ test("records a refused resume and returns automation only after validation", as
         prepare: async (page) => {
             await page.goto(origin);
         },
+        resumeBinding: {
+            artifactId: "handoff-test.reviewed-artifact",
+            checkpoints: [
+                { stageId: "handoff-ready", detectorIds: ["handoff-page"] },
+            ],
+        },
         resumeCheckpoints: [
             {
                 id: "handoff-ready",
@@ -272,6 +278,74 @@ test("records a refused resume and returns automation only after validation", as
         ],
     );
     assert.equal(events[1]?.command, "resume");
+
+    const finished = await session.handle({
+        type: "finish",
+        outcome: {
+            status: "satisfied",
+            summary: "Caller assertion must not become the manifest summary.",
+            checkpoint: "handoff-ready",
+        },
+    });
+    assert.deepEqual(finished.record, {
+        type: "finished",
+        outcome: {
+            status: "satisfied",
+            summary:
+                "Validated resume returned control to automation at checkpoint continue.",
+            checkpoint: "continue",
+        },
+    });
+    const manifest = JSON.parse(
+        await readFile(join(session.runDirectory, "run.json"), "utf8"),
+    ) as { resumeBinding: { artifactId: string } };
+    assert.equal(
+        manifest.resumeBinding.artifactId,
+        "handoff-test.reviewed-artifact",
+    );
+});
+
+test("refuses a satisfied finish after a rejected resume", async (context) => {
+    const directory = await mkdtemp(join(tmpdir(), "interface-ai-handoff-"));
+    const session = await createInteractiveSession({
+        rootDirectory: directory,
+        goal: "Keep terminal claims grounded.",
+        situation: "A reviewed checkpoint is unavailable.",
+        targetProfile: "handoff-test",
+        targetVersion: "1",
+        fixtureId: "handoff-test/fresh",
+        policy: {
+            allowedOrigins: ["http://127.0.0.1:1"],
+            allowedActionTypes: ["navigate"],
+            riskyActionMode: "block",
+        },
+        prepare: () => Promise.resolve(),
+    });
+    context.after(async () => {
+        await session.close();
+        await rm(directory, { recursive: true, force: true });
+    });
+
+    await session.handle({ type: "take-control", controlEpoch: 0 });
+    const rejected = await session.handle({ type: "resume", controlEpoch: 1 });
+    assert.equal((rejected.record as { type: string }).type, "resume-rejected");
+    const finished = await session.handle({
+        type: "finish",
+        outcome: {
+            status: "satisfied",
+            summary: "The handoff completed.",
+            checkpoint: "invented",
+        },
+    });
+    assert.deepEqual(finished.record, {
+        type: "finish-rejected",
+        reason: "A satisfied finish requires a validated resume and return of control to automation after human handoff.",
+    });
+    const events = await readFile(
+        join(session.runDirectory, "events.jsonl"),
+        "utf8",
+    );
+    assert.match(events, /"command":"finish"/);
 });
 
 test("parses an external controller action command with its observation identity", () => {

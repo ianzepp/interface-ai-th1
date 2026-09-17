@@ -63,6 +63,17 @@ export interface TestRunStart {
     now?: () => string;
     /** Exact values that must never be persisted in run evidence. */
     sensitiveInputValues?: readonly string[] | undefined;
+    /** Reviewed artifact stages that may return automation after a handoff. */
+    resumeBinding?: ReviewedResumeBinding | undefined;
+}
+
+/** The committed artifact authority for human-handoff resume validation. */
+export interface ReviewedResumeBinding {
+    artifactId: string;
+    checkpoints: readonly {
+        stageId: string;
+        detectorIds: readonly string[];
+    }[];
 }
 
 /**
@@ -133,6 +144,8 @@ export interface TestRunManifest {
     producer?: ProducerRecord | undefined;
     /** Terminal state of the append-only decision-receipt chain, at finalize. */
     decisionReceipts?: { count: number; digest: string } | undefined;
+    /** Reviewed artifact authority configured before this session started. */
+    resumeBinding?: ReviewedResumeBinding | undefined;
     startedAt: string;
     finishedAt?: string;
     outcome?: TestRunOutcome;
@@ -213,6 +226,9 @@ export class FileTestRunRecorder implements EventRecorder {
             targetVersion: options.targetVersion,
             fixtureId: options.fixtureId,
             producer: options.producer,
+            ...(options.resumeBinding === undefined
+                ? {}
+                : { resumeBinding: options.resumeBinding }),
             startedAt,
             files: {
                 readme: "README.md",
@@ -836,7 +852,8 @@ function isDiscoveryEvent(value: unknown): value is DiscoveryEvent {
                 (value.command === "take-control" ||
                     value.command === "human-observe" ||
                     value.command === "human-act" ||
-                    value.command === "resume") &&
+                    value.command === "resume" ||
+                    value.command === "finish") &&
                 typeof value.reason === "string"
             );
         case "resume-validated":
@@ -854,9 +871,26 @@ function isDiscoveryEvent(value: unknown): value is DiscoveryEvent {
                 typeof value.name === "string" &&
                 typeof value.satisfied === "boolean"
             );
+        case "terminal":
+            return isTestRunOutcome(value.outcome);
         default:
             return false;
     }
+}
+
+function isTestRunOutcome(value: unknown): value is TestRunOutcome {
+    if (
+        !isRecord(value) ||
+        typeof value.status !== "string" ||
+        typeof value.summary !== "string"
+    ) {
+        return false;
+    }
+    return (
+        (value.status === "satisfied" &&
+            typeof value.checkpoint === "string") ||
+        (value.status === "error" && typeof value.code === "string")
+    );
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

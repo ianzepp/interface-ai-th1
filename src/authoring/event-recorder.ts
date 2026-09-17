@@ -108,7 +108,12 @@ export type DiscoveryEvent =
     | {
           type: "control-rejected";
           recordedAt: string;
-          command: "take-control" | "human-observe" | "human-act" | "resume";
+          command:
+              | "take-control"
+              | "human-observe"
+              | "human-act"
+              | "resume"
+              | "finish";
           reason: string;
       }
     | {
@@ -131,6 +136,11 @@ export type DiscoveryEvent =
           recordedAt: string;
           name: string;
           satisfied: boolean;
+      }
+    | {
+          type: "terminal";
+          recordedAt: string;
+          outcome: import("./run-recorder.js").TestRunOutcome;
       };
 
 /**
