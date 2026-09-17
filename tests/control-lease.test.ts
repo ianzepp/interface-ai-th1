@@ -42,3 +42,13 @@ test("refuses automation after the human takeover", () => {
         lease.assertOwnedBy("automation", 0);
     }, /Control is owned by human, not automation/);
 });
+
+test("keeps human control when validation rejects a recovery state", () => {
+    const lease = new ControlLease();
+    lease.transfer("automation", 0, "human");
+
+    lease.assertOwnedBy("human", 1);
+    assert.throws(() => {
+        lease.assertOwnedBy("automation", 1);
+    }, /Control is owned by human, not automation/);
+});

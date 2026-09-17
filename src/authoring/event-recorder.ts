@@ -106,6 +106,21 @@ export type DiscoveryEvent =
           requestId?: string;
       }
     | {
+          type: "resume-validated";
+          recordedAt: string;
+          observation: Observation;
+          decision: Exclude<
+              import("../intervention/resume.js").ResumeDecision,
+              { type: "reject" }
+          >;
+      }
+    | {
+          type: "resume-rejected";
+          recordedAt: string;
+          observation: Observation;
+          reason: string;
+      }
+    | {
           type: "checkpoint";
           recordedAt: string;
           name: string;

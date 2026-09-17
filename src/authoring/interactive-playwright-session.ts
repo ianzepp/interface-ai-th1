@@ -9,7 +9,12 @@ import {
 } from "playwright";
 
 import { ArtifactPolicy, type PolicyConfiguration } from "../runtime/policy.js";
+import type { CapabilityStage } from "../runtime/state-machine.js";
 import { ControlLease } from "../intervention/control-lease.js";
+import {
+    evaluateResume,
+    type ResumeCheckpoint,
+} from "../intervention/resume.js";
 import { createInterventionRequest } from "../intervention/request.js";
 import { PlaywrightBrowserDriver } from "../surfaces/playwright-driver.js";
 import type {
@@ -48,6 +53,10 @@ export interface SessionOptions {
     policy: PolicyConfiguration;
     prepare(page: Page): Promise<void>;
     sessionSocketPath?: string;
+    /** Reviewed artifact stages whose detectors may re-admit automation. */
+    resumeCheckpoints?: readonly CapabilityStage[];
+    /** Maximum time to wait for an admitted checkpoint after human resume. */
+    resumeValidationTimeoutMs?: number;
     onControlChange?(state: {
         controller: "automation" | "human";
         epoch: number;
@@ -284,7 +293,7 @@ async function handleCommand(
                 terminal: false,
             };
         }
-        return { record: { type: "resume-requested" }, terminal: false };
+        return validateResume(run, command.controlEpoch);
     }
 
     if (command.type === "observe" || command.type === "human-observe") {
@@ -529,6 +538,80 @@ async function requireIntervention(
     });
     return {
         record: { type: "intervention-required", request, receipt },
+        terminal: false,
+    };
+}
+
+async function validateResume(
+    run: SessionRun,
+    epoch: number,
+): Promise<SessionCommandOutcome> {
+    const checkpoints = run.options.resumeCheckpoints ?? [];
+    for (const stage of checkpoints) {
+        const match = await run.driver.waitFor(
+            stage.detectors,
+            run.options.resumeValidationTimeoutMs ?? 1_000,
+        );
+        if (match === null) continue;
+        const observation = await run.driver.observe({
+            includeAccessibility: true,
+            includeScreenshot: true,
+        });
+        const decision = await evaluateResume({
+            stage,
+            observation,
+            detectorId: match.detectorId,
+        } satisfies ResumeCheckpoint);
+        if (decision.type === "reject") continue;
+
+        await run.recorder.append({
+            type: "resume-validated",
+            recordedAt: new Date().toISOString(),
+            observation,
+            decision,
+        });
+        if (decision.type === "complete") {
+            const outcome = {
+                status: "satisfied" as const,
+                checkpoint: decision.checkpoint,
+                summary: `Human recovery reached approved checkpoint ${decision.checkpoint}.`,
+            };
+            await run.capture.finish(outcome);
+            run.finalized = true;
+            return { record: { type: "completed", outcome }, terminal: true };
+        }
+
+        const before = run.lease.current();
+        const after = run.lease.transfer("human", epoch, "automation");
+        await run.options.onControlChange?.(after);
+        await run.recorder.append({
+            type: "control-transfer",
+            recordedAt: new Date().toISOString(),
+            from: before,
+            to: after,
+        });
+        return {
+            record: { type: "resume-validated", decision, control: after },
+            terminal: false,
+        };
+    }
+
+    const reason =
+        checkpoints.length === 0
+            ? "No reviewed resume checkpoints are configured for this session."
+            : "The fresh observation did not match an admitted resume checkpoint.";
+    const observation = await run.driver.observe({
+        includeAccessibility: true,
+        includeScreenshot: true,
+    });
+    await run.recorder.append({
+        type: "resume-rejected",
+        recordedAt: new Date().toISOString(),
+        observation,
+        reason,
+    });
+    return {
+        record: { type: "resume-rejected", reason, evidence: observation },
         terminal: false,
     };
 }
