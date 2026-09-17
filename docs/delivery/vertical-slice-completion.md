@@ -109,8 +109,10 @@ Validation correction record: the file-based commands were run against this tree
 ### VS-08 — Bring all LedgerSMB capture pilots under the common policy and evidence boundary
 
 - **one change:** Route the four LedgerSMB pilots through `ArtifactPolicy` plus the declared-sensitive-value recorder/capture path.
-- **write_scope:** `src/authoring/ledgersmb-initialize-pilot.ts`, `src/authoring/ledgersmb-partners-pilot.ts`, `src/authoring/ledgersmb-catalog-pilot.ts`, `src/authoring/ledgersmb-lifecycle-pilot.ts`, `src/authoring/redaction.ts`, `src/authoring/run-recorder.ts`, `src/authoring/playwright-run-capture.ts`, `tests/policy.test.ts`, `tests/redaction.test.ts`, `tests/run-recorder.test.ts`, `tests/playwright-run-capture.test.ts`.
+- **write_scope:** `src/authoring/ledgersmb-initialize-pilot.ts`, `src/authoring/ledgersmb-partners-pilot.ts`, `src/authoring/ledgersmb-catalog-pilot.ts`, `src/authoring/ledgersmb-lifecycle-pilot.ts`, `src/authoring/redaction.ts`, `src/authoring/run-recorder.ts`, `src/authoring/playwright-run-capture.ts`, `src/runtime/ledgersmb-initialize-replay.ts`, `tests/policy.test.ts`, `tests/redaction.test.ts`, `tests/run-recorder.test.ts`, `tests/playwright-run-capture.test.ts`.
 - **edit:** At each pilot’s existing action seam evaluate the same allowlist/risk policy before browser execution and provide fixture-sensitive values to the common recorder/capture APIs.
+- **scope note (need `043af96c`):** `src/runtime/ledgersmb-initialize-replay.ts` is the second literal-bearing location: it passes the fixture password as an invocation input rather than reading it from the environment.
+- **need split (`043af96c`):** VS-08 owns the code change for the pilots and replay runner to read `LEDGERSMB_FIXTURE_PASSWORD` from the environment, matching Dolibarr; VS-11 owns documenting that variable in `README.md`.
 - **done_when:** Every pilot refuses an out-of-policy action before it reaches Playwright and cannot persist its declared fixture secret in event or trace evidence.
 - **validation:** `npm run build && node --test dist/tests/policy.test.js dist/tests/redaction.test.js dist/tests/run-recorder.test.js dist/tests/playwright-run-capture.test.js`.
 - **depends_on:** VS-03.
