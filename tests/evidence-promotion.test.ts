@@ -78,6 +78,35 @@ test("promotes multiple completed runs without changing the raw runs", async (co
     );
 });
 
+test("promotes a finalized run containing an intervention and control transfer", async (context) => {
+    const rootDirectory = await mkdtemp(
+        join(tmpdir(), "interface-ai-evidence-"),
+    );
+    context.after(async () =>
+        rm(rootDirectory, { recursive: true, force: true }),
+    );
+    const runsDirectory = join(rootDirectory, "runs");
+    const evidenceDirectory = join(rootDirectory, "evidence");
+    await createHandoffRun(runsDirectory, "handoff-run");
+
+    const promoted = await promoteTestRuns({
+        runsDirectory,
+        evidenceDirectory,
+        runIds: ["handoff-run"],
+    });
+
+    assert.deepEqual(
+        promoted.map(({ runId, status }) => ({ runId, status })),
+        [{ runId: "handoff-run", status: "satisfied" }],
+    );
+    const events = await readFile(
+        join(evidenceDirectory, "runs", "handoff-run", "events.jsonl"),
+        "utf8",
+    );
+    assert.match(events, /"type":"intervention-request"/);
+    assert.match(events, /"type":"control-transfer"/);
+});
+
 test("refuses to promote a running or already-promoted run", async (context) => {
     const rootDirectory = await mkdtemp(
         join(tmpdir(), "interface-ai-evidence-"),
@@ -313,6 +342,59 @@ test("preflights a batch before copying any requested run", async (context) => {
         /ENOENT/,
     );
 });
+
+async function createHandoffRun(
+    runsDirectory: string,
+    runId: string,
+): Promise<void> {
+    const recorder = await FileTestRunRecorder.start({
+        rootDirectory: runsDirectory,
+        runId,
+        goal: "Recover a customer lookup",
+        situation: "The lookup needs a human to continue",
+        targetProfile: "dolibarr",
+        targetVersion: "23.0.4",
+        fixtureId: "dolibarr/demo-install-smoke",
+        producer: SEALED_PRODUCER,
+    });
+    await writeFile(recorder.tracePath, `trace for ${runId}`, "utf8");
+    await recorder.append({
+        type: "intervention-request",
+        recordedAt: "2026-09-17T00:00:00.000Z",
+        request: {
+            id: `intervention:${runId}:0`,
+            capabilityId: "dolibarr.third-party-lookup",
+            goal: "Recover a customer lookup",
+            stageId: "lookup",
+            reason: "The target requires a human decision.",
+            requestedAt: "2026-09-17T00:00:00.000Z",
+            controlEpoch: 0,
+            session: {
+                runId,
+                runDirectory: recorder.directory,
+            },
+            evidence: [
+                {
+                    kind: "screenshot",
+                    path: "screenshots/intervention.png",
+                    redacted: true,
+                },
+            ],
+        },
+    });
+    await recorder.append({
+        type: "control-transfer",
+        recordedAt: "2026-09-17T00:00:01.000Z",
+        from: { controller: "automation", epoch: 0 },
+        to: { controller: "human", epoch: 1 },
+        requestId: `intervention:${runId}:0`,
+    });
+    await recorder.finalize({
+        status: "satisfied",
+        summary: "The human handoff completed the lookup.",
+        checkpoint: "lookup-complete",
+    });
+}
 
 async function createReceiptedRun(
     runsDirectory: string,

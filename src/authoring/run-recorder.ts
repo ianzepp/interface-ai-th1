@@ -2,7 +2,14 @@ import { createHash, randomUUID } from "node:crypto";
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import type { ActionRisk, SurfaceAction } from "../surfaces/surface-driver.js";
+import type {
+    ActionRisk,
+    EvidenceReference,
+    Observation,
+    SurfaceAction,
+} from "../surfaces/surface-driver.js";
+import type { ControlLeaseState } from "../intervention/control-lease.js";
+import type { InterventionRequest } from "../intervention/request.js";
 import type {
     DecisionReceipt,
     DiscoveryEvent,
@@ -658,44 +665,132 @@ function parseDiscoveryEventLine(line: string): DiscoveryEvent {
 }
 
 function isDiscoveryEvent(value: unknown): value is DiscoveryEvent {
-    if (value === null || typeof value !== "object" || Array.isArray(value)) {
-        return false;
-    }
-    const record = value as Record<string, unknown>;
-    if (typeof record.recordedAt !== "string") return false;
-    switch (record.type) {
+    if (!isRecord(value)) return false;
+    if (typeof value.recordedAt !== "string") return false;
+    switch (value.type) {
         case "observation":
-            return "observation" in record;
+            return isObservation(value.observation);
         case "proposal":
             return (
-                "action" in record &&
-                "risk" in record &&
-                typeof record.rationale === "string" &&
-                "policyDecision" in record &&
-                "receipt" in record
+                "action" in value &&
+                "risk" in value &&
+                typeof value.rationale === "string" &&
+                "policyDecision" in value &&
+                "receipt" in value
             );
         case "decision-rejected":
             return (
-                "action" in record &&
-                "risk" in record &&
-                typeof record.rationale === "string" &&
-                typeof record.reason === "string" &&
-                "receipt" in record
+                "action" in value &&
+                "risk" in value &&
+                typeof value.rationale === "string" &&
+                typeof value.reason === "string" &&
+                "receipt" in value
             );
         case "action":
             return (
-                "action" in record &&
-                "result" in record &&
-                typeof record.rationale === "string"
+                "action" in value &&
+                "result" in value &&
+                typeof value.rationale === "string"
+            );
+        case "intervention-request":
+            return isInterventionRequest(value.request);
+        case "control-transfer":
+            return (
+                isControlLeaseState(value.from) &&
+                isControlLeaseState(value.to) &&
+                (value.requestId === undefined ||
+                    typeof value.requestId === "string")
+            );
+        case "resume-validated":
+            return (
+                isObservation(value.observation) &&
+                isValidatedResumeDecision(value.decision)
+            );
+        case "resume-rejected":
+            return (
+                isObservation(value.observation) &&
+                typeof value.reason === "string"
             );
         case "checkpoint":
             return (
-                typeof record.name === "string" &&
-                typeof record.satisfied === "boolean"
+                typeof value.name === "string" &&
+                typeof value.satisfied === "boolean"
             );
         default:
             return false;
     }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function isObservation(value: unknown): value is Observation {
+    return (
+        isRecord(value) &&
+        typeof value.url === "string" &&
+        typeof value.title === "string"
+    );
+}
+
+function isEvidenceReference(value: unknown): value is EvidenceReference {
+    return (
+        isRecord(value) &&
+        (value.kind === "screenshot" ||
+            value.kind === "trace" ||
+            value.kind === "snapshot" ||
+            value.kind === "log") &&
+        typeof value.path === "string" &&
+        typeof value.redacted === "boolean"
+    );
+}
+
+function isInterventionRequest(value: unknown): value is InterventionRequest {
+    if (!isRecord(value)) return false;
+    if (
+        typeof value.id !== "string" ||
+        typeof value.capabilityId !== "string" ||
+        typeof value.goal !== "string" ||
+        typeof value.stageId !== "string" ||
+        typeof value.reason !== "string" ||
+        typeof value.requestedAt !== "string" ||
+        !isNonNegativeInteger(value.controlEpoch) ||
+        !isRecord(value.session) ||
+        !Array.isArray(value.evidence)
+    ) {
+        return false;
+    }
+    const session = value.session;
+    return (
+        typeof session.runId === "string" &&
+        typeof session.runDirectory === "string" &&
+        (session.socketPath === undefined ||
+            typeof session.socketPath === "string") &&
+        value.evidence.every(isEvidenceReference)
+    );
+}
+
+function isControlLeaseState(value: unknown): value is ControlLeaseState {
+    return (
+        isRecord(value) &&
+        (value.controller === "automation" || value.controller === "human") &&
+        isNonNegativeInteger(value.epoch)
+    );
+}
+
+function isValidatedResumeDecision(value: unknown): value is
+    | { type: "resume"; stageId: string }
+    | {
+          type: "complete";
+          checkpoint: string;
+      } {
+    if (!isRecord(value)) return false;
+    if (value.type === "resume") return typeof value.stageId === "string";
+    return value.type === "complete" && typeof value.checkpoint === "string";
+}
+
+function isNonNegativeInteger(value: unknown): value is number {
+    return typeof value === "number" && Number.isInteger(value) && value >= 0;
 }
 
 function createRunId(startedAt: string): string {

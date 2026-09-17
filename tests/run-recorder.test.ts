@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -8,6 +8,7 @@ import {
     FileTestRunRecorder,
     type ProducerRecord,
 } from "../src/authoring/run-recorder.js";
+import type { DiscoveryEvent } from "../src/authoring/event-recorder.js";
 
 const NAVIGATE_ACTION = {
     type: "navigate",
@@ -77,6 +78,127 @@ test("persists a completed test run and its brief README", async (context) => {
     assert.match(readme, /The requested balance was visible/);
     assert.match(readme, /`screenshots\/`/);
     assert.equal(events.trim().split("\n").length, 1);
+});
+
+test("round-trips handoff events through the file ledger", async (context) => {
+    const rootDirectory = await mkdtemp(join(tmpdir(), "interface-ai-run-"));
+    context.after(async () =>
+        rm(rootDirectory, { recursive: true, force: true }),
+    );
+    const recorder = await FileTestRunRecorder.start({
+        rootDirectory,
+        runId: "run-handoff-events",
+        goal: "Recover a customer lookup",
+        situation: "The lookup needs a human to continue",
+        targetProfile: "dolibarr",
+        targetVersion: "23.0.4",
+        fixtureId: "dolibarr/demo-install-smoke",
+    });
+    const events = [
+        {
+            type: "intervention-request",
+            recordedAt: "2026-09-17T00:00:00.000Z",
+            request: {
+                id: "intervention:run-handoff-events:0",
+                capabilityId: "dolibarr.third-party-lookup",
+                goal: "Recover a customer lookup",
+                stageId: "lookup",
+                reason: "The target requires a human decision.",
+                requestedAt: "2026-09-17T00:00:00.000Z",
+                controlEpoch: 0,
+                session: {
+                    runId: "run-handoff-events",
+                    runDirectory: recorder.directory,
+                    socketPath: "tmp/session/handoff.sock",
+                },
+                evidence: [
+                    {
+                        kind: "screenshot",
+                        path: "screenshots/intervention.png",
+                        redacted: true,
+                    },
+                ],
+            },
+        },
+        {
+            type: "control-transfer",
+            recordedAt: "2026-09-17T00:00:01.000Z",
+            from: { controller: "automation", epoch: 0 },
+            to: { controller: "human", epoch: 1 },
+            requestId: "intervention:run-handoff-events:0",
+        },
+        {
+            type: "resume-validated",
+            recordedAt: "2026-09-17T00:00:02.000Z",
+            observation: {
+                url: "http://127.0.0.1:8080/societe/list.php",
+                title: "Third parties",
+            },
+            decision: { type: "resume", stageId: "lookup-results" },
+        },
+        {
+            type: "resume-rejected",
+            recordedAt: "2026-09-17T00:00:03.000Z",
+            observation: {
+                url: "http://127.0.0.1:8080/societe/list.php",
+                title: "Third parties",
+            },
+            reason: "The fresh observation did not match an admitted checkpoint.",
+        },
+    ] satisfies readonly DiscoveryEvent[];
+
+    for (const event of events) await recorder.append(event);
+
+    assert.deepEqual(await recorder.readAll(), events);
+});
+
+test("rejects malformed handoff events when reading the file ledger", async (context) => {
+    const rootDirectory = await mkdtemp(join(tmpdir(), "interface-ai-run-"));
+    context.after(async () =>
+        rm(rootDirectory, { recursive: true, force: true }),
+    );
+    const malformedEvents = [
+        {
+            type: "intervention-request",
+            recordedAt: "2026-09-17T00:00:00.000Z",
+            request: {},
+        },
+        {
+            type: "control-transfer",
+            recordedAt: "2026-09-17T00:00:00.000Z",
+            from: { controller: "automation" },
+            to: { controller: "human", epoch: 1 },
+        },
+        {
+            type: "resume-validated",
+            recordedAt: "2026-09-17T00:00:00.000Z",
+            observation: { url: "http://127.0.0.1:8080/", title: "Home" },
+            decision: { type: "reject", reason: "not admitted" },
+        },
+        {
+            type: "resume-rejected",
+            recordedAt: "2026-09-17T00:00:00.000Z",
+            observation: { url: "http://127.0.0.1:8080/" },
+            reason: "not admitted",
+        },
+    ];
+
+    for (const [index, event] of malformedEvents.entries()) {
+        const recorder = await FileTestRunRecorder.start({
+            rootDirectory,
+            runId: `run-malformed-handoff-${String(index)}`,
+            goal: "Read a handoff ledger",
+            situation: "Malformed event fixture",
+            targetProfile: "dolibarr",
+            targetVersion: "23.0.4",
+            fixtureId: "dolibarr/demo-install-smoke",
+        });
+        await writeFile(recorder.eventsPath, `${JSON.stringify(event)}\n`);
+        await assert.rejects(
+            recorder.readAll(),
+            /Event ledger line must be a recognized discovery event/,
+        );
+    }
 });
 
 test("rejects events after a run is finalized", async (context) => {
