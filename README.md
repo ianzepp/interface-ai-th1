@@ -18,37 +18,41 @@ The required vertical slice is:
 
 ## Current State
 
-The repository contains the complete skill-driven authoring loop and reviewed
-deterministic vertical slices for LedgerSMB initialization and Dolibarr
-third-party lookup.
+The repository contains the complete skill-driven authoring loop and three
+reviewed deterministic vertical slices: `ledgersmb.initialize-company`,
+`dolibarr.lookup-third-party`, and `dolibarr.create-customer-with-contact`.
 
-[`assignment-proof.md`](assignment-proof.md) tracks each original requirement
-against live implementation, tests, evidence, and remaining gaps. It is the
-status authority; [`REPORT.md`](REPORT.md) is the shorter required submission
-write-up.
+[`assignment-proof.md`](assignment-proof.md) is the requirement-to-proof matrix
+for the original assignment; its implementation and status claims must be
+checked against live code, tests, and evidence. [`REPORT.md`](REPORT.md) is the
+shorter required submission write-up.
 
 Every reset-to-terminal discovery attempt is saved as one test run. A live run
 has a brief README, structured manifest, sanitized event ledger, and Playwright
-trace; binary traces may be removed during evidence review. Runs terminate as
-either `satisfied` or `error`; failed and exploratory runs are first-class
-evidence rather than discarded attempts.
+trace. Current promotion requires `trace.zip`; the trace-less tracked corpus is
+historical rewrite output, not the result of the current review procedure. Runs
+terminate as either `satisfied` or `error`; failed and exploratory runs are
+first-class evidence rather than discarded attempts.
 
 Raw runs live under `runs/<run-id>/` and are ignored by Git. The tracked
 [`runs/README.md`](runs/README.md) describes the layout.
 
-After review, any number of finalized successful or failed runs can be promoted
-into tracked `evidence/runs/<run-id>/` copies with
-`scripts/promote-run <run-id> [<run-id> ...]`.
+After review, one or more finalized successful or failed runs with every
+required file, valid producer attestation, and a valid decision-receipt chain
+can be promoted into tracked `evidence/runs/<run-id>/` copies with
+`scripts/promote-run <run-id> [<run-id> ...]`. Promotion refuses a
+`sensitive-evidence-detected` outcome and never overwrites existing evidence.
 
 The toolchain is in place and enforced by CI: strict TypeScript, type-aware
 ESLint, Prettier, and EditorConfig, all run by `npm run verify`.
 
 LedgerSMB and Dolibarr are both first-class local browser targets. Their
 versions, Docker images, local origins, and complete persistent state boundaries
-are pinned. The committed evidence currently retains 11 Dolibarr runs. The six
+are pinned. The eleven promoted Dolibarr runs remain under `evidence/runs/`;
+their trace archives were later removed in the 2026-09-16 rewrite because they
+carried a credential-bearing request URL and local session cookies. The six
 LedgerSMB capture runs from the earlier corpus were permanently removed from the
-repository and its history during the 2026-09-16 rewrite because their binary
-traces contained credential-bearing material.
+repository and its history during that rewrite.
 
 Both targets use one snapshot lifecycle:
 
@@ -76,7 +80,9 @@ For Dolibarr, an external LLM drove a long-lived Playwright session one action
 at a time. Two happy runs, three exception runs, and a useful failed replay were
 reviewed into `dolibarr.lookup-third-party`. Deterministic replays now return a
 typed six-field profile, `third-party-not-found`, `third-party-ambiguous`, or an
-`authentication-required` intervention without model decisions.
+`authentication-required` intervention without model decisions. A separate
+reviewed slice, `dolibarr.create-customer-with-contact`, deterministically
+creates a customer and its contact.
 
 The original assignment PDF is available locally as `assignment.pdf` and is
 intentionally ignored by Git.
@@ -96,9 +102,10 @@ scripts/target reset dolibarr demo-baseline
 ```
 
 Use `ledgersmb` in place of `dolibarr` for the other target. The script also
-provides `up`, `stop`, `status`, `config`, `url`, `port`, `list`, and `destroy`
-commands, and every command accepts `--lane <name>` and `--port <n>` to operate
-on an isolated instance instead of the default one. See
+provides `up`, `stop`, `status`, `config`, `url`, `port`, `reserve-port`, `list`,
+and `destroy` commands. `reserve-port` is used by `scripts/author-lane`. Every
+command accepts `--lane <name>` and `--port <n>` to operate on an isolated
+instance instead of the default one. See
 [`scripts/author-lane`](#scriptsauthor-lane--one-authoring-session-against-one-private-instance)
 for when that matters.
 
@@ -116,16 +123,19 @@ scripts/author-lane \
   --goal "Look up a Dolibarr third party by exact name and return its account profile."
 ```
 
-| Option                                                                                  | Meaning                                                            |
-| --------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
-| `--lane <name>`                                                                         | Lane name. Lowercase letters, digits, and hyphens. Required.       |
-| `--target <name>`                                                                       | `ledgersmb` or `dolibarr`. Required.                               |
-| `--fixture <snapshot>`                                                                  | Snapshot to start from, without the target prefix. Required.       |
-| `--goal <text>`                                                                         | The capability goal. Required.                                     |
-| `--port <n>`                                                                            | Host port. Defaults to one derived from the lane name.             |
-| `--keep`                                                                                | Leave the instance running, and print how to inspect or remove it. |
-| `--no-author`                                                                           | Provision and tear down without an authoring session.              |
-| `--model`, `--max-runs`, `--max-actions`, `--timeout`, `--codex-sandbox`, `--preflight` | Forwarded to `scripts/author`.                                     |
+| Option                                                                                                        | Meaning                                                            |
+| ------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| `--lane <name>`                                                                                               | Lane name. Lowercase letters, digits, and hyphens. Required.       |
+| `--target <name>`                                                                                             | `ledgersmb` or `dolibarr`. Required.                               |
+| `--fixture <snapshot>`                                                                                        | Snapshot to start from, without the target prefix. Required.       |
+| `--goal <text>`                                                                                               | The capability goal. Required.                                     |
+| `--port <n>`                                                                                                  | Host port. Defaults to one derived from the lane name.             |
+| `--workspace <path>`                                                                                          | Isolated worktree path. Defaults to `worktrees/<lane>`.            |
+| `--no-isolation`                                                                                              | Use the shared working tree instead of an isolated worktree.       |
+| `--keep`                                                                                                      | Leave the instance running, and print how to inspect or remove it. |
+| `--no-author`                                                                                                 | Provision and tear down without an authoring session.              |
+| `--audit`                                                                                                     | Audit the produced artifact before teardown.                       |
+| `--model`, `--reasoning-effort`, `--max-runs`, `--max-actions`, `--timeout`, `--codex-sandbox`, `--preflight` | Forwarded to `scripts/author`.                                     |
 
 Teardown runs even when the session fails or is interrupted, so a failed lane
 cannot keep a database and a port claimed. Use `--keep` when you want to inspect
@@ -182,19 +192,21 @@ operation, and no socket of its own, which is what makes concurrency possible:
 because a session is one self-contained execution rather than a sequence the
 launcher steps through, several can run at once, each on its own lane.
 
-| Option                   | Meaning                                                                                                    |
-| ------------------------ | ---------------------------------------------------------------------------------------------------------- |
-| `--goal <text>`          | The capability goal. Required.                                                                             |
-| `--target <name>`        | `ledgersmb` or `dolibarr`. Required.                                                                       |
-| `--fixture <snapshot>`   | Starting fixture snapshot name. Required.                                                                  |
-| `--lane <name>`          | Lane name; defaults to a timestamped value.                                                                |
-| `--max-runs <n>`         | Recorded runs allowed in total. Defaults to 8, which leaves room for the happy path plus a failure matrix. |
-| `--max-actions <n>`      | Browser actions allowed per run. Defaults to 60.                                                           |
-| `--timeout <ms>`         | Whole-session budget. Defaults to one hour.                                                                |
-| `--model <model>`        | Model passed to `codex exec`.                                                                              |
-| `--codex-sandbox <mode>` | `read-only`, `workspace-write`, or `danger-full-access`.                                                   |
-| `--preflight`            | Verify the transport only, without authoring anything.                                                     |
-| `--print-prompt`         | Print the prompt and exit.                                                                                 |
+| Option                       | Meaning                                                                                 |
+| ---------------------------- | --------------------------------------------------------------------------------------- |
+| `--goal <text>`              | The capability goal. Required.                                                          |
+| `--target <name>`            | `ledgersmb` or `dolibarr`. Required.                                                    |
+| `--fixture <snapshot>`       | Starting fixture snapshot name. Required.                                               |
+| `--lane <name>`              | Lane name; defaults to a timestamped value.                                             |
+| `--origin <url>`             | Allowed origin; defaults to the target profile's origin.                                |
+| `--max-runs <n>`             | Recorded runs allowed in total. Defaults to 12, including two reserved validation runs. |
+| `--max-actions <n>`          | Browser actions allowed per run. Defaults to 60.                                        |
+| `--timeout <ms>`             | Whole-session budget. Defaults to one hour.                                             |
+| `--model <model>`            | Model passed to `codex exec`.                                                           |
+| `--reasoning-effort <level>` | Reasoning effort passed to `codex exec`.                                                |
+| `--codex-sandbox <mode>`     | `read-only`, `workspace-write`, or `danger-full-access`.                                |
+| `--preflight`                | Verify the transport only, without authoring anything.                                  |
+| `--print-prompt`             | Print the prompt and exit.                                                              |
 
 Each session writes its prompt, its final message, and its report under
 `tmp/discovery/<lane>/`, so what the model was asked is part of the record.
@@ -222,6 +234,10 @@ scripts/session observe [--screenshot]
 scripts/session act --type navigate --url <url> --rationale "<why>"
 scripts/session act --type activate --role button --name Create --rationale "<why>"
 scripts/session act --type fill --css '#username' --value <value> --rationale "<why>"
+scripts/session take-control
+scripts/session human-observe [--screenshot]
+scripts/session human-act --type activate --role button --name Save --rationale "<why>"
+scripts/session resume
 scripts/session checkpoint --name <name> [--satisfied true|false]
 scripts/session finish --status satisfied --summary "<what happened>" --checkpoint <name>
 scripts/session finish --status error --summary "<what happened>" --code <code>
@@ -249,9 +265,11 @@ using a curated pattern set rather than entropy, and reports whether each file
 would travel with a clone.
 
 ```sh
-scripts/audit-secrets           # gate on files a clone would carry
-scripts/audit-secrets --all     # also gate on ignored files, with full detail
-scripts/audit-secrets --json    # machine-readable output
+scripts/audit-secrets                 # gate on files a clone would carry
+scripts/audit-secrets --staged        # scan the staged index used by a commit
+scripts/audit-secrets --all           # also gate on ignored files, with full detail
+scripts/audit-secrets --json          # machine-readable output
+scripts/audit-secrets --root <path>   # scan a repository root other than cwd
 ```
 
 Exit status is 1 when a blocking finding sits on a committable file. A blocking
@@ -333,10 +351,31 @@ build on warnings trains everyone to ignore them. Recorded blocking findings liv
 a ledger in that file whose counts must match in both directions, so fixing one
 forces its entry out and a stale entry cannot survive.
 
+### `npm run draft:artifact` — extract a provisional artifact
+
+Builds and extracts an inspectable linear draft from one finalized successful
+run. The draft remains provisional and needs corpus-level review.
+
+```sh
+npm run draft:artifact -- --run runs/<run-id> --id <capability-id> --out <path>
+```
+
+### `scripts/export-artifact` — export reviewed artifacts
+
+Builds and writes every reviewed source artifact as deterministic JSON under
+`evidence/capabilities/`. The npm alias is `npm run export:artifact`.
+
+```sh
+npm run export:artifact
+```
+
 ### `scripts/promote-run`
 
 Copies one or more reviewed, completed local runs into the tracked evidence
-directory without modifying the originals or overwriting existing evidence.
+directory without modifying the originals or overwriting existing evidence. A
+run must contain `README.md`, `run.json`, `events.jsonl`, and `trace.zip`, and
+must pass producer-attestation and decision-receipt validation. A
+`sensitive-evidence-detected` outcome is refused.
 
 ```sh
 scripts/promote-run <run-id> [<run-id> ...]
@@ -348,7 +387,8 @@ Build the pilot, replace the current LedgerSMB volumes with a fresh install,
 and record the complete company-and-user initialization as one run:
 
 ```sh
-npm run capture:ledgersmb:initialize
+LEDGERSMB_FIXTURE_PASSWORD=<fixture-password> \
+  npm run capture:ledgersmb:initialize
 ```
 
 The command writes a finalized run under `runs/`, including its event ledger,
@@ -366,7 +406,8 @@ Build the deterministic artifact and engine, replace the current LedgerSMB
 volumes with a fresh install, then replay the reviewed initialization graph:
 
 ```sh
-npm run replay:ledgersmb:initialize
+LEDGERSMB_FIXTURE_PASSWORD=<fixture-password> \
+  npm run replay:ledgersmb:initialize
 ```
 
 The command records the replay under `runs/` and leaves the verified initialized
@@ -379,9 +420,12 @@ run and persisted-state assertions, snapshot it under an intentional name with
 Each command resets its named starting fixture and records one independent run:
 
 ```sh
-npm run capture:ledgersmb:partners
-npm run capture:ledgersmb:catalog
-npm run capture:ledgersmb:lifecycle
+LEDGERSMB_FIXTURE_PASSWORD=<fixture-password> \
+  npm run capture:ledgersmb:partners
+LEDGERSMB_FIXTURE_PASSWORD=<fixture-password> \
+  npm run capture:ledgersmb:catalog
+LEDGERSMB_FIXTURE_PASSWORD=<fixture-password> \
+  npm run capture:ledgersmb:lifecycle
 ```
 
 They create the customer and vendor, create the warehouse and inventory item,
@@ -391,7 +435,8 @@ To prove the complete dependency chain without intermediate snapshot restores,
 start from fresh volumes and record all four phases in sequence:
 
 ```sh
-npm run capture:ledgersmb:end-to-end
+LEDGERSMB_FIXTURE_PASSWORD=<fixture-password> \
+  npm run capture:ledgersmb:end-to-end
 ```
 
 The command stops at the first failed phase and leaves one run directory per
@@ -416,6 +461,13 @@ Replay the reviewed artifact from the same reset snapshot:
 ```sh
 DOLIBARR_FIXTURE_PASSWORD=<fixture-password> \
   npm run replay:dolibarr:third-party
+```
+
+Replay the reviewed customer-and-contact creation slice:
+
+```sh
+DOLIBARR_FIXTURE_PASSWORD=<fixture-password> \
+  npm run replay:dolibarr:create-party
 ```
 
 Use `DOLIBARR_LOOKUP_NAME`, `DOLIBARR_EXPECT_RESULT`, and
@@ -451,13 +503,14 @@ type-aware linting would be impossible. Compile speed is not a constraint here:
 this system spends its time driving browser surfaces, not building. One compiler
 serves both the build and the linter, so the two can never disagree.
 
-When TypeScript 7.1 ships an API that `typescript-eslint` supports, this pin moves
-to 7 in a single dependency bump.
+When a TypeScript 7 release exposes a programmatic API supported by
+`typescript-eslint`, reconsider this pin; any move remains a dependency decision.
 
 ## Next Actions
 
-- Capture the `create-trading-partners` phase twice from `initialized-company`.
-- Annotate its stable targets and post-action detectors from the repeated traces.
-- Add a deliberate replay breakage and preserve the typed failure run.
-- Generalize artifact construction only after the second capability exposes the
-  first genuinely repeated pattern.
+- Capture, review, and promote the same-session human handoff and validated-resume
+  acceptance run.
+- Author and replay the reviewed LedgerSMB inventory-lifecycle recovery branch,
+  then promote the verified run.
+- Keep `assignment-proof.md` and `REPORT.md` in step with the code and evidence
+  as the remaining items land.

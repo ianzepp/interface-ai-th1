@@ -11,7 +11,8 @@ the workflow from scratch.
 ## Read first
 
 - [`assignment.md`](assignment.md) is the assignment contract and evaluation
-  target. Use it for required behavior and deliverables.
+  target. Use it for required behavior and deliverables. The file is Git-ignored:
+  it exists on this disk but not in a clone.
 - [`NOTES.md`](NOTES.md) records settled product, architecture, target, fixture,
   and evidence decisions. Treat implementation claims as claims to verify
   against current code, tests, Git history, and receipts.
@@ -24,10 +25,11 @@ the workflow from scratch.
 - [`skills/capability-author/SKILL.md`](skills/capability-author/SKILL.md) is the
   detailed procedure for fixture setup, browser capture, evidence, artifact
   authoring, and replay validation.
-- Shared skills live in
-  `/Users/ianzepp/work/ianzepp/skills`. Read its relevant `AGENTS.md` and the
-  applicable skill before using a named workflow such as factory, auditor,
-  polish, or tugboat. Do not copy shared skills into this repository.
+- Shared skills live on this machine in
+  `/Users/ianzepp/work/ianzepp/skills`; that path is not part of a clone. Read
+  its relevant `AGENTS.md` and the applicable skill before using a named
+  workflow such as factory, auditor, polish, or tugboat. Do not copy shared
+  skills into this repository.
 
 Assignment and notes are authority for requirements and settled decisions, not
 proof that a feature is implemented. Current code, tests, traces, manifests,
@@ -63,17 +65,27 @@ It normally contains several successful runs, deliberate exception runs,
 recovery runs where justified, draft revisions, and deterministic replay runs.
 The loop ends only when the skill's artifact approval conditions hold.
 
-The repository now has two reviewed vertical slices:
+The repository now has three reviewed vertical slices:
 
-- LedgerSMB company initialization, plus staged capture evidence for the later
-  inventory workflow.
-- Dolibarr exact-name third-party lookup, authored from two happy runs, three
+- LedgerSMB company initialization
+  (`src/capabilities/ledgersmb-initialize.ts`;
+  `npm run replay:ledgersmb:initialize`). Local snapshots and capture pilots
+  exist for later inventory phases. Committed `evidence/runs/` holds no
+  LedgerSMB runs after the 2026-09-16 rewrite.
+- Dolibarr exact-name third-party lookup
+  (`src/capabilities/dolibarr-third-party-lookup.ts`;
+  `npm run replay:dolibarr:third-party`), authored from two happy runs, three
   exception runs, and one useful failed replay, then validated by two happy
   replays and deterministic no-match, ambiguity, and authentication-required
   replays.
+- Dolibarr create-customer-with-contact
+  (`src/capabilities/dolibarr-create-customer-with-contact.ts`;
+  `npm run replay:dolibarr:create-party`).
 
-The Dolibarr artifact is `src/capabilities/dolibarr-third-party-lookup.ts` and
-its replay runner is `src/runtime/dolibarr-third-party-replay.ts`.
+The eleven promoted Dolibarr runs remain under `evidence/runs/`; their trace
+archives were later removed from the repository and its Git history in the
+2026-09-16 rewrite because they carried a credential-bearing request URL and
+local session cookies.
 
 ## Repository map
 
@@ -85,13 +97,15 @@ its replay runner is `src/runtime/dolibarr-third-party-replay.ts`.
 - `src/surfaces/` — browser surface-driver abstraction and Playwright driver.
 - `src/targets/` — target registry, profiles, and detectors.
 - `src/intervention/` — human-control and resume seams.
+- `src/audit/` — credential scan and artifact-audit CLI.
 - `schemas/` — JSON Schemas for capabilities, invocations, and results.
 - `tests/` — Node test-runner tests for runtime, policy, targeting, recording,
-  redaction, schemas, and target harness behavior.
+  redaction, credential scanning, schemas, and target harness behavior.
 - `targets/` — pinned Docker Compose definitions for LedgerSMB and Dolibarr.
 - `scripts/target` — the target lifecycle wrapper and snapshot manager.
 - `runs/` — local raw capture/replay runs; Git-ignored.
-- `evidence/` — deliberately reviewed, tracked run copies.
+- `evidence/` — deliberately reviewed, tracked run copies, plus exported
+  artifacts under `evidence/capabilities/`.
 - `snapshots/` — local named target snapshots; Git-ignored.
 
 ## First-time host setup
@@ -161,8 +175,13 @@ scripts/target list
 scripts/target list <target>
 scripts/target config <target>
 scripts/target url <target>
+scripts/target port <target>
 scripts/target status <target>
 ```
+
+Every command accepts `--lane <name>` and `--port <n>` for an isolated
+instance. `scripts/target reserve-port --lane <name> <target>` holds that
+lane's host port so later commands can pass `--port` without it moving.
 
 Start, stop, and preserve the current target state:
 
@@ -254,11 +273,12 @@ catalog-ready
 clean-baseline-v1
 ```
 
-The named starting snapshots are consumed by the package scripts:
+The package scripts start from these states; `initialize-company` uses
+`scripts/target fresh ledgersmb` rather than a snapshot named `ledgersmb/fresh`:
 
 | Phase                          | Starting state                  | Ending state          |
 | ------------------------------ | ------------------------------- | --------------------- |
-| `initialize-company`           | `ledgersmb/fresh`               | `initialized-company` |
+| `initialize-company`           | `fresh` (not a snapshot)        | `initialized-company` |
 | `create-trading-partners`      | `ledgersmb/initialized-company` | `partners-ready`      |
 | `create-inventory-catalog`     | `ledgersmb/partners-ready`      | `catalog-ready`       |
 | `exercise-inventory-lifecycle` | `ledgersmb/catalog-ready`       | `clean-baseline-v1`   |
@@ -282,13 +302,18 @@ do not discard failures that reveal an unknown state or application condition.
 
 ### Built-in LedgerSMB pilots
 
-After the required snapshots exist, use the package scripts:
+After the required snapshots exist, use the package scripts. Each one needs the
+fixture credential in the environment, because the pilot throws without it:
 
 ```sh
-npm run capture:ledgersmb:initialize
-npm run capture:ledgersmb:partners
-npm run capture:ledgersmb:catalog
-npm run capture:ledgersmb:lifecycle
+LEDGERSMB_FIXTURE_PASSWORD=<fixture-password> \
+  npm run capture:ledgersmb:initialize
+LEDGERSMB_FIXTURE_PASSWORD=<fixture-password> \
+  npm run capture:ledgersmb:partners
+LEDGERSMB_FIXTURE_PASSWORD=<fixture-password> \
+  npm run capture:ledgersmb:catalog
+LEDGERSMB_FIXTURE_PASSWORD=<fixture-password> \
+  npm run capture:ledgersmb:lifecycle
 ```
 
 The scripts build TypeScript, reset the correct target fixture, launch the
@@ -299,7 +324,8 @@ their named starting snapshot.
 For a single fresh end-to-end attempt through all four phases:
 
 ```sh
-npm run capture:ledgersmb:end-to-end
+LEDGERSMB_FIXTURE_PASSWORD=<fixture-password> \
+  npm run capture:ledgersmb:end-to-end
 ```
 
 This builds, runs `fresh ledgersmb`, and invokes the four pilots sequentially on
@@ -349,8 +375,9 @@ automatically.
 
 ### LLM-driven interactive capture
 
-For a genuine external-LLM discovery run, reset the fixture and start the
-long-lived JSONL session:
+For a genuine external-LLM discovery run, the current path is `scripts/author`
+(or `scripts/author-lane`) driving `scripts/session`. The older stdin JSONL
+launcher for the Dolibarr lookup still exists:
 
 ```sh
 scripts/target reset dolibarr demo-install-smoke
@@ -359,11 +386,16 @@ DOLIBARR_FIXTURE_PASSWORD=<fixture-password> \
 ```
 
 The process authenticates before trace capture, prints a `ready` record, and
-then accepts one JSON command per line on stdin. Supported commands are
-`observe`, `act`, `checkpoint`, and `finish`. The LLM must observe the returned
-state before choosing the next `act`. Every proposal and policy verdict is
-recorded before execution; every successful action records its result. A
-controller disconnect finalizes the run as an error.
+then accepts one JSON command per line on stdin. `scripts/session` commands are
+`observe`, `act`, `checkpoint`, `finish`, `status`, `stop`, plus
+`take-control`, `human-observe`, `human-act`, and `resume`. `act` and the
+human-control commands require the current control lease epoch;
+`scripts/session` supplies it. The stdin launcher accepts the same session
+commands except `status` and `stop`, and the controller must send
+`controlEpoch` on `act`. The LLM must observe the returned state before
+choosing the next `act`. Every proposal and policy verdict is recorded before
+execution; every successful action records its result. A controller disconnect
+finalizes the run as an error.
 
 Use `DOLIBARR_SKIP_AUTH=1` to capture the authentication-required condition
 without entering a credential. Never put login actions inside a durable trace.
@@ -396,7 +428,8 @@ before promotion. Check for credentials, tokens, cookies, authorization data,
 unexpected customer data, and misleading success claims. Both `satisfied` and
 `error` runs are valid evidence.
 
-Promote only finalized runs with all required files:
+Promote only finalized runs with all required files (`README.md`, `run.json`,
+`events.jsonl`, and `trace.zip`):
 
 ```sh
 scripts/promote-run <run-id> [<run-id> ...]
@@ -404,8 +437,14 @@ scripts/promote-run <run-id> [<run-id> ...]
 
 Promotion copies the run unchanged to `evidence/runs/<run-id>/`, leaves the raw
 run untouched, refuses to overwrite existing evidence, and does not invent or
-repair missing evidence. Evidence is a deliberate submission record, not a
-dump of every local run.
+repair missing evidence. It also validates the launcher-sealed producer record
+and decision-receipt chain, and refuses a run whose terminal outcome is
+`sensitive-evidence-detected`. The eleven promoted Dolibarr runs remain under
+`evidence/runs/`; their trace archives were later removed from the repository
+and its Git history in the 2026-09-16 rewrite because they carried a
+credential-bearing request URL and local session cookies. Re-promoting those
+eleven runs today would fail the `trace.zip` gate. Evidence is a deliberate
+submission record, not a dump of every local run.
 
 ## Convert a run corpus into a replay
 
@@ -442,7 +481,7 @@ The existing phase-zero example is the model for this process:
 
 - artifact: `src/capabilities/ledgersmb-initialize.ts`;
 - replay runner: `src/runtime/ledgersmb-initialize-replay.ts`;
-- command: `npm run replay:ledgersmb:initialize`.
+- command: `LEDGERSMB_FIXTURE_PASSWORD=<fixture-password> npm run replay:ledgersmb:initialize`.
 
 That replay command builds, runs `fresh ledgersmb`, executes the reviewed
 initialization artifact without an LLM, records another run under `runs/`, and
@@ -479,7 +518,8 @@ npm run draft:artifact -- \
   --out tmp/drafts/<capability-id>.json
 ```
 
-To compare the generated artifact with a compiled hand-reviewed artifact:
+To compare the generated artifact with a compiled hand-reviewed artifact (the
+run directory is local-only under gitignored `runs/`, not in `evidence/`):
 
 ```sh
 npm run draft:artifact -- \

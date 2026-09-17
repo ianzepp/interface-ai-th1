@@ -74,7 +74,7 @@ fallback.
 - Fall back to Dolibarr if LedgerSMB cannot provide a repeatable local setup or a
   sufficiently useful workflow without disproportionate setup work.
 
-### Still open
+### Open at this decision
 
 - LedgerSMB version and local deployment method.
 - Representative workflow and seeded fixture data.
@@ -122,7 +122,7 @@ Keep the capability-author skill monolithic while the architecture is changing
 quickly. Its supporting references have been folded into the main `SKILL.md` so
 the instructions can be revised as one unit.
 
-The current authoring phase captures evidence only:
+This initial authoring phase captures evidence only:
 
 - Every attempt starts from a reset fixture.
 - One reset-to-terminal attempt is one test run.
@@ -132,7 +132,7 @@ The current authoring phase captures evidence only:
 - A retry after another reset creates a separate run.
 - Raw local run directories are ignored by Git.
 
-### Deferred
+### Then deferred
 
 Do not synthesize a stage graph, compile a deterministic artifact, or replay one
 as part of this loop. Those steps follow after the capture corpus exposes the
@@ -179,7 +179,7 @@ coverage. Stable named starting points let us run a small, deliberate matrix of
 happy and red scenarios without coupling the capture loop to one application's
 storage layout.
 
-### Still open
+### Open at this decision
 
 - The first reviewed baseline snapshot for each target.
 - Exact synthetic entities and transactions in those baselines.
@@ -421,8 +421,8 @@ distribution rather than only a mean.
 The second target now demonstrates the intended architecture end to end. The
 external LLM host controlled one long-lived Playwright browser session through
 JSONL commands, choosing each action after observing the prior result. Login
-bootstrap happened before tracing, so no fixture credential appears in the
-promoted traces.
+bootstrap happened before tracing. The promoted runs predate producer and
+decision-receipt attestation.
 
 The discovery corpus contains:
 
@@ -454,9 +454,10 @@ Validation corpus:
 - `20260915202742493-769ba7f6` — `third-party-ambiguous`;
 - `20260915202758596-ed9759b5` — `authentication-required` intervention.
 
-All eleven selected discovery and replay runs were promoted unchanged under
-`evidence/runs/` after a bounded scan found no fixture password literal in any
-trace archive.
+All eleven selected discovery and replay runs remain under `evidence/runs/`.
+Their trace archives were later removed from the repository and its Git history
+in the 2026-09-16 rewrite because they carried a credential-bearing request URL
+and local session cookies.
 
 ## 2026-09-15 — Scripted discovery host: Codex
 

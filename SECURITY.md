@@ -126,10 +126,10 @@ removed from the working tree is invisible to a working-tree scan and caught by
 this one. Installation is per clone, since Git does not share hooks through
 history, and `git commit --no-verify` remains the deliberate escape hatch.
 
-Two limits are deliberate and stated in its output: binary files are counted and
-never read, so a clean result says nothing about trace archives, snapshots, or
-screenshot pixels; and Git history is a separate pass. The lanes below remain the
-way to cover those.
+Two limits are deliberate and stated in its output: binary and oversized files
+are counted and never read, so a clean result says nothing about trace archives,
+snapshots, or screenshot pixels; and Git history is a separate pass. The lanes
+below remain the way to cover those.
 
 ### Mechanical checks to reproduce
 
@@ -140,11 +140,12 @@ ground; the script is the one that runs every time.
 Shipped surface:
 
 ```sh
-# Fixture literals: expect only compose files plus one documentation mention.
+# Fixture literals: expect only compose files, the scanner rule source, and
+# its curated documentation exceptions.
 git grep -c 'interface-ai-local' -- .
 git grep -n '/Users/' -- .
 git grep -nEi '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}' -- .
-git grep -nEi 'AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{20,}|github_pat_|xox[baprs]-|sk-ant-|sk-[A-Za-z0-9]{20,}|xai-[A-Za-z0-9]{20,}' -- .
+git grep -nEi 'AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{20,}|github_pat_|xox[baprs]-|sk-ant-|sk-[A-Za-z0-9]{20,}|xai-[A-Za-z0-9]{20,}' -- . ':!SECURITY.md' ':!src/audit/secret-scan.ts'
 git grep -n 'BEGIN [A-Z ]*PRIVATE KEY' -- .
 ```
 
@@ -215,9 +216,9 @@ The audit is not finished when the lanes return. The orchestrating session must:
 | Low      | Unreachable blob holds the fixture literal                     | `.git/objects/48/2d564e…`, blob `482d564e`, 30 bytes                                                   | Open                   |
 | Info     | Unreachable blob of stale `run-recorder.ts` source             | blob `85e8b4ed`, 16.9 KB                                                                               | Open                   |
 | Info     | Fixture passwords tracked by design                            | `targets/dolibarr/compose.yaml`, `targets/ledgersmb/compose.yaml`, named in `assignment-proof.md`      | Accepted by design     |
-| Info     | Personal email on all 85 commits                               | commit metadata, author and committer                                                                  | Accepted (normal)      |
+| Info     | Personal email on every commit (85 at the recorded revision)   | commit metadata, author and committer                                                                  | Accepted (normal)      |
 | Info     | Author line in the submission narrative                        | `REPORT.md:8`                                                                                          | Accepted (intentional) |
-| Info     | Internal task identifier in a commit body                      | commit `185ceb2`, "task 2a21291f"                                                                      | Open (cosmetic)        |
+| Info     | Internal task identifier in a commit body                      | commit `04a4467`, "task 2a21291f"                                                                      | Open (cosmetic)        |
 
 Note on the recovered fixture literal: `ab146a1` replaced the hardcoded password
 in the capture and replay pilots with an environment variable. The value remains
@@ -226,18 +227,18 @@ history again would reduce no real exposure.
 
 ### Local only: Git-ignored, exposed only if the directory is copied
 
-| Severity | Finding                                                                                              | Location                                                                                                         |
-| -------- | ---------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| High     | Fixture password typed into password fields, `admin` login, CSRF tokens, Basic authorization headers | 26 LedgerSMB `runs/*/trace.zip` (`trace.trace`, `trace.network`)                                                 |
-| High     | Session cookies in network records                                                                   | 50 Dolibarr traces; 26 LedgerSMB traces                                                                          |
-| High     | Generated cleartext database password, not the fixture value                                         | `snapshots/dolibarr/demo-install-smoke/mariadb-data.tar.gz :: ./.my-healthcheck.cnf`                             |
-| High     | Password hashes and demo user records inside a restorable database volume                            | same archive (`mysql/global_priv.MAD`, `dolidb/llx_user.ibd`); `documents.tar.gz :: ./backup-before-upgrade.sql` |
-| Medium   | Four raw session cookie values in a plaintext transcript                                             | `tmp/sweep/high.log` (the log replays a scratch trace)                                                           |
-| Medium   | Fixture passwords reproduced in transcripts                                                          | `tmp/sweep/low.log`, `tmp/rerun/r1.log`                                                                          |
-| Medium   | Leftover trace scratch directory outside the repository                                              | `/private/tmp/interface-trace-finished.RCIagJ` (~9.4 MB)                                                         |
-| Low      | Operator paths, hostname, and handle in ignored coordination state                                   | `tmp/**`, `.vivi/**`                                                                                             |
-| Info     | Assignment contact address, no confidentiality marking                                               | `assignment.pdf` (Git-ignored)                                                                                   |
-| Info     | Corpus integrity: unreadable trace archives                                                          | 4 of 87 archives under `runs/`                                                                                   |
+| Severity | Finding                                                                                                                             | Location                                                                                                         |
+| -------- | ----------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| High     | Fixture password typed into password fields and `admin` login in all 26; CSRF tokens and Basic authorization headers in 8 of the 26 | 26 LedgerSMB `runs/*/trace.zip` (`trace.trace`, `trace.network`)                                                 |
+| High     | Session cookies in network records                                                                                                  | 50 Dolibarr traces; 26 LedgerSMB traces                                                                          |
+| High     | Generated cleartext database password, not the fixture value                                                                        | `snapshots/dolibarr/demo-install-smoke/mariadb-data.tar.gz :: ./.my-healthcheck.cnf`                             |
+| High     | Password hashes and demo user records inside a restorable database volume                                                           | same archive (`mysql/global_priv.MAD`, `dolidb/llx_user.ibd`); `documents.tar.gz :: ./backup-before-upgrade.sql` |
+| Medium   | Four session-cookie lines carrying one raw session value                                                                            | `tmp/sweep/high.log` (the log replays a scratch trace)                                                           |
+| Medium   | Fixture passwords reproduced in transcripts                                                                                         | `tmp/sweep/low.log`, `tmp/rerun/r1.log`                                                                          |
+| Medium   | Leftover trace scratch directory outside the repository                                                                             | `/private/tmp/interface-trace-finished.RCIagJ` (~9.4 MB)                                                         |
+| Low      | Operator paths, hostname, and handle in ignored coordination state                                                                  | `tmp/**`, `.vivi/**`                                                                                             |
+| Info     | Assignment contact address, no confidentiality marking                                                                              | `assignment.pdf` (Git-ignored)                                                                                   |
+| Info     | Corpus integrity: unreadable trace archives                                                                                         | 4 of 87 archives under `runs/`                                                                                   |
 
 Measured at audit time: 88 run directories, 87 trace archives, 140 screenshots,
 365 MB under `runs/`, 89 MB under `snapshots/`, 14 MB under `tmp/`.
@@ -248,17 +249,18 @@ Zero occurrences, across the tracked tree and the whole history, of: provider ke
 shapes (AWS, GitHub, Slack, Anthropic, OpenAI, xAI, Stripe), PEM private keys,
 connection strings and credentialed URLs, real-looking passwords outside the
 declared fixtures, and third-party email addresses. No trace archive or snapshot
-archive survives in the Git object store (zero `PK\x03\x04` magic across all 901
+archive survives in the Git object store (zero `PK\x03\x04` magic across all 927
 objects). No `.env` or `.env.*` file exists anywhere in the repository. The
 compiled `dist/` tree contains no credential literal that was later removed from
-`src/`. The ten snapshot manifests carry no credential, host, or path fields.
+`src/`. The eight snapshot manifests carry no credential, host, or path fields.
 
 ### Personal information
 
 One person is identifiable: the repository author, through the name and personal
-email on all 85 commits (normal provenance), the deliberate `author:` line in
-`REPORT.md`, and the home-directory path at `AGENTS.md:28`. All 85 commits use
-the same identity, the same committer, and a single consistent timezone.
+email on all 85 commits at the recorded revision (normal provenance), the
+deliberate `author:` line in `REPORT.md`, and the home-directory path at
+`AGENTS.md:28`. All 85 commits at the recorded revision use the same identity,
+the same committer, and a single consistent timezone.
 
 No third-party real personal data is tracked. The people and organizations in the
 committed evidence (`Albert Einstein`, `Alice Adminson`, `Bob Bookkeeper`,
@@ -269,14 +271,18 @@ name also appears, is the real founder of the Dolibarr project, published by the
 vendor inside its own demo data. That maintainer's public package address also
 appears in the ignored `tmp/sweep` transcripts; this file does not repeat it.
 
-### Known contradiction in the submission narrative
+### Corrected statement in the submission narrative
 
-`NOTES.md` states that the promoted runs were accepted after a scan found no
-fixture password literal in any trace archive. `README.md` and
-`evidence/README.md` state that the trace archives were removed because they held
-a credential-bearing request URL and local session cookies. These cannot both be
-current. The code, the object store, and the recovered trace evidence support the
-second: the archives did contain credentials, which is why they were removed.
+`NOTES.md` stated that the eleven Dolibarr runs were promoted after a scan found
+no fixture password literal in any trace archive. That described the
+promotion-time scan and was not in factual conflict with `README.md` and
+`evidence/README.md`, which state that the trace archives were afterwards removed
+because they held a credential-bearing request URL and local session cookies: no
+local Dolibarr trace contains the fixture literal, and the 26 traces that do are
+from the LedgerSMB corpus. The defect was that `NOTES.md` omitted the later
+removal, so it read as current acceptance of archives that no longer exist.
+Corrected on 2026-09-17 in `NOTES.md`, which now records the removal; the three
+documents agree.
 
 ## Standing remediation
 
@@ -295,7 +301,9 @@ Until the submission is frozen, these remain open:
    archive, snapshot archive, or assignment PDF. The first push created
    `ianzepp/interface-ai-th1` at `04c4ae4`, from this repository's post-rewrite
    object graph only.
-4. Reconcile the three documents named in the contradiction above.
+4. **Closed 2026-09-17.** `NOTES.md` now records that the promoted trace
+   archives were afterwards removed as credential-bearing, so the narrative no
+   longer reads as current acceptance of archives that do not exist.
 5. Optionally clear the two unreachable blobs with
    `git reflog expire --expire=now --all && git gc --prune=now`, accepting that
    the literal they contain is already tracked in `targets/*/compose.yaml`.
