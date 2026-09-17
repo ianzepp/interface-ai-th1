@@ -48,6 +48,8 @@ export interface TestRunStart {
     /** Producer identity, sealed by the launcher that started the session. */
     producer?: ProducerRecord | undefined;
     now?: () => string;
+    /** Exact values that must never be persisted in run evidence. */
+    sensitiveInputValues?: readonly string[] | undefined;
 }
 
 /**
@@ -117,6 +119,7 @@ export class FileTestRunRecorder implements EventRecorder {
     #finalized = false;
     #writeQueue: Promise<void> = Promise.resolve();
     readonly #producer: ProducerRecord | undefined;
+    readonly #sensitiveInputValues: readonly string[];
     #eventChainHash: string;
     #receiptChainHash: string;
     #eventSequence = 0;
@@ -139,8 +142,10 @@ export class FileTestRunRecorder implements EventRecorder {
         eventChainGenesis: string,
         receiptChainGenesis: string,
         now: () => string,
+        sensitiveInputValues: readonly string[],
     ) {
         this.#now = now;
+        this.#sensitiveInputValues = sensitiveInputValues;
         this.#producer = producer;
         this.#eventChainHash = eventChainGenesis;
         this.#receiptChainHash = receiptChainGenesis;
@@ -201,6 +206,7 @@ export class FileTestRunRecorder implements EventRecorder {
                 )
                 .digest("hex"),
             now,
+            options.sensitiveInputValues ?? [],
         );
 
         await writeFile(recorder.eventsPath, "", { flag: "wx" });
@@ -320,7 +326,10 @@ export class FileTestRunRecorder implements EventRecorder {
         hash: string;
         event: DiscoveryEvent;
     } {
-        const clean = redactKnownSecrets(event) as DiscoveryEvent;
+        const clean = redactKnownSecrets(
+            event,
+            this.#sensitiveInputValues,
+        ) as DiscoveryEvent;
         if (clean.type === "proposal") {
             const receipt = this.#sealReceipt(clean.receipt);
             clean.receipt = receipt;
@@ -388,10 +397,19 @@ export class FileTestRunRecorder implements EventRecorder {
     private async writeSummaryFiles(): Promise<void> {
         await writeFile(
             this.manifestPath,
-            `${JSON.stringify(redactKnownSecrets(this.manifest), null, 2)}\n`,
+            `${JSON.stringify(redactKnownSecrets(this.manifest, this.#sensitiveInputValues), null, 2)}\n`,
             "utf8",
         );
-        await writeFile(this.readmePath, renderReadme(this.manifest), "utf8");
+        await writeFile(
+            this.readmePath,
+            renderReadme(
+                redactKnownSecrets(
+                    this.manifest,
+                    this.#sensitiveInputValues,
+                ) as TestRunManifest,
+            ),
+            "utf8",
+        );
     }
 }
 

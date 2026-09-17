@@ -7,10 +7,8 @@
  * instead of assuming the field was never present.
  *
  * LIMITS
- * - Key names only. A member's account number sitting in a free-text note, or a
- *   credential embedded in a URL, is not recognized here.
- * - Not applied to `README.md` text or to `trace.zip`; both are written without
- *   passing through this function.
+ * - Exact-value matching only protects values declared by the session launcher.
+ * - Trace archives and screenshots need their separate capture boundary.
  * - Not a substitute for not collecting secrets, and not a substitute for
  *   reviewing a run before its evidence is committed.
  * - Producer side only. This protects what this system writes; it says nothing
@@ -20,11 +18,28 @@
 const SENSITIVE_KEY =
     /^(api[-_]?key|authorization|cookie|credentials?|password|secret|set-cookie|token)$/i;
 
-export function redactKnownSecrets(value: unknown): unknown {
-    return visit(value, new WeakSet());
+export function redactKnownSecrets(
+    value: unknown,
+    sensitiveInputValues: readonly string[] = [],
+): unknown {
+    return visit(value, new WeakSet(), new Set(sensitiveInputValues));
 }
 
-function visit(value: unknown, seen: WeakSet<object>): unknown {
+export function containsSensitiveValue(
+    value: unknown,
+    sensitiveInputValues: readonly string[],
+): boolean {
+    return contains(value, new WeakSet(), new Set(sensitiveInputValues));
+}
+
+function visit(
+    value: unknown,
+    seen: WeakSet<object>,
+    sensitiveValues: ReadonlySet<string>,
+): unknown {
+    if (typeof value === "string" && sensitiveValues.has(value)) {
+        return "[REDACTED]";
+    }
     if (value === null || typeof value !== "object") {
         return value;
     }
@@ -35,14 +50,28 @@ function visit(value: unknown, seen: WeakSet<object>): unknown {
     seen.add(value);
 
     if (Array.isArray(value)) {
-        return value.map((item) => visit(item, seen));
+        return value.map((item) => visit(item, seen, sensitiveValues));
     }
 
     const redacted: Record<string, unknown> = {};
     for (const [key, child] of Object.entries(value)) {
         redacted[key] = SENSITIVE_KEY.test(key)
             ? "[REDACTED]"
-            : visit(child, seen);
+            : visit(child, seen, sensitiveValues);
     }
     return redacted;
+}
+
+function contains(
+    value: unknown,
+    seen: WeakSet<object>,
+    sensitiveValues: ReadonlySet<string>,
+): boolean {
+    if (typeof value === "string") return sensitiveValues.has(value);
+    if (value === null || typeof value !== "object") return false;
+    if (seen.has(value)) return false;
+    seen.add(value);
+    return Object.values(value).some((child) =>
+        contains(child, seen, sensitiveValues),
+    );
 }

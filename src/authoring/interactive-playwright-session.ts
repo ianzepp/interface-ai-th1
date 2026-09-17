@@ -41,6 +41,8 @@ export interface SessionOptions {
      * it, and commands that try are refused at the parser.
      */
     producer?: ProducerRecord | undefined;
+    /** Exact launcher-declared values excluded from durable evidence. */
+    sensitiveInputValues?: readonly string[];
     policy: PolicyConfiguration;
     prepare(page: Page): Promise<void>;
 }
@@ -137,10 +139,12 @@ export async function createInteractiveSession(
             targetVersion: options.targetVersion,
             fixtureId: options.fixtureId,
             producer: options.producer,
+            sensitiveInputValues: options.sensitiveInputValues,
         });
         const capture = await PlaywrightTestRunCapture.start(
             context.tracing,
             recorder,
+            options.sensitiveInputValues,
         );
         const driver = new PlaywrightBrowserDriver(
             context,
@@ -329,7 +333,9 @@ async function handleCommand(
     if (command.action.type !== "navigate" && command.action.type !== "press") {
         await driver.locate(command.action.target);
     }
-    const result = await driver.act(command.action);
+    const result = await capture.execute(command.action, () =>
+        driver.act(command.action),
+    );
     await recorder.append({
         type: "action",
         recordedAt: new Date().toISOString(),

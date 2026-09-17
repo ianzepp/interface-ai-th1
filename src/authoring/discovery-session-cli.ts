@@ -110,6 +110,7 @@ const options: SessionOptions = {
         allowedActionTypes: ["navigate", "activate", "fill", "select", "press"],
         riskyActionMode: "block",
     },
+    sensitiveInputValues: fixtureSensitiveValues(target),
     prepare: (page) => bootstrapFixture(page, origin, flags),
 };
 
@@ -215,6 +216,17 @@ async function bootstrapFixture(
             throw new Error(
                 `No fixture bootstrap is defined for target ${target}`,
             );
+    }
+}
+
+function fixtureSensitiveValues(targetName: string): readonly string[] {
+    switch (targetName) {
+        case "dolibarr":
+            return [requireEnvironment("DOLIBARR_FIXTURE_PASSWORD")];
+        case "ledgersmb":
+            return [requireEnvironment("LEDGERSMB_FIXTURE_PASSWORD")];
+        default:
+            return [];
     }
 }
 

@@ -57,7 +57,7 @@ test("saves one Playwright trace inside the finalized run", async (context) => {
         sources: false,
         title: recorder.directory,
     });
-    assert.equal(tracing.stopOptions?.path, recorder.tracePath);
+    assert.match(tracing.stopOptions?.path ?? "", /interface-ai-trace-/);
     assert.equal(
         await readFile(recorder.tracePath, "utf8"),
         "fake Playwright trace",
@@ -99,4 +99,49 @@ test("finalizes the run as an error when trace persistence fails", async (contex
     assert.match(manifest, /"code": "trace-stop-failed"/);
     assert.match(readme, /Status: `error`/);
     assert.match(readme, /disk unavailable/);
+});
+
+test("suspends tracing for sensitive actions and rejects contaminated candidates", async (context) => {
+    const rootDirectory = await mkdtemp(join(tmpdir(), "interface-ai-run-"));
+    context.after(async () =>
+        rm(rootDirectory, { recursive: true, force: true }),
+    );
+    const sentinel = "synthetic-sensitive-sentinel";
+    const recorder = await FileTestRunRecorder.start({
+        rootDirectory,
+        runId: "contaminated-trace",
+        goal: "Find an account",
+        situation: "Baseline fixture",
+        targetProfile: "ledgersmb",
+        targetVersion: "1.13",
+        fixtureId: "baseline-v1",
+        sensitiveInputValues: [sentinel],
+    });
+    const stops: string[] = [];
+    const tracing: TraceController = {
+        start: () => Promise.resolve(),
+        stop: async ({ path }) => {
+            stops.push(path);
+            await writeFile(path, stops.length === 1 ? "temporary" : sentinel);
+        },
+    };
+    const capture = await PlaywrightTestRunCapture.start(tracing, recorder, [
+        sentinel,
+    ]);
+    await capture.execute({ type: "fill", value: sentinel }, () =>
+        Promise.resolve(),
+    );
+    await capture.finish({
+        status: "satisfied",
+        summary: "found",
+        checkpoint: "found",
+    });
+
+    assert.equal(stops.length, 2);
+    await assert.rejects(readFile(recorder.tracePath, "utf8"));
+    const manifest = await readFile(recorder.manifestPath, "utf8");
+    const readme = await readFile(recorder.readmePath, "utf8");
+    assert.match(manifest, /sensitive-evidence-detected/);
+    assert.doesNotMatch(manifest, new RegExp(sentinel));
+    assert.doesNotMatch(readme, new RegExp(sentinel));
 });

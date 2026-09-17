@@ -273,3 +273,53 @@ test("receipt-bearing events are refused without a sealed producer", async (cont
         /no sealed producer record/,
     );
 });
+
+test("redacts declared sensitive values from the ledger and summary files", async (context) => {
+    const rootDirectory = await mkdtemp(join(tmpdir(), "interface-ai-run-"));
+    context.after(async () =>
+        rm(rootDirectory, { recursive: true, force: true }),
+    );
+    const sentinel = "synthetic-sensitive-sentinel";
+    const recorder = await FileTestRunRecorder.start({
+        rootDirectory,
+        runId: "declared-sensitive-value",
+        goal: "Fill the account field",
+        situation: sentinel,
+        targetProfile: "dolibarr",
+        targetVersion: "23.0.4",
+        fixtureId: "demo",
+        sensitiveInputValues: [sentinel],
+    });
+    await recorder.append({
+        type: "action",
+        action: {
+            type: "fill",
+            target: {
+                candidates: [{ kind: "label", text: "Any field" }],
+                require: "exactly-one",
+            },
+            value: sentinel,
+        },
+        result: {
+            completed: true,
+            observation: { url: "http://127.0.0.1/", title: sentinel },
+        },
+        rationale: sentinel,
+        recordedAt: "2026-09-17T00:00:00.000Z",
+    });
+    await recorder.finalize({
+        status: "error",
+        code: "test",
+        summary: sentinel,
+    });
+
+    for (const path of [
+        recorder.eventsPath,
+        recorder.manifestPath,
+        recorder.readmePath,
+    ]) {
+        const content = await readFile(path, "utf8");
+        assert.doesNotMatch(content, new RegExp(sentinel));
+        assert.match(content, /\[REDACTED\]/);
+    }
+});

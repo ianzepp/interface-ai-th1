@@ -22,3 +22,18 @@ test("redacts known secret fields recursively before persistence", () => {
         },
     });
 });
+
+test("redacts declared sensitive values under arbitrary keys", () => {
+    const sentinel = "synthetic-sensitive-sentinel";
+
+    assert.deepEqual(
+        redactKnownSecrets(
+            { action: { type: "fill", value: sentinel }, arbitrary: sentinel },
+            [sentinel],
+        ),
+        {
+            action: { type: "fill", value: "[REDACTED]" },
+            arbitrary: "[REDACTED]",
+        },
+    );
+});
