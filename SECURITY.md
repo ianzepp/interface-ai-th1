@@ -287,9 +287,14 @@ Until the submission is frozen, these remain open:
    `/private/tmp/interface-trace-finished.RCIagJ`. That clears every high and
    medium local finding.
 2. Genericize the path at `AGENTS.md:28`.
-3. Confirm whether the pre-rewrite commits were ever pushed to a remote.
-   `.git/filter-repo/commit-map` and `ref-map` retain the old hashes, including
-   the previous `main` tip. A local rewrite does not remove server-side copies.
+3. **Closed 2026-09-17, before the first push.** No server-side copy of the
+   pre-rewrite history exists. The old `main` tip `583c77ed` is absent from every
+   candidate repository on the account (`gh api repos/ianzepp/<repo>/commits/
+583c77ed…` returns "No commit found" for each), an account-wide code search for
+   the fixture literal returns nothing, and the published tree carries no trace
+   archive, snapshot archive, or assignment PDF. The first push created
+   `ianzepp/interface-ai-th1` at `04c4ae4`, from this repository's post-rewrite
+   object graph only.
 4. Reconcile the three documents named in the contradiction above.
 5. Optionally clear the two unreachable blobs with
    `git reflog expire --expire=now --all && git gc --prune=now`, accepting that
