@@ -1,11 +1,16 @@
-import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { promisify } from "node:util";
 
 import { ArtifactPolicy } from "../runtime/policy.js";
 import type { SurfaceAction } from "../surfaces/surface-driver.js";
 import { containsSensitiveValue } from "./redaction.js";
 import type { FileTestRunRecorder, TestRunOutcome } from "./run-recorder.js";
+
+const execFileAsync = promisify(execFile);
+const TRACE_SCAN_MAX_BUFFER = 64 * 1024 * 1024;
 
 /** Evaluate a scripted action before allowing its browser operation to begin. */
 export async function executePolicyBoundAction<T>(
@@ -123,7 +128,6 @@ export class PlaywrightTestRunCapture {
             if (
                 await evidenceContainsSensitiveValue(
                     candidateTrace,
-                    this.recorder.directory,
                     this.#sensitiveInputValues,
                 )
             ) {
@@ -168,18 +172,18 @@ async function startTrace(
     });
 }
 
+/**
+ * Scans decompressed trace archive members for declared values. Screenshot pixels
+ * are not scanned: byte matching cannot recover values merely rendered in PNGs.
+ */
 async function evidenceContainsSensitiveValue(
     tracePath: string,
-    runDirectory: string,
     sensitiveInputValues: readonly string[],
 ): Promise<boolean> {
     if (sensitiveInputValues.length === 0) return false;
-    const candidates = [
-        tracePath,
-        ...(await filesUnder(join(runDirectory, "screenshots"))),
-    ];
-    for (const path of candidates) {
-        const content = await readFile(path);
+    const members = await traceMembers(tracePath);
+    for (const member of members) {
+        const content = await traceMemberContent(tracePath, member);
         if (
             sensitiveInputValues.some((value) =>
                 content.includes(Buffer.from(value)),
@@ -190,21 +194,23 @@ async function evidenceContainsSensitiveValue(
     return false;
 }
 
-async function filesUnder(directory: string): Promise<string[]> {
-    try {
-        const entries = await readdir(directory, { withFileTypes: true });
-        return (
-            await Promise.all(
-                entries.map(async (entry) => {
-                    const path = join(directory, entry.name);
-                    return entry.isDirectory() ? filesUnder(path) : [path];
-                }),
-            )
-        ).flat();
-    } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
-        throw error;
-    }
+async function traceMembers(tracePath: string): Promise<readonly string[]> {
+    const { stdout } = await execFileAsync("unzip", ["-Z1", tracePath], {
+        encoding: "utf8",
+        maxBuffer: TRACE_SCAN_MAX_BUFFER,
+    });
+    return stdout.split("\n").filter((member) => member.length > 0);
+}
+
+async function traceMemberContent(
+    tracePath: string,
+    member: string,
+): Promise<Buffer> {
+    const { stdout } = await execFileAsync("unzip", ["-p", tracePath, member], {
+        encoding: "buffer",
+        maxBuffer: TRACE_SCAN_MAX_BUFFER,
+    });
+    return stdout;
 }
 
 function toError(error: unknown): Error {
