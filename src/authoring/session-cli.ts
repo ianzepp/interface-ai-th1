@@ -16,6 +16,7 @@ import {
     clearSessionState,
     readSessionState,
     resolveSessionStatePath,
+    writeSessionState,
     type SessionState,
 } from "./session-state.js";
 
@@ -285,10 +286,13 @@ async function stop(): Promise<void> {
     print(`session stopped: run ${state.runId}`);
 }
 
-/** Send a lease-bound command using the epoch from the live session state. */
+/** Send a command using the current lease and observation state. */
 async function sendWithCurrentEpoch(
     command:
-        | Omit<Extract<SessionCommand, { type: "act" }>, "controlEpoch">
+        | Omit<
+              Extract<SessionCommand, { type: "act" }>,
+              "controlEpoch" | "observationIdentity"
+          >
         | Omit<
               Extract<SessionCommand, { type: "take-control" }>,
               "controlEpoch"
@@ -297,8 +301,14 @@ async function sendWithCurrentEpoch(
               Extract<SessionCommand, { type: "human-observe" }>,
               "controlEpoch"
           >
-        | Omit<Extract<SessionCommand, { type: "human-act" }>, "controlEpoch">
-        | Omit<Extract<SessionCommand, { type: "resume" }>, "controlEpoch">
+        | Omit<
+              Extract<SessionCommand, { type: "human-act" }>,
+              "controlEpoch" | "observationIdentity"
+          >
+        | Omit<
+              Extract<SessionCommand, { type: "resume" }>,
+              "controlEpoch" | "observationIdentity"
+          >
         | Omit<
               Extract<SessionCommand, { type: "release-control" }>,
               "controlEpoch"
@@ -308,12 +318,18 @@ async function sendWithCurrentEpoch(
     const response = await requestSessionControl(state.socketPath, {
         ...command,
         controlEpoch: state.controlEpoch,
+        ...(requiresObservationIdentity(command) &&
+        state.currentObservationIdentity !== null &&
+        state.currentObservationIdentity !== undefined
+            ? { observationIdentity: state.currentObservationIdentity }
+            : {}),
     });
     if (!response.ok) {
         print(`error: ${response.error}`);
         process.exitCode = 1;
         return;
     }
+    await persistObservationIdentity(state, response.record);
     render(response.record);
 }
 
@@ -326,7 +342,36 @@ async function send(command: SessionCommand): Promise<void> {
         process.exitCode = 1;
         return;
     }
+    await persistObservationIdentity(state, response.record);
     render(response.record);
+}
+
+function requiresObservationIdentity(command: {
+    type: string;
+}): command is { type: "act" | "human-act" } {
+    return command.type === "act" || command.type === "human-act";
+}
+
+async function persistObservationIdentity(
+    state: SessionState,
+    record: unknown,
+): Promise<void> {
+    const value = asRecord(record);
+    if (value.type !== "observation") return;
+    const identity = asRecord(value.observationIdentity);
+    if (
+        typeof identity.sequence !== "number" ||
+        typeof identity.hash !== "string"
+    ) {
+        return;
+    }
+    await writeSessionState(resolveSessionStatePath(flags.get("lane")), {
+        ...state,
+        currentObservationIdentity: {
+            sequence: identity.sequence,
+            hash: identity.hash,
+        },
+    });
 }
 
 /** Render a session record as the small number of facts a reader needs. */
@@ -339,6 +384,9 @@ function render(record: unknown): void {
             const observation = asRecord(value.observation);
             print(`url: ${String(observation.url)}`);
             print(`title: ${String(observation.title)}`);
+            print(
+                `observation identity: ${JSON.stringify(value.observationIdentity)}`,
+            );
             if (typeof observation.screenshotPath === "string") {
                 print(`screenshot: ${observation.screenshotPath}`);
             }

@@ -1,6 +1,8 @@
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 
+import type { ObservationIdentity } from "./event-recorder.js";
+
 /**
  * How a caller finds the live session it is allowed to drive.
  *
@@ -35,6 +37,7 @@ export interface SessionState {
     goal: string;
     controller: "automation" | "human";
     controlEpoch: number;
+    currentObservationIdentity?: ObservationIdentity | null;
 }
 
 /** Where this lane's session state lives, honoring the launcher's override. */
@@ -94,6 +97,7 @@ export function parseSessionState(value: unknown): SessionState {
         goal,
         controller,
         controlEpoch,
+        currentObservationIdentity,
         pid,
     } = value as Record<string, unknown>;
 
@@ -113,6 +117,11 @@ export function parseSessionState(value: unknown): SessionState {
     if (typeof pid !== "number" || typeof controlEpoch !== "number") {
         throw new Error("Session state is missing a required numeric field");
     }
+    if (!isObservationIdentity(currentObservationIdentity)) {
+        throw new Error(
+            "Session state is missing a valid observation identity",
+        );
+    }
 
     return {
         lane,
@@ -125,8 +134,25 @@ export function parseSessionState(value: unknown): SessionState {
         goal,
         controller,
         controlEpoch,
+        ...(currentObservationIdentity === undefined
+            ? {}
+            : { currentObservationIdentity }),
         pid,
     };
+}
+
+function isObservationIdentity(
+    value: unknown,
+): value is ObservationIdentity | null | undefined {
+    if (value === null || value === undefined) return true;
+    if (typeof value !== "object" || Array.isArray(value)) {
+        return false;
+    }
+    const identity = value as Record<string, unknown>;
+    return (
+        typeof identity.sequence === "number" &&
+        typeof identity.hash === "string"
+    );
 }
 
 export async function clearSessionState(statePath: string): Promise<void> {

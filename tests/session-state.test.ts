@@ -25,6 +25,7 @@ const state: SessionState = {
     goal: "Look up a third party.",
     controller: "automation",
     controlEpoch: 0,
+    currentObservationIdentity: { sequence: 0, hash: "observation-hash" },
 };
 
 test("round-trips a session state file and clears it", async (context) => {
@@ -69,6 +70,10 @@ test("rejects a state file that is missing a field a caller depends on", () => {
     assert.throws(
         () => parseSessionState({ ...state, controlEpoch: "0" }),
         /missing a required numeric field/,
+    );
+    assert.throws(
+        () => parseSessionState({ ...state, currentObservationIdentity: {} }),
+        /missing a valid observation identity/,
     );
     assert.throws(() => parseSessionState([]), /must be a JSON object/);
 });

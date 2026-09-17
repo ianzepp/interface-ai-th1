@@ -1,7 +1,131 @@
 import assert from "node:assert/strict";
+import { createServer } from "node:http";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
-import { parseSessionCommand } from "../src/authoring/interactive-playwright-session.js";
+import {
+    createInteractiveSession,
+    parseSessionCommand,
+} from "../src/authoring/interactive-playwright-session.js";
+
+test("the handler accepts one action bound to a fresh observation", async (context) => {
+    const directory = await mkdtemp(join(tmpdir(), "interface-ai-session-"));
+
+    const server = createServer((_request, response) => {
+        response.writeHead(200, { "content-type": "text/html" });
+        response.end("<button>Open</button>");
+    });
+    await new Promise<void>((resolve) =>
+        server.listen(0, "127.0.0.1", resolve),
+    );
+    context.after(
+        () =>
+            new Promise<void>((resolve) =>
+                server.close(() => {
+                    resolve();
+                }),
+            ),
+    );
+    const address = server.address();
+    if (address === null || typeof address === "string") {
+        throw new Error("The test server did not bind a TCP port");
+    }
+    const origin = `http://127.0.0.1:${String(address.port)}`;
+
+    const session = await createInteractiveSession({
+        rootDirectory: directory,
+        goal: "Open the fixture control.",
+        situation: "A local page is ready for a handler test.",
+        targetProfile: "handler-test",
+        targetVersion: "1",
+        fixtureId: "handler-test/fresh",
+        producer: {
+            kind: "external-llm",
+            provider: "test",
+            model: "test",
+            sessionNonce: "test-session-nonce",
+            sealPath: "test-producer-seal",
+        },
+        policy: {
+            allowedOrigins: [origin],
+            allowedActionTypes: ["activate"],
+            riskyActionMode: "block",
+        },
+        prepare: async (page) => {
+            await page.goto(origin);
+        },
+    });
+    context.after(async () => {
+        await session.close();
+        await rm(directory, { recursive: true, force: true });
+    });
+
+    const observed = await session.handle({ type: "observe" });
+    const observationIdentity = (
+        observed.record as {
+            observationIdentity: { sequence: number; hash: string };
+        }
+    ).observationIdentity;
+    const action = {
+        type: "activate" as const,
+        target: {
+            candidates: [
+                { kind: "role" as const, role: "button", name: "Open" },
+            ],
+            require: "exactly-one" as const,
+        },
+    };
+    const completed = await session.handle({
+        type: "act",
+        action,
+        risk: "safe",
+        rationale: "Open the fixture control.",
+        observationIdentity,
+        controlEpoch: 0,
+    });
+    assert.equal(
+        (completed.record as { type: string }).type,
+        "action-completed",
+    );
+
+    const reused = await session.handle({
+        type: "act",
+        action,
+        risk: "safe",
+        rationale: "Try the same observation again.",
+        observationIdentity,
+        controlEpoch: 0,
+    });
+    assert.equal((reused.record as { type: string }).type, "action-rejected");
+
+    const fresh = await session.handle({ type: "observe" });
+    const freshIdentity = (
+        fresh.record as {
+            observationIdentity: { sequence: number; hash: string };
+        }
+    ).observationIdentity;
+    const stale = await session.handle({
+        type: "act",
+        action,
+        risk: "safe",
+        rationale: "Try the previous observation.",
+        observationIdentity,
+        controlEpoch: 0,
+    });
+    assert.equal((stale.record as { type: string }).type, "action-rejected");
+
+    const missing = await session.handle({
+        type: "act",
+        action,
+        risk: "safe",
+        rationale: "Try without an identity.",
+        controlEpoch: 0,
+    });
+    assert.equal((missing.record as { type: string }).type, "action-rejected");
+    assert.notDeepEqual(freshIdentity, observationIdentity);
+});
 
 test("parses an external controller action command with its observation identity", () => {
     const observationIdentity = { sequence: 3, hash: "observation-hash" };
