@@ -79,8 +79,8 @@ Validation correction record: the file-based commands were run against this tree
 ### VS-05 — Make lease ownership and intervention requests live session behavior
 
 - **one change:** Wire `ControlLease` and `InterventionRequest` into a paused interactive session and ledger.
-- **write_scope:** `src/authoring/interactive-playwright-session.ts`, `src/authoring/event-recorder.ts`, `src/authoring/session-state.ts`, `src/intervention/request.ts`, `src/intervention/control-lease.ts`, `tests/interactive-playwright-session.test.ts`, `tests/session-state.test.ts`, `tests/control-lease.test.ts`.
-- **edit:** Persist controller/epoch in session state, add explicit request and transfer events, and refuse automation actions after the compare-and-swap transfer to a human.
+- **write_scope:** `src/authoring/discovery-session-cli.ts`, `src/authoring/interactive-playwright-session.ts`, `src/authoring/event-recorder.ts`, `src/authoring/session-state.ts`, `src/intervention/request.ts`, `src/intervention/control-lease.ts`, `tests/interactive-playwright-session.test.ts`, `tests/session-state.test.ts`, `tests/control-lease.test.ts`.
+- **edit:** Persist controller/epoch in session state, add explicit request and transfer events, and refuse automation actions after the compare-and-swap transfer to a human. `src/authoring/discovery-session-cli.ts` is the live `SessionState` writer, so truthful controller and epoch persistence requires it. VS-03 modified this file earlier; the units are serialized, and no two units may hold it concurrently.
 - **done_when:** An intervention returns context/evidence and a live session reference, records automation-to-human ownership at one epoch, and blocks automation until a valid transfer back.
 - **validation:** `npm run build && node --test dist/tests/interactive-playwright-session.test.js dist/tests/session-state.test.js dist/tests/control-lease.test.js`.
 - **depends_on:** VS-02, VS-04.
