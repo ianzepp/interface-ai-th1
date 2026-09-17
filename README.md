@@ -27,10 +27,11 @@ against live implementation, tests, evidence, and remaining gaps. It is the
 status authority; [`REPORT.md`](REPORT.md) is the shorter required submission
 write-up.
 
-Every reset-to-terminal discovery attempt is saved as one test run. A run has a
-brief README, structured manifest, sanitized event ledger, and Playwright trace.
-Runs terminate as either `satisfied` or `error`; failed and exploratory runs are
-first-class evidence rather than discarded attempts.
+Every reset-to-terminal discovery attempt is saved as one test run. A live run
+has a brief README, structured manifest, sanitized event ledger, and Playwright
+trace; binary traces may be removed during evidence review. Runs terminate as
+either `satisfied` or `error`; failed and exploratory runs are first-class
+evidence rather than discarded attempts.
 
 Raw runs live under `runs/<run-id>/` and are ignored by Git. The tracked
 [`runs/README.md`](runs/README.md) describes the layout.
@@ -44,7 +45,10 @@ ESLint, Prettier, and EditorConfig, all run by `npm run verify`.
 
 LedgerSMB and Dolibarr are both first-class local browser targets. Their
 versions, Docker images, local origins, and complete persistent state boundaries
-are pinned. The committed evidence contains live runs for both targets.
+are pinned. The committed evidence currently retains 11 Dolibarr runs. The six
+LedgerSMB capture runs from the earlier corpus were permanently removed from the
+repository and its history during the 2026-09-16 rewrite because their binary
+traces contained credential-bearing material.
 
 Both targets use one snapshot lifecycle:
 
@@ -61,11 +65,12 @@ Named snapshots live under `snapshots/<target>/<name>/`, include a checksummed
 manifest, and are ignored by Git. Run `scripts/target --help` for non-destructive
 start, stop, status, URL, and snapshot-listing commands.
 
-Two repeated discovery captures produced a reviewed state graph for LedgerSMB
-company initialization. The Playwright surface driver and deterministic engine
-now replay that artifact without an LLM, enforce exact target resolution and
-origin/action policy, bind invocation inputs, route on screen detectors, and
-save successful or failed replay runs in the same evidence shape as discovery.
+Earlier repeated discovery captures produced a reviewed state graph for
+LedgerSMB company initialization. The Playwright surface driver and
+deterministic engine now replay that artifact without an LLM, enforce exact
+target resolution and origin/action policy, bind invocation inputs, route on
+screen detectors, and save successful or failed replay runs in the same recorder
+shape as discovery.
 
 For Dolibarr, an external LLM drove a long-lived Playwright session one action
 at a time. Two happy runs, three exception runs, and a useful failed replay were

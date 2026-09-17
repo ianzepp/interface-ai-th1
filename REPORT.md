@@ -10,7 +10,7 @@ assignment: assignment.md
 tracking: assignment-proof.md
 evidence: evidence/runs/
 reviewed-artifacts: 2
-corpus-runs: 17
+corpus-runs: 11
 verification: npm run verify
 repository: pending publication
 ---
@@ -75,11 +75,14 @@ Detector `scope` (`runtime`, `target`, `capability`) is the reuse lever: a lost 
 belongs to the application and therefore to a shared target profile, while "results are
 visible" belongs to one capability.
 
-**Honest limit.** `schemas/capability.schema.json` constrains the envelope, with
-`additionalProperties: false` on each object it defines, but its `stage` definition
-types `action`, `detectors`, `transitions`, `otherwise`, and `extractions` as
-unconstrained objects. The graph's vocabulary is typed in TypeScript, not the schema,
-and nothing validates the committed artifacts against either.
+**Enforcement.** `schemas/capability.schema.json` uses typed `$ref` definitions for
+the graph vocabulary, with `additionalProperties: false` on each object it defines.
+`tests/schemas.test.ts` uses an Ajv 2020 validator to check every committed artifact
+against the capability schema, every promoted replay result against the result schema,
+and the intervention fixture against the invocation schema. The current package suite
+passes 119 tests, including those checks. The remaining demonstration gap is that the
+approved artifact is committed as TypeScript rather than exported as a JSON example
+under `/evidence/`.
 
 # Determinism & error handling
 
@@ -199,17 +202,24 @@ trace at all.
 
 Auditing that last decision found a real defect on the other target:
 
-- All 11 promoted Dolibarr runs are clean, in `events.jsonl` and `trace.zip` alike.
-- All 6 promoted LedgerSMB runs contain the fixture password in **both**.
-- `README.md` and `run.json` are clean everywhere, because key-name redaction works there.
+- The 11 surviving promoted Dolibarr event ledgers are clean.
+- The former six-run LedgerSMB capture corpus contained the fixture password in
+  both its event ledgers and binary traces.
+- Those six runs and every trace archive were permanently removed from the
+  repository and its history in the 2026-09-16 rewrite because the traces held a
+  credential-bearing request URL and local session cookies; text redaction cannot
+  reach inside a binary archive.
+- The surviving `README.md` files and `run.json` manifests are clean because
+  key-name redaction works there.
 
 The cause is structural. A `fill` action stores its value under a generic `value`
 property, and `value` is not — and cannot sensibly be — a sensitive key name; and key-name
-redaction says nothing about `trace.zip`, which Playwright writes and never passes through
-it. Both limits were already documented in `redaction.ts`; the audit's contribution is
-that the LedgerSMB corpus exercises them. The values are synthetic fixture data and the
-repair is tracked in `assignment-proof.md`, but it remains a violation of the assignment's
-absolute no-secret-persistence rule, treated as a blocker rather than a nit.
+redaction says nothing about a binary trace, which Playwright writes and never passes through
+it. Both limits were already documented in `redaction.ts`; the audit's contribution was
+that the LedgerSMB corpus exercised them. The values were synthetic fixture data, and the
+removal is permanent in history, but the capture and redaction paths remain an unresolved
+violation of the assignment's absolute no-secret-persistence rule, treated as a blocker
+rather than a nit.
 
 **Honest limit.** The guardrails cover the discovery session and both replay runners. The
 four scripted LedgerSMB capture pilots drive Playwright directly and never reference
@@ -230,28 +240,29 @@ recovery during replay, where determinism is most valuable and least affordable 
 
 **Not yet done.** Incomplete requirements, not choices:
 
-| Area               | State                       | Missing                                                                               |
-| ------------------ | --------------------------- | ------------------------------------------------------------------------------------- |
-| Discovery inputs   | Partial                     | Goal, target, and stopping limits are hard-coded in the launcher; no step or run cap. |
-| Recovery branches  | Described, not demonstrated | No artifact contains a bounded recovery edge reaching a declared resume state.        |
-| Escalation handoff | Routing only                | No operator surface, no same-session takeover; `evaluateResume` stubbed and untested. |
-| Evidence hygiene   | Blocker                     | 6 LedgerSMB runs carry the fixture password in both the ledger and the trace.         |
-| Artifact export    | Missing                     | Artifacts live in `src/capabilities/`; no JSON example saved under `evidence/`.       |
-| Schema enforcement | Missing                     | Nothing validates committed artifacts against `schemas/`.                             |
-| Publication        | Missing                     | No git remote, so the repository is not yet public.                                   |
+| Area               | State                       | Missing                                                                                                                                     |
+| ------------------ | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| Discovery inputs   | Partial                     | Goal, target, and stopping limits are hard-coded in the launcher; no step or run cap.                                                       |
+| Recovery branches  | Described, not demonstrated | No artifact contains a bounded recovery edge reaching a declared resume state.                                                              |
+| Escalation handoff | Routing only                | No operator surface, no same-session takeover; `evaluateResume` stubbed and untested.                                                       |
+| Evidence hygiene   | Blocker                     | The removed six-run LedgerSMB corpus contained the fixture password in both ledger and trace; future capture still needs a fix.             |
+| Artifact export    | Missing                     | Artifacts live in `src/capabilities/`; no JSON example saved under `evidence/`.                                                             |
+| Schema enforcement | Missing                     | The test suite now validates committed artifacts against `schemas/`; no exported JSON example demonstrates that contract under `evidence/`. |
+| Publication        | Missing                     | No git remote, so the repository is not yet public.                                                                                         |
 
 Two matter more than the rest. The escalation handoff is the one requirement whose seam is
 real but whose integration is absent — the difference between a vertical slice that runs all
 the way through and one that stops a step short. Secret handling could disqualify an
 otherwise working submission, and it is mechanical rather than architectural: redact values
-on known-sensitive targets, keep fill values out of the durable ledger, stop writing traces
-that contain a credential, and recapture the affected runs.
+on known-sensitive targets, keep fill values out of the durable ledger, and stop writing
+traces that contain a credential. The affected runs were permanently removed from the
+repository and history; future captures still need those protections.
 
 **Next, in order.** Integrate and record a real same-session takeover and validated resume.
-Fix fill-value and trace handling, then remove or safely recapture the six affected runs.
-Export a reviewed artifact to `evidence/` and validate it against the schema. Make goal,
-target, and stopping limits explicit launcher inputs and write a complete copy-paste
-discovery demo. Then publish.
+Fix fill-value and trace handling before any future capture. Export a reviewed artifact to
+`evidence/` while retaining the existing schema validation. Make goal, target, and
+stopping limits explicit launcher inputs and write a complete copy-paste discovery demo.
+Then publish.
 
 Per-requirement status, gap detail, and evidence identifiers live in
 [`assignment-proof.md`](assignment-proof.md), the authority for what is done.
