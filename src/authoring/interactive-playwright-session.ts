@@ -43,10 +43,11 @@ import { ArtifactPolicy, type PolicyConfiguration } from "../runtime/policy.js";
 import type { CapabilityStage } from "../runtime/state-machine.js";
 import { PlaywrightBrowserDriver } from "../surfaces/playwright-driver.js";
 import type { ActionRisk, SurfaceAction } from "../surfaces/surface-driver.js";
-import type {
-    DecisionReceipt,
-    EventIdentity,
-    ObservationIdentity,
+import {
+    type DecisionReceipt,
+    type EventIdentity,
+    isEventIdentity,
+    type ObservationIdentity,
 } from "./event-recorder.js";
 import { PlaywrightRunCapture } from "./playwright-run-capture.js";
 import {
@@ -799,16 +800,6 @@ function observeRequirementFailure(
         return "Act requires the identity returned by the latest observation.";
     }
     return null;
-}
-
-function isEventIdentity(value: unknown): value is EventIdentity {
-    if (value === null || typeof value !== "object" || Array.isArray(value)) {
-        return false;
-    }
-    const record = value as Record<string, unknown>;
-    return (
-        typeof record.sequence === "number" && typeof record.hash === "string"
-    );
 }
 
 function sameEventIdentity(left: EventIdentity, right: EventIdentity): boolean {

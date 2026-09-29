@@ -52,12 +52,12 @@ import type { CodexRunStatus } from "./codex-run.js";
 import type {
     DecisionReceipt,
     EventIdentity,
-    EventRecorder,
     RunEvent,
 } from "./event-recorder.js";
 import { redactKnownSecrets } from "./redaction.js";
 
-const RUN_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
+/** A run directory name: the recorder's IDs and any caller-supplied one. */
+export const RUN_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
 
 const SHA256_HEX_PATTERN = /^[0-9a-f]{64}$/;
 
@@ -176,7 +176,7 @@ type DecisionEvent = Extract<
 // --- Recorder ---------------------------------------------------------------
 
 /** The durable event ledger: one run directory, written as the run happens. */
-export class FileRunRecorder implements EventRecorder {
+export class FileRunRecorder {
     public readonly manifestPath: string;
     public readonly eventsPath: string;
     public readonly readmePath: string;

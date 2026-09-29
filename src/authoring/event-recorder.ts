@@ -17,8 +17,7 @@
  * nonce — so a controller cannot author its own attestation.
  */
 
-import { createHash } from "node:crypto";
-
+import { isRecord } from "../common/records.js";
 import type { ControlLeaseState } from "../intervention/control-lease.js";
 import type { InterventionRequest } from "../intervention/request.js";
 import type { ResumeDecision } from "../intervention/resume.js";
@@ -143,31 +142,11 @@ export type RunEvent =
           outcome: RunOutcome;
       };
 
-/**
- * The ledger's read and write surface.
- *
- * Both operations are asynchronous so a file-backed recorder can honour the
- * same contract as the in-memory one without changing its callers.
- */
-export interface EventRecorder {
-    append(event: RunEvent): Promise<EventIdentity>;
-    readAll(): Promise<readonly RunEvent[]>;
-}
-
-/** Keeps the ledger in memory; `FileRunRecorder` is the durable form. */
-export class InMemoryEventRecorder implements EventRecorder {
-    readonly #events: RunEvent[] = [];
-
-    public append(event: RunEvent): Promise<EventIdentity> {
-        const sequence = this.#events.length;
-        const hash = createHash("sha256")
-            .update(`${String(sequence)}|${JSON.stringify(event)}`)
-            .digest("hex");
-        this.#events.push(event);
-        return Promise.resolve({ sequence, hash });
-    }
-
-    public readAll(): Promise<readonly RunEvent[]> {
-        return Promise.resolve([...this.#events]);
-    }
+/** Whether a value has the shape of an `EventIdentity`. */
+export function isEventIdentity(value: unknown): value is EventIdentity {
+    return (
+        isRecord(value) &&
+        typeof value.sequence === "number" &&
+        typeof value.hash === "string"
+    );
 }

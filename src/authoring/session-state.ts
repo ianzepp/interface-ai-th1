@@ -19,7 +19,7 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 
 import { isNodeError } from "../common/errors.js";
-import type { ObservationIdentity } from "./event-recorder.js";
+import { isEventIdentity, type ObservationIdentity } from "./event-recorder.js";
 
 /** Everything a caller needs to reach one live session. */
 export interface SessionState {
@@ -154,13 +154,5 @@ function isProcessAlive(pid: number): boolean {
 function isOptionalObservationIdentity(
     value: unknown,
 ): value is ObservationIdentity | null | undefined {
-    if (value === null || value === undefined) return true;
-    if (typeof value !== "object" || Array.isArray(value)) {
-        return false;
-    }
-    const identity = value as Record<string, unknown>;
-    return (
-        typeof identity.sequence === "number" &&
-        typeof identity.hash === "string"
-    );
+    return value === null || value === undefined || isEventIdentity(value);
 }

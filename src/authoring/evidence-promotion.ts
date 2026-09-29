@@ -20,9 +20,7 @@ import { join } from "node:path";
 
 import { isNodeError } from "../common/errors.js";
 import { isRecord } from "../common/records.js";
-import { validateRunAttestation } from "./run-recorder.js";
-
-const RUN_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
+import { RUN_ID_PATTERN, validateRunAttestation } from "./run-recorder.js";
 
 const REQUIRED_RUN_FILES = [
     "README.md",
