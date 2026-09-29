@@ -1,16 +1,40 @@
-import { mkdir, open } from "node:fs/promises";
+/**
+ * The command-line hand a discovery session offers.
+ *
+ * A session holds one Playwright context, so it cannot be restarted per action.
+ * This CLI reaches the session already running: it turns flags into one
+ * `SessionCommand`, sends it over the control socket, and renders the answer as
+ * the few lines a person or a language model needs, rather than the JSON
+ * envelope. Scripts read some of these lines verbatim (`scripts/mock-operator`
+ * greps `controller: human` from `status`), so their wording is a contract.
+ *
+ * REJECTED ALTERNATIVES
+ * - A JSON argument instead of flags: a model composing JSON in a shell has to
+ *   escape selectors, quotes, and newlines by hand, and one mistake costs a turn
+ *   or misfires an action. Flags move that quoting into argv.
+ *
+ * EXIT CODES
+ * - 0: the session answered, including when it answered "rejected". A refusal
+ *   is a legitimate outcome the caller should reason about.
+ * - 1: the command could not be delivered: no session is running, the flags do
+ *   not describe a valid command, or the session did not answer.
+ * - 2: unknown verb; usage is printed.
+ */
+
+import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
+import { mkdir, open } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import process from "node:process";
-import { spawn } from "node:child_process";
 
+import { print, runMain } from "../common/cli.js";
 import type {
     ActionRisk,
     SurfaceAction,
     TargetDescriptor,
 } from "../surfaces/surface-driver.js";
+import { parseFlags, requireFlag, requireNumberFlag } from "./flag-args.js";
 import type { SessionCommand } from "./interactive-playwright-session.js";
-import { parseFlags, requireFlag } from "./flag-args.js";
 import { requestSessionControl } from "./session-control.js";
 import {
     clearSessionState,
@@ -19,107 +43,105 @@ import {
     writeSessionState,
     type SessionState,
 } from "./session-state.js";
-import { print } from "../common/cli.js";
-import { describeError } from "../common/errors.js";
 
-/**
- * The command-line hand a discovery session offers.
- *
- * A session holds one Playwright context, so it cannot be restarted per action.
- * This CLI is how a caller reaches the session that is already running: it turns
- * flags into one `SessionCommand`, sends it over the control socket, and renders
- * the answer as something a person or a language model can read.
- *
- * Flags exist instead of a JSON argument on purpose. A model composing JSON in a
- * shell has to escape selectors, quotes, and newlines by hand, and one mistake
- * costs a turn and can silently misfire an action. Flags move that quoting into
- * argv, where the shell handles it.
- *
- * Output is rendered rather than echoed as JSON for the same reason: the reader
- * wants the page, not the envelope. One helper writes every line, so this file's
- * console footprint stays a single known place.
- *
- * EXIT CODES
- * Zero means the session answered, including when it answered "rejected". A
- * refusal is a legitimate outcome the caller should reason about, not a broken
- * tool. Non-zero means this CLI could not deliver the command at all: no session
- * is running, the flags do not describe a valid command, or the session did not
- * answer.
- */
+/** Flags the session process understands, forwarded by `start`. */
+const FORWARDED_START_FLAGS = [
+    "target",
+    "fixture",
+    "goal",
+    "situation",
+    "company",
+    "username",
+    "origin",
+];
 
-const args = process.argv.slice(2);
-const verb = args[0];
-const flags = parseFlags(args.slice(1));
+type CommandOf<T extends SessionCommand["type"]> = Extract<
+    SessionCommand,
+    { type: T }
+>;
 
-try {
-    await run();
-} catch (error) {
-    print(`error: ${describeError(error)}`);
-    process.exitCode = 1;
-}
+/** A command before the CLI fills in the lease epoch and observation identity. */
+type WithoutLease<T> = T extends unknown
+    ? Omit<T, "controlEpoch" | "observationIdentity">
+    : never;
 
-async function run(): Promise<void> {
+type LeasedCommand = WithoutLease<
+    CommandOf<
+        | "act"
+        | "take-control"
+        | "escalate"
+        | "human-observe"
+        | "human-act"
+        | "resume"
+    >
+>;
+
+async function main(): Promise<void> {
+    const args = process.argv.slice(2);
+    const verb = args[0];
+    const flags = parseFlags(args.slice(1));
+
     switch (verb) {
         case "start":
-            await start();
+            await start(flags);
             return;
         case "observe":
-            await send({
+            await send(flags, {
                 type: "observe",
                 screenshot: flags.has("screenshot"),
             });
             return;
         case "act":
-            await sendWithCurrentEpoch({
+            await sendWithCurrentEpoch(flags, {
                 type: "act",
                 action: buildAction(flags),
-                risk: readRisk(),
+                risk: parseRisk(flags),
                 rationale: requireFlag(flags, "rationale"),
             });
             return;
         case "escalate":
-            await sendWithCurrentEpoch({
+            await sendWithCurrentEpoch(flags, {
                 type: "escalate",
                 reason: requireFlag(flags, "reason"),
             });
             return;
         case "wait-for-control":
-            await waitForControl();
+            await waitForControl(flags);
             return;
         case "take-control":
-            await sendWithCurrentEpoch({ type: "take-control" });
+            await sendWithCurrentEpoch(flags, { type: "take-control" });
             return;
         case "human-observe":
-            await sendWithCurrentEpoch({
+            await sendWithCurrentEpoch(flags, {
                 type: "human-observe",
                 screenshot: flags.has("screenshot"),
             });
             return;
         case "human-act":
-            await sendWithCurrentEpoch({
+            await sendWithCurrentEpoch(flags, {
                 type: "human-act",
                 action: buildAction(flags),
                 rationale: requireFlag(flags, "rationale"),
             });
             return;
         case "resume":
-            await sendWithCurrentEpoch({ type: "resume" });
+            await sendWithCurrentEpoch(flags, { type: "resume" });
             return;
         case "checkpoint":
-            await send({
+            await send(flags, {
                 type: "checkpoint",
                 name: requireFlag(flags, "name"),
                 satisfied: flags.get("satisfied") !== "false",
             });
             return;
         case "finish":
-            await finish();
+            await finish(flags);
             return;
         case "status":
-            await status();
+            await status(flags);
             return;
         case "stop":
-            await stop();
+            await stop(flags);
             return;
         default:
             printUsage();
@@ -127,14 +149,14 @@ async function run(): Promise<void> {
     }
 }
 
+await runMain(main);
+
 /**
- * Start a detached session for one run and wait until it can be reached.
- *
- * The session process outlives this command, so it is detached and its output is
- * kept in a log beside the state file. A failed start is the case worth reading
- * about, which is why the log tail is printed rather than summarized.
+ * Start a detached session for one run and wait until it can be reached. The
+ * session outlives this command, so its output goes to a log beside the state
+ * file, and a failed start prints the log tail rather than a summary.
  */
-async function start(): Promise<void> {
+async function start(flags: Map<string, string>): Promise<void> {
     const lane = flags.get("lane") ?? "default";
     const statePath = resolveSessionStatePath(lane);
     const existing = await readSessionState(statePath);
@@ -152,16 +174,23 @@ async function start(): Promise<void> {
     await mkdir(dirname(logPath), { recursive: true });
     const log = await open(logPath, "a");
 
-    const child = spawn(process.execPath, [entry, ...sessionArguments(lane)], {
-        detached: true,
-        stdio: ["ignore", log.fd, log.fd],
-        env: process.env,
-    });
+    const child = spawn(
+        process.execPath,
+        [entry, ...sessionArguments(flags, lane)],
+        {
+            detached: true,
+            stdio: ["ignore", log.fd, log.fd],
+            env: process.env,
+        },
+    );
     child.unref();
     await log.close();
 
-    const timeoutMs = Number(flags.get("timeout") ?? 240_000);
-    const state = await waitForState(statePath, timeoutMs);
+    const timeoutMs = requireNumberFlag(flags, "timeout", 240_000);
+    const state = await waitForValue(
+        () => readSessionState(statePath),
+        timeoutMs,
+    );
     if (state === null) {
         print(
             `error: the session did not become reachable within ${String(timeoutMs)}ms`,
@@ -179,224 +208,83 @@ async function start(): Promise<void> {
 }
 
 /** Forward the flags the session process understands, re-adding their dashes. */
-function sessionArguments(lane: string): string[] {
-    const forwarded = [
-        "target",
-        "fixture",
-        "goal",
-        "situation",
-        "company",
-        "username",
-        "origin",
-    ];
+function sessionArguments(flags: Map<string, string>, lane: string): string[] {
     const passthrough: string[] = ["--lane", lane];
-    for (const name of forwarded) {
+    for (const name of FORWARDED_START_FLAGS) {
         const value = flags.get(name);
         if (value !== undefined) passthrough.push(`--${name}`, value);
     }
     return passthrough;
 }
 
-/**
- * Finalize the run and retire the session.
- *
- * The order matters: the run must be closed by the session while it is still
- * alive, so the command is sent and answered first and only then is the process
- * signalled.
- */
-async function finish(): Promise<void> {
-    const status = requireFlag(flags, "status");
-    const outcome =
-        status === "satisfied"
-            ? {
-                  status: "satisfied" as const,
-                  summary: requireFlag(flags, "summary"),
-                  checkpoint: requireFlag(flags, "checkpoint"),
-              }
-            : {
-                  status: "error" as const,
-                  summary: requireFlag(flags, "summary"),
-                  code: requireFlag(flags, "code"),
-              };
-
-    await send({ type: "finish", outcome });
-    if (process.exitCode === 1) return;
-    await stop();
+/** Poll a probe until it reports a value, or return null at the deadline. */
+async function waitForValue<T>(
+    probe: () => Promise<T | null>,
+    timeoutMs: number,
+): Promise<T | null> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+        const value = await probe();
+        if (value !== null) return value;
+        await pause();
+    }
+    return null;
 }
 
-async function status(): Promise<void> {
-    const state = await readSessionState(
-        resolveSessionStatePath(flags.get("lane")),
-    );
-    if (state === null) {
-        print("no session is running");
-        return;
-    }
-    print(`session running: run ${state.runId}`);
-    print(`run directory: ${state.runDirectory}`);
-    print(`fixture: ${state.fixtureId}`);
-    print(`target: ${state.target} ${state.targetVersion}`);
-    print(`socket: ${state.socketPath}`);
-    print(`pid: ${String(state.pid)}`);
-    print(`goal: ${state.goal}`);
-    print(`controller: ${state.controller}`);
-    print(`control epoch: ${String(state.controlEpoch)}`);
-}
-
-async function stop(): Promise<void> {
-    const lane = flags.get("lane");
-    const statePath = resolveSessionStatePath(lane);
-    const state = await readSessionState(statePath);
-    if (state === null) {
-        print("no session is running");
-        return;
-    }
-
-    // Finalize the run *before* signalling the process.
-    //
-    // A SIGTERM tears the browser down under Playwright's own exit handling, so by
-    // the time the session tries to stop tracing the context is already gone and
-    // the run finalizes as `trace-stop-failed` — a capture failure that says
-    // nothing about what happened. Declaring the abandonment while the browser is
-    // alive stops the trace cleanly and records the honest reason instead.
-    const response = await requestSessionControl(state.socketPath, {
-        type: "finish",
-        outcome: {
-            status: "error",
-            code: "controller-disconnected",
-            summary:
-                "The controller stopped this run without declaring an outcome.",
-        },
-    });
-    // The session answers a finish on a closed run with a command-error record
-    // rather than a transport error, so only a `finished` record means this
-    // stop is what finalized the run.
-    const answer = response.ok ? asRecord(response.record) : {};
-    const refusal = response.ok ? String(answer.error) : response.error;
-    if (answer.type === "finished") {
-        print("run finalized: controller-disconnected");
-    } else if (!refusal.includes("already finalized")) {
-        print(`note: the session did not accept the final outcome: ${refusal}`);
-    }
-
+/** The last few log lines, which is where a failed start explains itself. */
+function tail(path: string, lines = 20): string {
     try {
-        process.kill(state.pid, "SIGTERM");
+        const content = readFileSync(path, "utf8").trimEnd().split("\n");
+        return content.slice(-lines).join("\n");
     } catch {
-        // The session is already gone; clearing the state file is all that is left.
+        return "(no session log)";
     }
-    const stopped = await waitUntilGone(
-        () => readSessionState(statePath),
-        60_000,
-    );
-    if (!stopped) {
-        print("error: the session did not stop within 60000ms");
-        process.exitCode = 1;
-        return;
-    }
-    await clearSessionState(statePath);
-    print(`session stopped: run ${state.runId}`);
-}
-
-/**
- * Block until automation holds the lease again, or the session is gone.
- *
- * After an escalation the controller has nothing to do but wait, and polling the
- * state file is the one place that knows who holds control. Exit status tells
- * the controller what happened without parsing: zero when control came back, one
- * when the session ended or the wait ran out.
- */
-async function waitForControl(): Promise<void> {
-    const statePath = resolveSessionStatePath(flags.get("lane"));
-    const timeoutMs = Number(flags.get("timeout") ?? 600_000);
-    const state = await waitForValue(async () => {
-        const current = await readSessionState(statePath);
-        if (current === null) return { gone: true as const };
-        return current.controller === "automation"
-            ? { gone: false as const, current }
-            : null;
-    }, timeoutMs);
-    if (state === null) {
-        print(
-            `error: automation did not regain control within ${String(timeoutMs)}ms`,
-        );
-        process.exitCode = 1;
-        return;
-    }
-    if (state.gone) {
-        print("error: the session ended while waiting for control");
-        process.exitCode = 1;
-        return;
-    }
-    print(
-        `control returned: automation epoch ${String(state.current.controlEpoch)}`,
-    );
-    print("observe before the next action");
-}
-
-/** Send a command using the current lease and observation state. */
-async function sendWithCurrentEpoch(
-    command:
-        | Omit<
-              Extract<SessionCommand, { type: "act" }>,
-              "controlEpoch" | "observationIdentity"
-          >
-        | Omit<
-              Extract<SessionCommand, { type: "take-control" }>,
-              "controlEpoch"
-          >
-        | Omit<Extract<SessionCommand, { type: "escalate" }>, "controlEpoch">
-        | Omit<
-              Extract<SessionCommand, { type: "human-observe" }>,
-              "controlEpoch"
-          >
-        | Omit<
-              Extract<SessionCommand, { type: "human-act" }>,
-              "controlEpoch" | "observationIdentity"
-          >
-        | Omit<
-              Extract<SessionCommand, { type: "resume" }>,
-              "controlEpoch" | "observationIdentity"
-          >,
-): Promise<void> {
-    const state = await readState();
-    const response = await requestSessionControl(state.socketPath, {
-        ...command,
-        controlEpoch: state.controlEpoch,
-        ...(requiresObservationIdentity(command) &&
-        state.currentObservationIdentity !== null &&
-        state.currentObservationIdentity !== undefined
-            ? { observationIdentity: state.currentObservationIdentity }
-            : {}),
-    });
-    if (!response.ok) {
-        print(`error: ${response.error}`);
-        process.exitCode = 1;
-        return;
-    }
-    await persistObservationIdentity(state, response.record);
-    render(response.record);
 }
 
 /** Send one command to the running session and render its answer. */
-async function send(command: SessionCommand): Promise<void> {
-    const state = await readState();
+async function send(
+    flags: Map<string, string>,
+    command: SessionCommand,
+): Promise<void> {
+    await deliver(flags, await requireState(flags), command);
+}
+
+/** Send a command bound to the current lease epoch and observation identity. */
+async function sendWithCurrentEpoch(
+    flags: Map<string, string>,
+    command: LeasedCommand,
+): Promise<void> {
+    const state = await requireState(flags);
+    const observationIdentity = state.currentObservationIdentity;
+    await deliver(flags, state, {
+        ...command,
+        controlEpoch: state.controlEpoch,
+        ...((command.type === "act" || command.type === "human-act") &&
+        observationIdentity !== null &&
+        observationIdentity !== undefined
+            ? { observationIdentity }
+            : {}),
+    });
+}
+
+async function deliver(
+    flags: Map<string, string>,
+    state: SessionState,
+    command: SessionCommand,
+): Promise<void> {
     const response = await requestSessionControl(state.socketPath, command);
     if (!response.ok) {
         print(`error: ${response.error}`);
         process.exitCode = 1;
         return;
     }
-    await persistObservationIdentity(state, response.record);
+    await persistObservationIdentity(flags, state, response.record);
     render(response.record);
 }
 
-function requiresObservationIdentity(command: {
-    type: string;
-}): command is { type: "act" | "human-act" } {
-    return command.type === "act" || command.type === "human-act";
-}
-
+/** Remember an observation's identity so the next act can bind to it. */
 async function persistObservationIdentity(
+    flags: Map<string, string>,
     state: SessionState,
     record: unknown,
 ): Promise<void> {
@@ -450,11 +338,9 @@ function render(record: unknown): void {
             print(`title: ${String(observation.title)}`);
             return;
         }
-        case "action-rejected": {
-            const decision = asRecord(value.decision);
-            print(`rejected: ${rejectionReason(value, decision)}`);
+        case "action-rejected":
+            print(`rejected: ${describeRejection(value)}`);
             return;
-        }
         case "checkpoint-recorded":
             print(`checkpoint recorded: ${String(value.name)}`);
             return;
@@ -485,9 +371,6 @@ function render(record: unknown): void {
         case "resume-rejected":
             print(`resume rejected: ${String(value.reason)}`);
             return;
-        case "resume-requested":
-            print("resume requested");
-            return;
         case "control-rejected":
             print(`rejected: ${String(value.reason)}`);
             return;
@@ -510,18 +393,34 @@ function render(record: unknown): void {
 }
 
 /**
- * Turn target flags into the one action the session's vocabulary accepts.
- *
- * The error text enumerates the accepted forms, because a caller that gets this
+ * Explain a refusal. The session names the reason as a string; a record in any
+ * other shape still has to produce a truthful sentence, not `[object Object]`.
+ */
+function describeRejection(value: Record<string, unknown>): string {
+    if (typeof value.reason === "string") return value.reason;
+    const decision = asRecord(value.decision);
+    if (typeof decision.reason === "string") return decision.reason;
+    return "the session refused this action";
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+    return value !== null && typeof value === "object" && !Array.isArray(value)
+        ? (value as Record<string, unknown>)
+        : {};
+}
+
+/**
+ * Turn target flags into the one action the session's vocabulary accepts. The
+ * error text enumerates the accepted forms, because a caller that gets this
  * wrong has no other way to learn the grammar.
  */
-function buildAction(options: Map<string, string>): SurfaceAction {
-    const type = requireFlag(flags, "type", options);
+function buildAction(flags: Map<string, string>): SurfaceAction {
+    const type = requireFlag(flags, "type");
     if (type === "navigate") {
-        return { type: "navigate", url: requireFlag(flags, "url", options) };
+        return { type: "navigate", url: requireFlag(flags, "url") };
     }
     if (type === "press") {
-        return { type: "press", key: requireFlag(flags, "key", options) };
+        return { type: "press", key: requireFlag(flags, "key") };
     }
     if (type !== "activate" && type !== "fill" && type !== "select") {
         throw new Error(
@@ -529,35 +428,30 @@ function buildAction(options: Map<string, string>): SurfaceAction {
         );
     }
 
-    const target = buildTarget(options);
+    const target = buildTarget(flags);
     if (type === "activate") return { type: "activate", target };
-    return { type, target, value: requireFlag(flags, "value", options) };
+    return { type, target, value: requireFlag(flags, "value") };
 }
 
-function buildTarget(options: Map<string, string>): TargetDescriptor {
-    const candidate = pickCandidate(options);
-    return { candidates: [candidate], require: "exactly-one" };
+function buildTarget(flags: Map<string, string>): TargetDescriptor {
+    return { candidates: [buildCandidate(flags)], require: "exactly-one" };
 }
 
-function pickCandidate(
-    options: Map<string, string>,
+function buildCandidate(
+    flags: Map<string, string>,
 ): TargetDescriptor["candidates"][number] {
-    const role = options.get("role");
+    const role = flags.get("role");
     if (role !== undefined) {
-        return {
-            kind: "role",
-            role,
-            name: requireFlag(flags, "name", options),
-        };
+        return { kind: "role", role, name: requireFlag(flags, "name") };
     }
-    const label = options.get("label");
+    const label = flags.get("label");
     if (label !== undefined) return { kind: "label", text: label };
 
-    const text = options.get("text");
+    const text = flags.get("text");
     if (text !== undefined) {
-        return { kind: "text", text, exact: options.has("exact") };
+        return { kind: "text", text, exact: flags.has("exact") };
     }
-    const css = options.get("css");
+    const css = flags.get("css");
     if (css !== undefined) return { kind: "css", selector: css };
 
     throw new Error(
@@ -565,7 +459,7 @@ function pickCandidate(
     );
 }
 
-function readRisk(): ActionRisk {
+function parseRisk(flags: Map<string, string>): ActionRisk {
     const risk = flags.get("risk") ?? "safe";
     if (risk !== "safe" && risk !== "reversible" && risk !== "irreversible") {
         throw new Error(
@@ -575,30 +469,132 @@ function readRisk(): ActionRisk {
     return risk;
 }
 
-async function readState(): Promise<SessionState> {
+/**
+ * Block until automation holds the lease again, or the session is gone. The
+ * state file is the one place that knows who holds control. Exit status is 0
+ * when control came back, 1 when the session ended or the wait ran out.
+ */
+async function waitForControl(flags: Map<string, string>): Promise<void> {
+    const statePath = resolveSessionStatePath(flags.get("lane"));
+    const timeoutMs = requireNumberFlag(flags, "timeout", 600_000);
+    const state = await waitForValue(async () => {
+        const current = await readSessionState(statePath);
+        if (current === null) return { gone: true as const };
+        return current.controller === "automation"
+            ? { gone: false as const, current }
+            : null;
+    }, timeoutMs);
+    if (state === null) {
+        print(
+            `error: automation did not regain control within ${String(timeoutMs)}ms`,
+        );
+        process.exitCode = 1;
+        return;
+    }
+    if (state.gone) {
+        print("error: the session ended while waiting for control");
+        process.exitCode = 1;
+        return;
+    }
+    print(
+        `control returned: automation epoch ${String(state.current.controlEpoch)}`,
+    );
+    print("observe before the next action");
+}
+
+/**
+ * Finalize the run and retire the session. The session must close the run
+ * while it is still alive, so the command is answered before the process is
+ * signalled.
+ */
+async function finish(flags: Map<string, string>): Promise<void> {
+    const status = requireFlag(flags, "status");
+    const outcome =
+        status === "satisfied"
+            ? {
+                  status: "satisfied" as const,
+                  summary: requireFlag(flags, "summary"),
+                  checkpoint: requireFlag(flags, "checkpoint"),
+              }
+            : {
+                  status: "error" as const,
+                  summary: requireFlag(flags, "summary"),
+                  code: requireFlag(flags, "code"),
+              };
+
+    await send(flags, { type: "finish", outcome });
+    if (process.exitCode === 1) return;
+    await stop(flags);
+}
+
+async function status(flags: Map<string, string>): Promise<void> {
     const state = await readSessionState(
         resolveSessionStatePath(flags.get("lane")),
     );
     if (state === null) {
-        throw new Error(
-            "No session is running. Start one with: scripts/session start --target <target> --fixture <name> --goal <text>",
-        );
+        print("no session is running");
+        return;
     }
-    return state;
+    print(`session running: run ${state.runId}`);
+    print(`run directory: ${state.runDirectory}`);
+    print(`fixture: ${state.fixtureId}`);
+    print(`target: ${state.target} ${state.targetVersion}`);
+    print(`socket: ${state.socketPath}`);
+    print(`pid: ${String(state.pid)}`);
+    print(`goal: ${state.goal}`);
+    print(`controller: ${state.controller}`);
+    print(`control epoch: ${String(state.controlEpoch)}`);
 }
 
-/** Poll a probe until it reports a value, or return null at the deadline. */
-async function waitForValue<T>(
-    probe: () => Promise<T | null>,
-    timeoutMs: number,
-): Promise<T | null> {
-    const deadline = Date.now() + timeoutMs;
-    while (Date.now() < deadline) {
-        const value = await probe();
-        if (value !== null) return value;
-        await pause();
+async function stop(flags: Map<string, string>): Promise<void> {
+    const statePath = resolveSessionStatePath(flags.get("lane"));
+    const state = await readSessionState(statePath);
+    if (state === null) {
+        print("no session is running");
+        return;
     }
-    return null;
+
+    // Finalize the run *before* signalling the process. A SIGTERM tears the
+    // browser down under Playwright's own exit handling, so a session stopping
+    // its trace afterwards finalizes as `trace-stop-failed`, which says nothing
+    // about what happened. Declaring the abandonment while the browser is alive
+    // stops the trace cleanly and records the honest reason instead.
+    const response = await requestSessionControl(state.socketPath, {
+        type: "finish",
+        outcome: {
+            status: "error",
+            code: "controller-disconnected",
+            summary:
+                "The controller stopped this run without declaring an outcome.",
+        },
+    });
+    // The session answers a finish on a closed run with a command-error record
+    // rather than a transport error, so only a `finished` record means this
+    // stop is what finalized the run.
+    const answer = response.ok ? asRecord(response.record) : {};
+    const refusal = response.ok ? String(answer.error) : response.error;
+    if (answer.type === "finished") {
+        print("run finalized: controller-disconnected");
+    } else if (!refusal.includes("already finalized")) {
+        print(`note: the session did not accept the final outcome: ${refusal}`);
+    }
+
+    try {
+        process.kill(state.pid, "SIGTERM");
+    } catch {
+        // The session is already gone; clearing the state file is all that is left.
+    }
+    const stopped = await waitUntilGone(
+        () => readSessionState(statePath),
+        60_000,
+    );
+    if (!stopped) {
+        print("error: the session did not stop within 60000ms");
+        process.exitCode = 1;
+        return;
+    }
+    await clearSessionState(statePath);
+    print(`session stopped: run ${state.runId}`);
 }
 
 /** Poll a probe until it stops reporting a value; true when it disappeared. */
@@ -614,47 +610,20 @@ async function waitUntilGone(
     return false;
 }
 
-function waitForState(
-    statePath: string,
-    timeoutMs: number,
-): Promise<SessionState | null> {
-    return waitForValue(() => readSessionState(statePath), timeoutMs);
+async function requireState(flags: Map<string, string>): Promise<SessionState> {
+    const state = await readSessionState(
+        resolveSessionStatePath(flags.get("lane")),
+    );
+    if (state === null) {
+        throw new Error(
+            "No session is running. Start one with: scripts/session start --target <target> --fixture <name> --goal <text>",
+        );
+    }
+    return state;
 }
 
 function pause(): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, 250));
-}
-
-function asRecord(value: unknown): Record<string, unknown> {
-    return value !== null && typeof value === "object" && !Array.isArray(value)
-        ? (value as Record<string, unknown>)
-        : {};
-}
-
-/**
- * Explain a refusal, which the session reports in two different shapes.
- *
- * A policy denial carries a decision object with a reason; an origin block
- * carries a bare reason string. Neither is guaranteed, so an unrecognized shape
- * still has to produce a truthful sentence rather than `[object Object]`.
- */
-function rejectionReason(
-    value: Record<string, unknown>,
-    decision: Record<string, unknown>,
-): string {
-    if (typeof value.reason === "string") return value.reason;
-    if (typeof decision.reason === "string") return decision.reason;
-    return "the session refused this action";
-}
-
-/** The last few log lines, which is where a failed start explains itself. */
-function tail(path: string, lines = 20): string {
-    try {
-        const content = readFileSync(path, "utf8").trimEnd().split("\n");
-        return content.slice(-lines).join("\n");
-    } catch {
-        return "(no session log)";
-    }
 }
 
 function printUsage(): void {
