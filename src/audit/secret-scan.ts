@@ -334,7 +334,7 @@ function scanLine(
 /**
  * Whether a bare assignment value is a reference rather than a literal.
  *
- * `requireFixturePassword()` and `process.env.X` occupy the same position as a
+ * `requireEnv("X")` and `process.env.X` occupy the same position as a
  * literal password and are not one. The character after the match decides the
  * first case — it sits outside the match, because the value pattern stops at the
  * parenthesis — and a dot inside the value decides the second.

@@ -2,6 +2,7 @@ import { cp, lstat, mkdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 
 import { validateRunAttestation } from "./run-recorder.js";
+import { isNodeError } from "../common/errors.js";
 
 /**
  * Promoting scratch runs into the committed evidence set.
@@ -16,14 +17,14 @@ import { validateRunAttestation } from "./run-recorder.js";
  * request fails without leaving evidence half-promoted.
  */
 
-export interface PromoteTestRunsOptions {
+export interface PromoteRunsOptions {
     runsDirectory: string;
     evidenceDirectory: string;
     runIds: readonly string[];
 }
 
 /** One run that was promoted, and the outcome it was validated against. */
-export interface PromotedTestRun {
+export interface PromotedRun {
     runId: string;
     status: "satisfied" | "error";
     sourceDirectory: string;
@@ -45,9 +46,9 @@ const REQUIRED_RUN_FILES = [
  * is refused rather than merged: two evidence directories claiming the same run
  * would disagree about provenance, which is the one thing evidence cannot do.
  */
-export async function promoteTestRuns(
-    options: PromoteTestRunsOptions,
-): Promise<readonly PromotedTestRun[]> {
+export async function promoteRuns(
+    options: PromoteRunsOptions,
+): Promise<readonly PromotedRun[]> {
     if (options.runIds.length === 0) {
         throw new Error("At least one run ID is required");
     }
@@ -55,7 +56,7 @@ export async function promoteTestRuns(
     const evidenceRunsDirectory = join(options.evidenceDirectory, "runs");
     await mkdir(evidenceRunsDirectory, { recursive: true });
 
-    const candidates: PromotedTestRun[] = [];
+    const candidates: PromotedRun[] = [];
     const seen = new Set<string>();
     for (const runId of options.runIds) {
         validateRunId(runId);
@@ -160,8 +161,4 @@ async function pathExists(path: string): Promise<boolean> {
         }
         throw error;
     }
-}
-
-function isNodeError(error: unknown): error is NodeJS.ErrnoException {
-    return error instanceof Error && "code" in error;
 }

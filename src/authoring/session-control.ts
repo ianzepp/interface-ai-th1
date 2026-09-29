@@ -6,6 +6,7 @@ import {
     parseSessionCommand,
     type SessionCommand,
 } from "./interactive-playwright-session.js";
+import { describeError } from "../common/errors.js";
 
 /**
  * How a separate process drives a live discovery session.
@@ -235,8 +236,4 @@ export function parseControlResponse(source: string): SessionControlResponse {
 
 function respond(socket: Socket, response: SessionControlResponse): void {
     socket.end(`${JSON.stringify(response)}\n`);
-}
-
-function describeError(error: unknown): string {
-    return error instanceof Error ? error.message : String(error);
 }

@@ -20,18 +20,19 @@ import {
 } from "../intervention/request.js";
 import { PlaywrightBrowserDriver } from "../surfaces/playwright-driver.js";
 import type { ActionRisk, SurfaceAction } from "../surfaces/surface-driver.js";
-import { PlaywrightTestRunCapture } from "./playwright-run-capture.js";
+import { PlaywrightRunCapture } from "./playwright-run-capture.js";
 import type {
     DecisionReceipt,
     EventIdentity,
     ObservationIdentity,
 } from "./event-recorder.js";
 import {
-    FileTestRunRecorder,
+    FileRunRecorder,
     type ProducerRecord,
     type ReviewedResumeBinding,
-    type TestRunOutcome,
+    type RunOutcome,
 } from "./run-recorder.js";
+import { describeError } from "../common/errors.js";
 
 export interface SessionOptions {
     rootDirectory: string;
@@ -87,7 +88,7 @@ export type SessionCommand =
           controlEpoch?: number;
       }
     | { type: "checkpoint"; name: string; satisfied: boolean }
-    | { type: "finish"; outcome: TestRunOutcome };
+    | { type: "finish"; outcome: RunOutcome };
 
 /** Commands whose lease refusal is recorded as a `control-rejected` event. */
 type ControlCommand =
@@ -126,8 +127,8 @@ export interface InteractiveSession {
 interface SessionRun {
     options: SessionOptions;
     page: Page;
-    recorder: FileTestRunRecorder;
-    capture: PlaywrightTestRunCapture;
+    recorder: FileRunRecorder;
+    capture: PlaywrightRunCapture;
     driver: PlaywrightBrowserDriver;
     policy: ArtifactPolicy;
     finalized: boolean;
@@ -155,7 +156,7 @@ export async function createInteractiveSession(
     try {
         await options.prepare(page);
 
-        const recorder = await FileTestRunRecorder.start({
+        const recorder = await FileRunRecorder.start({
             rootDirectory: options.rootDirectory,
             goal: options.goal,
             situation: options.situation,
@@ -166,7 +167,7 @@ export async function createInteractiveSession(
             sensitiveInputValues: options.sensitiveInputValues,
             resumeBinding: options.resumeBinding,
         });
-        const capture = await PlaywrightTestRunCapture.start(
+        const capture = await PlaywrightRunCapture.start(
             context.tracing,
             recorder,
             options.sensitiveInputValues,
@@ -514,8 +515,8 @@ async function handleCommand(
 
 async function deriveTerminalOutcome(
     run: SessionRun,
-    requested: TestRunOutcome,
-): Promise<TestRunOutcome | null> {
+    requested: RunOutcome,
+): Promise<RunOutcome | null> {
     if (requested.status === "error") {
         return {
             status: "error",
@@ -753,7 +754,7 @@ function recordControlRejection(
     run: SessionRun,
     command: ControlCommand | "finish",
     reason: string,
-): ReturnType<FileTestRunRecorder["append"]> {
+): ReturnType<FileRunRecorder["append"]> {
     return run.recorder.append({
         type: "control-rejected",
         recordedAt: new Date().toISOString(),
@@ -923,10 +924,6 @@ function blockedOrigin(
     return allowedOrigins.includes(origin)
         ? null
         : `Origin ${origin} is not allowlisted`;
-}
-
-function describeError(error: unknown): string {
-    return error instanceof Error ? error.message : String(error);
 }
 
 async function closeQuietly(

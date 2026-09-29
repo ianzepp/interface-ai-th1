@@ -7,7 +7,8 @@ import { promisify } from "node:util";
 import { ArtifactPolicy } from "../runtime/policy.js";
 import type { SurfaceAction } from "../surfaces/surface-driver.js";
 import { containsSensitiveValue } from "./redaction.js";
-import type { FileTestRunRecorder, TestRunOutcome } from "./run-recorder.js";
+import type { FileRunRecorder, RunOutcome } from "./run-recorder.js";
+import { describeError } from "../common/errors.js";
 
 const execFileAsync = promisify(execFile);
 const TRACE_SCAN_MAX_BUFFER = 64 * 1024 * 1024;
@@ -41,13 +42,13 @@ export interface TraceController {
     stop(options: TraceStopOptions): Promise<void>;
 }
 
-export class PlaywrightTestRunCapture {
+export class PlaywrightRunCapture {
     #finished = false;
     readonly #sensitiveInputValues: readonly string[];
 
     private constructor(
         public readonly tracing: TraceController,
-        public readonly recorder: FileTestRunRecorder,
+        public readonly recorder: FileRunRecorder,
         sensitiveInputValues: readonly string[],
     ) {
         this.#sensitiveInputValues = sensitiveInputValues;
@@ -55,9 +56,9 @@ export class PlaywrightTestRunCapture {
 
     public static async start(
         tracing: TraceController,
-        recorder: FileTestRunRecorder,
+        recorder: FileRunRecorder,
         sensitiveInputValues: readonly string[] | undefined = [],
-    ): Promise<PlaywrightTestRunCapture> {
+    ): Promise<PlaywrightRunCapture> {
         try {
             await startTrace(tracing, recorder.directory);
         } catch (error) {
@@ -68,7 +69,7 @@ export class PlaywrightTestRunCapture {
             });
             throw error;
         }
-        return new PlaywrightTestRunCapture(
+        return new PlaywrightRunCapture(
             tracing,
             recorder,
             sensitiveInputValues,
@@ -114,7 +115,7 @@ export class PlaywrightTestRunCapture {
         }
     }
 
-    public async finish(outcome: TestRunOutcome): Promise<void> {
+    public async finish(outcome: RunOutcome): Promise<void> {
         if (this.#finished) {
             throw new Error("Playwright test run capture is already finished");
         }
@@ -215,8 +216,4 @@ async function traceMemberContent(
 
 function toError(error: unknown): Error {
     return error instanceof Error ? error : new Error(String(error));
-}
-
-function describeError(error: unknown): string {
-    return error instanceof Error ? error.message : String(error);
 }

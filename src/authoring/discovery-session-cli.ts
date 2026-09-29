@@ -23,6 +23,8 @@ import {
     writeSessionState,
     type SessionState,
 } from "./session-state.js";
+import { describeError } from "../common/errors.js";
+import { requireEnv } from "../common/env.js";
 
 /**
  * One live discovery session, reachable by anything that can open a socket.
@@ -219,7 +221,7 @@ async function bootstrapFixture(
 
     switch (target) {
         case "dolibarr": {
-            const password = requireEnvironment("DOLIBARR_FIXTURE_PASSWORD");
+            const password = requireEnv("DOLIBARR_FIXTURE_PASSWORD");
             await page.goto(origin);
             if (!page.url().includes("/index.php?mainmenu=home")) {
                 await page.locator('input[name="username"]').fill(username);
@@ -235,7 +237,7 @@ async function bootstrapFixture(
             return;
         }
         case "ledgersmb": {
-            const password = requireEnvironment("LEDGERSMB_FIXTURE_PASSWORD");
+            const password = requireEnv("LEDGERSMB_FIXTURE_PASSWORD");
             await page.goto(`${origin}/login.pl`);
             await page.locator("#username").fill(username);
             await page.locator("#password").fill(password);
@@ -262,20 +264,12 @@ async function bootstrapFixture(
 function fixtureSensitiveValues(targetName: string): readonly string[] {
     switch (targetName) {
         case "dolibarr":
-            return [requireEnvironment("DOLIBARR_FIXTURE_PASSWORD")];
+            return [requireEnv("DOLIBARR_FIXTURE_PASSWORD")];
         case "ledgersmb":
-            return [requireEnvironment("LEDGERSMB_FIXTURE_PASSWORD")];
+            return [requireEnv("LEDGERSMB_FIXTURE_PASSWORD")];
         default:
             return [];
     }
-}
-
-function requireEnvironment(name: string): string {
-    const value = process.env[name];
-    if (value === undefined || value === "") {
-        throw new Error(`${name} is required to authenticate the fixture`);
-    }
-    return value;
 }
 
 /**
@@ -320,8 +314,4 @@ async function readProducerSeal(
         );
     }
     return { kind, provider, model, sessionNonce, sealPath };
-}
-
-function describeError(error: unknown): string {
-    return error instanceof Error ? error.message : String(error);
 }

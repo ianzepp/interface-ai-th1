@@ -4,11 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { promoteTestRuns } from "../src/authoring/evidence-promotion.js";
+import { promoteRuns } from "../src/authoring/evidence-promotion.js";
 import {
-    FileTestRunRecorder,
+    FileRunRecorder,
     type ProducerRecord,
-    type TestRunOutcome,
+    type RunOutcome,
 } from "../src/authoring/run-recorder.js";
 
 const HUMAN_PRODUCER: ProducerRecord = {
@@ -45,7 +45,7 @@ test("promotes multiple completed runs without changing the raw runs", async (co
         code: "customer-not-found",
     });
 
-    const promoted = await promoteTestRuns({
+    const promoted = await promoteRuns({
         runsDirectory,
         evidenceDirectory,
         runIds: ["happy-run", "failed-run"],
@@ -89,7 +89,7 @@ test("promotes a finalized run containing an intervention and control transfer",
     const evidenceDirectory = join(rootDirectory, "evidence");
     await createHandoffRun(runsDirectory, "handoff-run");
 
-    const promoted = await promoteTestRuns({
+    const promoted = await promoteRuns({
         runsDirectory,
         evidenceDirectory,
         runIds: ["handoff-run"],
@@ -116,7 +116,7 @@ test("refuses to promote a running or already-promoted run", async (context) => 
     );
     const runsDirectory = join(rootDirectory, "runs");
     const evidenceDirectory = join(rootDirectory, "evidence");
-    const running = await FileTestRunRecorder.start({
+    const running = await FileRunRecorder.start({
         rootDirectory: runsDirectory,
         runId: "running-run",
         goal: "Find a balance",
@@ -129,7 +129,7 @@ test("refuses to promote a running or already-promoted run", async (context) => 
     await writeFile(running.tracePath, "incomplete trace", "utf8");
 
     await assert.rejects(
-        promoteTestRuns({
+        promoteRuns({
             runsDirectory,
             evidenceDirectory,
             runIds: ["running-run"],
@@ -142,13 +142,13 @@ test("refuses to promote a running or already-promoted run", async (context) => 
         summary: "The run was stopped.",
         code: "stopped",
     });
-    await promoteTestRuns({
+    await promoteRuns({
         runsDirectory,
         evidenceDirectory,
         runIds: ["running-run"],
     });
     await assert.rejects(
-        promoteTestRuns({
+        promoteRuns({
             runsDirectory,
             evidenceDirectory,
             runIds: ["running-run"],
@@ -195,7 +195,7 @@ test("refuses runs without a launcher-sealed producer record", async (context) =
     );
 
     await assert.rejects(
-        promoteTestRuns({
+        promoteRuns({
             runsDirectory,
             evidenceDirectory,
             runIds: ["missing-producer"],
@@ -203,7 +203,7 @@ test("refuses runs without a launcher-sealed producer record", async (context) =
         /launcher-sealed producer/,
     );
     await assert.rejects(
-        promoteTestRuns({
+        promoteRuns({
             runsDirectory,
             evidenceDirectory,
             runIds: ["invalid-producer"],
@@ -260,7 +260,7 @@ test("refuses a broken, mismatched, or unbound decision receipt chain", async (c
     );
 
     await assert.rejects(
-        promoteTestRuns({
+        promoteRuns({
             runsDirectory,
             evidenceDirectory,
             runIds: ["broken-chain"],
@@ -268,7 +268,7 @@ test("refuses a broken, mismatched, or unbound decision receipt chain", async (c
         /receipt chain is broken/,
     );
     await assert.rejects(
-        promoteTestRuns({
+        promoteRuns({
             runsDirectory,
             evidenceDirectory,
             runIds: ["mismatched-receipt"],
@@ -276,7 +276,7 @@ test("refuses a broken, mismatched, or unbound decision receipt chain", async (c
         /receipt does not match the earlier observation it claims/,
     );
     await assert.rejects(
-        promoteTestRuns({
+        promoteRuns({
             runsDirectory,
             evidenceDirectory,
             runIds: ["unbound-receipt"],
@@ -301,7 +301,7 @@ test("refuses a run finalized with a sensitive-evidence outcome", async (context
     });
 
     await assert.rejects(
-        promoteTestRuns({
+        promoteRuns({
             runsDirectory,
             evidenceDirectory,
             runIds: ["sensitive-run"],
@@ -330,7 +330,7 @@ test("preflights a batch before copying any requested run", async (context) => {
     });
 
     await assert.rejects(
-        promoteTestRuns({
+        promoteRuns({
             runsDirectory,
             evidenceDirectory,
             runIds: ["valid-run", "missing-run"],
@@ -347,7 +347,7 @@ async function createHandoffRun(
     runsDirectory: string,
     runId: string,
 ): Promise<void> {
-    const recorder = await FileTestRunRecorder.start({
+    const recorder = await FileRunRecorder.start({
         rootDirectory: runsDirectory,
         runId,
         goal: "Recover a customer lookup",
@@ -400,7 +400,7 @@ async function createReceiptedRun(
     runsDirectory: string,
     runId: string,
 ): Promise<void> {
-    const recorder = await FileTestRunRecorder.start({
+    const recorder = await FileRunRecorder.start({
         rootDirectory: runsDirectory,
         runId,
         goal: "Find a customer balance",
@@ -460,7 +460,7 @@ async function createUnboundRun(
     runsDirectory: string,
     runId: string,
 ): Promise<void> {
-    const recorder = await FileTestRunRecorder.start({
+    const recorder = await FileRunRecorder.start({
         rootDirectory: runsDirectory,
         runId,
         goal: "Find a customer balance",
@@ -500,7 +500,7 @@ test("promotes a decision-free deterministic replay recorded without a producer"
     );
     const runsDirectory = join(rootDirectory, "runs");
     const evidenceDirectory = join(rootDirectory, "evidence");
-    const recorder = await FileTestRunRecorder.start({
+    const recorder = await FileRunRecorder.start({
         rootDirectory: runsDirectory,
         runId: "replay-run",
         goal: "Replay a reviewed artifact",
@@ -529,7 +529,7 @@ test("promotes a decision-free deterministic replay recorded without a producer"
         checkpoint: "success",
     });
 
-    const promoted = await promoteTestRuns({
+    const promoted = await promoteRuns({
         runsDirectory,
         evidenceDirectory,
         runIds: ["replay-run"],
@@ -546,7 +546,7 @@ test("refuses a producer-less run whose ledger records a handoff", async (contex
     );
     const runsDirectory = join(rootDirectory, "runs");
     const evidenceDirectory = join(rootDirectory, "evidence");
-    const recorder = await FileTestRunRecorder.start({
+    const recorder = await FileRunRecorder.start({
         rootDirectory: runsDirectory,
         runId: "unattested-handoff",
         goal: "Replay a reviewed artifact",
@@ -569,7 +569,7 @@ test("refuses a producer-less run whose ledger records a handoff", async (contex
     });
 
     await assert.rejects(
-        promoteTestRuns({
+        promoteRuns({
             runsDirectory,
             evidenceDirectory,
             runIds: ["unattested-handoff"],
@@ -592,9 +592,9 @@ async function writeManifest(
 async function createCompletedRun(
     runsDirectory: string,
     runId: string,
-    outcome: TestRunOutcome,
+    outcome: RunOutcome,
 ): Promise<void> {
-    const recorder = await FileTestRunRecorder.start({
+    const recorder = await FileRunRecorder.start({
         rootDirectory: runsDirectory,
         runId,
         goal: "Find a customer balance",

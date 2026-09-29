@@ -8,6 +8,8 @@ import { getTargetProfile } from "../targets/index.js";
 import { buildAuthorPrompt, buildDiscoveryRunPrompt } from "./author-prompt.js";
 import { parseFlags, requireFlag } from "./flag-args.js";
 import { attestDiscoveryRuns } from "./run-recorder.js";
+import { print } from "../common/cli.js";
+import { describeError } from "../common/errors.js";
 
 /**
  * Launch one self-contained authoring session.
@@ -338,10 +340,6 @@ async function tail(path: string, lines: number): Promise<string> {
     return content.trimEnd().split("\n").slice(-lines).join("\n");
 }
 
-function print(line: string): void {
-    process.stdout.write(`${line}\n`);
-}
-
 function printUsage(): void {
     print(`Usage:
   scripts/author --goal <text> --target <ledgersmb|dolibarr> --fixture <snapshot> [options]
@@ -375,8 +373,4 @@ Options:
   --print-prompt             Print the prompt and exit without running anything.
   --help                     Show this message.
 `);
-}
-
-function describeError(error: unknown): string {
-    return error instanceof Error ? error.message : String(error);
 }

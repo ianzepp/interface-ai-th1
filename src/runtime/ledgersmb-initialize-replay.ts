@@ -18,16 +18,17 @@ import { join } from "node:path";
 
 import { chromium } from "playwright";
 
-import { PlaywrightTestRunCapture } from "../authoring/playwright-run-capture.js";
-import { FileTestRunRecorder } from "../authoring/run-recorder.js";
+import { PlaywrightRunCapture } from "../authoring/playwright-run-capture.js";
+import { FileRunRecorder } from "../authoring/run-recorder.js";
 import { ledgerSmbInitializeArtifact } from "../capabilities/ledgersmb-initialize.js";
 import { PlaywrightBrowserDriver } from "../surfaces/playwright-driver.js";
 import { DeterministicEngine } from "./engine.js";
 import { ArtifactPolicy } from "./policy.js";
+import { requireEnv } from "../common/env.js";
 
-const PASSWORD = requireFixturePassword();
+const PASSWORD = requireEnv("LEDGERSMB_FIXTURE_PASSWORD");
 
-const recorder = await FileTestRunRecorder.start({
+const recorder = await FileRunRecorder.start({
     rootDirectory: join(process.cwd(), "runs"),
     goal: ledgerSmbInitializeArtifact.contract.goal,
     situation: "Deterministic replay against fresh LedgerSMB Docker volumes.",
@@ -41,11 +42,9 @@ await mkdir(join(recorder.directory, "screenshots"), { recursive: true });
 const browser = await chromium.launch({ headless: true });
 const context = await browser.newContext({ locale: "en-US" });
 const page = await context.newPage();
-const capture = await PlaywrightTestRunCapture.start(
-    context.tracing,
-    recorder,
-    [PASSWORD],
-);
+const capture = await PlaywrightRunCapture.start(context.tracing, recorder, [
+    PASSWORD,
+]);
 
 const driver = new PlaywrightBrowserDriver(
     context,
@@ -120,14 +119,4 @@ try {
     await context.close();
     await browser.close();
     console.log(`Run directory: ${recorder.directory}`);
-}
-
-function requireFixturePassword(): string {
-    const password = process.env.LEDGERSMB_FIXTURE_PASSWORD;
-    if (password === undefined || password === "") {
-        throw new Error(
-            "LEDGERSMB_FIXTURE_PASSWORD is required for npm run replay:ledgersmb:initialize",
-        );
-    }
-    return password;
 }

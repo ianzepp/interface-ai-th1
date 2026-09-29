@@ -40,8 +40,8 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
-import type { DiscoveryEvent } from "./event-recorder.js";
-import type { TestRunManifest } from "./run-recorder.js";
+import type { RunEvent } from "./event-recorder.js";
+import type { RunManifest } from "./run-recorder.js";
 import type {
     CapabilityArtifact,
     CapabilityStage,
@@ -54,6 +54,7 @@ import type {
     SurfaceAction,
     TargetDescriptor,
 } from "../surfaces/surface-driver.js";
+import { describeError } from "../common/errors.js";
 
 const execFileAsync = promisify(execFile);
 const TRACE_MAX_BUFFER = 64 * 1024 * 1024;
@@ -70,8 +71,8 @@ export interface TraceSummary {
 
 /** Inputs needed to construct a first-pass draft without mutating the run. */
 export interface DraftArtifactInput {
-    manifest: TestRunManifest;
-    events: readonly DiscoveryEvent[];
+    manifest: RunManifest;
+    events: readonly RunEvent[];
     trace: TraceSummary;
     capabilityId: string;
 }
@@ -118,8 +119,8 @@ export interface ArtifactComparison {
 
 /** Read a finalized successful run and summarize its Playwright trace. */
 export async function readSuccessfulRun(runDirectory: string): Promise<{
-    manifest: TestRunManifest;
-    events: readonly DiscoveryEvent[];
+    manifest: RunManifest;
+    events: readonly RunEvent[];
     trace: TraceSummary;
 }> {
     const manifest = parseManifest(
@@ -441,18 +442,18 @@ const TRACE_ACTION_METHODS = new Set([
     "type",
 ]);
 
-function parseManifest(source: string): TestRunManifest {
+function parseManifest(source: string): RunManifest {
     const value: unknown = JSON.parse(source);
     if (value === null || typeof value !== "object" || Array.isArray(value))
         throw new Error("Run manifest must be a JSON object");
-    return value as TestRunManifest;
+    return value as RunManifest;
 }
 
-function parseDiscoveryEvent(source: string): DiscoveryEvent {
+function parseDiscoveryEvent(source: string): RunEvent {
     const value: unknown = JSON.parse(source);
     if (value === null || typeof value !== "object" || Array.isArray(value))
         throw new Error("Discovery event must be a JSON object");
-    return value as DiscoveryEvent;
+    return value as RunEvent;
 }
 
 function parseTraceEntry(source: string): TraceEntry {
@@ -469,8 +470,8 @@ function parseTraceEntry(source: string): TraceEntry {
 }
 
 function isActionEvent(
-    event: DiscoveryEvent,
-): event is Extract<DiscoveryEvent, { type: "action" }> {
+    event: RunEvent,
+): event is Extract<RunEvent, { type: "action" }> {
     return event.type === "action";
 }
 
@@ -576,9 +577,9 @@ function looksSensitive(
  * warning, because a stage with no grounded detector cannot be reviewed.
  */
 function detectorForStage(
-    actionEvents: readonly Extract<DiscoveryEvent, { type: "action" }>[],
+    actionEvents: readonly Extract<RunEvent, { type: "action" }>[],
     index: number,
-    event: Extract<DiscoveryEvent, { type: "action" }>,
+    event: Extract<RunEvent, { type: "action" }>,
 ): { detector: StateDetector; warning?: string } {
     for (
         let nextIndex = index + 1;
@@ -722,14 +723,14 @@ function draftRisk(action: SurfaceAction): ActionRisk {
     return action.type === "activate" ? "reversible" : "safe";
 }
 
-function successCondition(manifest: TestRunManifest): string {
+function successCondition(manifest: RunManifest): string {
     if (manifest.outcome?.status === "satisfied")
         return `Observed checkpoint: ${manifest.outcome.checkpoint}`;
     return "The recorded run reaches its declared success checkpoint.";
 }
 
 function collectOrigins(
-    events: readonly Extract<DiscoveryEvent, { type: "action" }>[],
+    events: readonly Extract<RunEvent, { type: "action" }>[],
 ): string[] {
     const origins = new Set<string>();
     for (const event of events) {
@@ -779,10 +780,6 @@ function unique<T>(values: readonly T[]): T[] {
 
 function escapeRegExp(value: string): string {
     return value.replaceAll(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function describeError(error: unknown): string {
-    return error instanceof Error ? error.message : String(error);
 }
 
 interface TraceEntry {

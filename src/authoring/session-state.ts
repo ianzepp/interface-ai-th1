@@ -2,6 +2,7 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 
 import type { ObservationIdentity } from "./event-recorder.js";
+import { isNodeError } from "../common/errors.js";
 
 /**
  * How a caller finds the live session it is allowed to drive.
@@ -167,8 +168,4 @@ function isProcessAlive(pid: number): boolean {
     } catch {
         return false;
     }
-}
-
-function isNodeError(error: unknown): error is NodeJS.ErrnoException {
-    return error instanceof Error && "code" in error;
 }

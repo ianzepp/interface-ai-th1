@@ -12,6 +12,8 @@ import {
     type SecretFinding,
     type SecretSeverity,
 } from "./secret-scan.js";
+import { print } from "../common/cli.js";
+import { describeError } from "../common/errors.js";
 
 /**
  * Run the secret scan over this repository.
@@ -189,14 +191,6 @@ function countBy<T, K extends string>(
         counts[name] = (counts[name] ?? 0) + 1;
     }
     return counts;
-}
-
-function print(line: string): void {
-    process.stdout.write(`${line}\n`);
-}
-
-function describeError(error: unknown): string {
-    return error instanceof Error ? error.message : String(error);
 }
 
 function printUsage(): void {

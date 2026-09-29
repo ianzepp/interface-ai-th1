@@ -26,16 +26,17 @@ import { chromium } from "playwright";
 
 import {
     executePolicyBoundAction,
-    PlaywrightTestRunCapture,
+    PlaywrightRunCapture,
 } from "./playwright-run-capture.js";
 import { ArtifactPolicy } from "../runtime/policy.js";
-import { FileTestRunRecorder } from "./run-recorder.js";
+import { FileRunRecorder } from "./run-recorder.js";
 import type {
     ActionResult,
     Observation,
     SurfaceAction,
     TargetDescriptor,
 } from "../surfaces/surface-driver.js";
+import { requireEnv } from "../common/env.js";
 
 const BASE_URL = "http://127.0.0.1:5762";
 const policy = new ArtifactPolicy({
@@ -43,11 +44,11 @@ const policy = new ArtifactPolicy({
     allowedActionTypes: ["navigate", "activate", "fill", "select", "press"],
     riskyActionMode: "block",
 });
-const PASSWORD = requireFixturePassword();
+const PASSWORD = requireEnv("LEDGERSMB_FIXTURE_PASSWORD");
 const DATABASE = "interface_ai";
 const USERNAME = "admin";
 
-const recorder = await FileTestRunRecorder.start({
+const recorder = await FileRunRecorder.start({
     rootDirectory: join(process.cwd(), "runs"),
     goal: "Initialize a fresh LedgerSMB company and prove the first administrator can log in.",
     situation:
@@ -61,11 +62,9 @@ const recorder = await FileTestRunRecorder.start({
 const browser = await chromium.launch({ headless: true });
 const context = await browser.newContext({ locale: "en-US" });
 const page = await context.newPage();
-const capture = await PlaywrightTestRunCapture.start(
-    context.tracing,
-    recorder,
-    [PASSWORD],
-);
+const capture = await PlaywrightRunCapture.start(context.tracing, recorder, [
+    PASSWORD,
+]);
 
 try {
     await recordAction(
@@ -359,14 +358,4 @@ function cssTarget(selector: string): TargetDescriptor {
 function conciseError(error: unknown): string {
     const message = error instanceof Error ? error.message : String(error);
     return message.split("\n", 1)[0] ?? "Unknown initialization failure";
-}
-
-function requireFixturePassword(): string {
-    const password = process.env.LEDGERSMB_FIXTURE_PASSWORD;
-    if (password === undefined || password === "") {
-        throw new Error(
-            "LEDGERSMB_FIXTURE_PASSWORD is required for npm run capture:ledgersmb:initialize",
-        );
-    }
-    return password;
 }

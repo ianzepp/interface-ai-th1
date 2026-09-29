@@ -18,30 +18,29 @@ import { join } from "node:path";
 
 import { chromium, type Page } from "playwright";
 
-import { FileTestRunRecorder } from "../authoring/run-recorder.js";
+import { FileRunRecorder } from "../authoring/run-recorder.js";
 import { dolibarrThirdPartyLookupArtifact } from "../capabilities/dolibarr-third-party-lookup.js";
 import { PlaywrightBrowserDriver } from "../surfaces/playwright-driver.js";
 import { DeterministicEngine } from "./engine.js";
 import { ArtifactPolicy } from "./policy.js";
+import { requireEnv } from "../common/env.js";
 
 const BASE_URL = "http://127.0.0.1:8080";
 const name = process.env.DOLIBARR_LOOKUP_NAME ?? "Book Keeping Company";
 const expected = process.env.DOLIBARR_EXPECT_RESULT ?? "success";
 const skipAuthentication = process.env.DOLIBARR_SKIP_AUTH === "1";
-const password = process.env.DOLIBARR_FIXTURE_PASSWORD;
-if (password === undefined && !skipAuthentication) {
-    throw new Error("DOLIBARR_FIXTURE_PASSWORD is required");
-}
+let password: string | undefined;
+if (!skipAuthentication) password = requireEnv("DOLIBARR_FIXTURE_PASSWORD");
 
 const browser = await chromium.launch({ headless: true });
 const context = await browser.newContext({ locale: "en-US" });
 const page = await context.newPage();
-let recorder: FileTestRunRecorder | undefined;
+let recorder: FileRunRecorder | undefined;
 let traceStopped = false;
 
 try {
     await prepare(page, password, skipAuthentication);
-    recorder = await FileTestRunRecorder.start({
+    recorder = await FileRunRecorder.start({
         rootDirectory: join(process.cwd(), "runs"),
         goal: dolibarrThirdPartyLookupArtifact.contract.goal,
         situation: `Deterministic replay for expected result ${expected}.`,

@@ -12,6 +12,8 @@ import {
 } from "./artifact-catalog.js";
 import { auditArtifact, type AuditFinding } from "./artifact-rubric.js";
 import { buildAuditPrompt } from "./audit-prompt.js";
+import { print } from "../common/cli.js";
+import { describeError } from "../common/errors.js";
 
 /**
  * Review a capability artifact, on demand.
@@ -184,14 +186,6 @@ function readIfPresent(path: string): string | null {
     } catch {
         return null;
     }
-}
-
-function print(line: string): void {
-    process.stdout.write(`${line}\n`);
-}
-
-function describeError(error: unknown): string {
-    return error instanceof Error ? error.message : String(error);
 }
 
 function printUsage(): void {

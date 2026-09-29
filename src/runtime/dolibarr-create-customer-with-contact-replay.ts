@@ -11,11 +11,12 @@ import { join } from "node:path";
 
 import { chromium, type Page } from "playwright";
 
-import { FileTestRunRecorder } from "../authoring/run-recorder.js";
+import { FileRunRecorder } from "../authoring/run-recorder.js";
 import { dolibarrCreateCustomerWithContactArtifact } from "../capabilities/dolibarr-create-customer-with-contact.js";
 import { PlaywrightBrowserDriver } from "../surfaces/playwright-driver.js";
 import { DeterministicEngine } from "./engine.js";
 import { ArtifactPolicy } from "./policy.js";
+import { requireEnv } from "../common/env.js";
 
 const BASE_URL = "http://127.0.0.1:8126";
 const thirdPartyName =
@@ -25,20 +26,17 @@ const contactFirstName =
     process.env.DOLIBARR_CREATE_CONTACT_FIRST_NAME ?? "Elena";
 const contactLastName = process.env.DOLIBARR_CREATE_CONTACT_LAST_NAME ?? "Park";
 const expected = process.env.DOLIBARR_CREATE_PARTY_EXPECT_RESULT ?? "success";
-const password = process.env.DOLIBARR_FIXTURE_PASSWORD;
-if (password === undefined) {
-    throw new Error("DOLIBARR_FIXTURE_PASSWORD is required");
-}
+const password = requireEnv("DOLIBARR_FIXTURE_PASSWORD");
 
 const browser = await chromium.launch({ headless: true });
 const context = await browser.newContext({ locale: "en-US" });
 const page = await context.newPage();
-let recorder: FileTestRunRecorder | undefined;
+let recorder: FileRunRecorder | undefined;
 let traceStopped = false;
 
 try {
     await prepare(page, password);
-    recorder = await FileTestRunRecorder.start({
+    recorder = await FileRunRecorder.start({
         rootDirectory: join(process.cwd(), "runs"),
         goal: dolibarrCreateCustomerWithContactArtifact.contract.goal,
         situation:

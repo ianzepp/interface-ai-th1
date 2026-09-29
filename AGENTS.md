@@ -334,8 +334,8 @@ intermediate snapshots automatically.
 
 ### What a capture must record
 
-The capture boundary is implemented by `FileTestRunRecorder` and
-`PlaywrightTestRunCapture`:
+The capture boundary is implemented by `FileRunRecorder` and
+`PlaywrightRunCapture`:
 
 1. Establish the goal, success condition, exact target/version, fixture ID,
    typed inputs, allowed origin, and action/time limits.
@@ -399,7 +399,7 @@ do not replace it with a fixed pilot and call that LLM discovery.
 
 For a new target-specific pilot, follow the existing files under
 `src/authoring/` rather than inventing a second recorder. Use
-`FileTestRunRecorder.start`, `PlaywrightTestRunCapture.start`, a fresh browser
+`FileRunRecorder.start`, `PlaywrightRunCapture.start`, a fresh browser
 context, explicit action recording, redacted events, screenshots, and a
 `capture.finish` call in both success and failure paths. Add a package script
 that builds before running the compiled pilot.

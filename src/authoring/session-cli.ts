@@ -19,6 +19,8 @@ import {
     writeSessionState,
     type SessionState,
 } from "./session-state.js";
+import { print } from "../common/cli.js";
+import { describeError } from "../common/errors.js";
 
 /**
  * The command-line hand a discovery session offers.
@@ -645,10 +647,6 @@ function rejectionReason(
     return "the session refused this action";
 }
 
-function describeError(error: unknown): string {
-    return error instanceof Error ? error.message : String(error);
-}
-
 /** The last few log lines, which is where a failed start explains itself. */
 function tail(path: string, lines = 20): string {
     try {
@@ -657,10 +655,6 @@ function tail(path: string, lines = 20): string {
     } catch {
         return "(no session log)";
     }
-}
-
-function print(line: string): void {
-    process.stdout.write(`${line}\n`);
 }
 
 function printUsage(): void {

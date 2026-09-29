@@ -7,12 +7,12 @@ import test from "node:test";
 import {
     attestDiscoveryRuns,
     assertDiscoveryProducer,
-    FileTestRunRecorder,
+    FileRunRecorder,
     validateRunAttestation,
     type ProducerRecord,
 } from "../src/authoring/run-recorder.js";
-import type { DiscoveryEvent } from "../src/authoring/event-recorder.js";
-import { promoteTestRuns } from "../src/authoring/evidence-promotion.js";
+import type { RunEvent } from "../src/authoring/event-recorder.js";
+import { promoteRuns } from "../src/authoring/evidence-promotion.js";
 
 const NAVIGATE_ACTION = {
     type: "navigate",
@@ -34,7 +34,7 @@ test("persists a completed test run and its brief README", async (context) => {
     );
 
     const timestamps = ["2026-09-15T14:00:00.000Z", "2026-09-15T14:01:00.000Z"];
-    const recorder = await FileTestRunRecorder.start({
+    const recorder = await FileRunRecorder.start({
         rootDirectory,
         runId: "run-001",
         goal: "Find the customer balance",
@@ -89,7 +89,7 @@ test("round-trips handoff events through the file ledger", async (context) => {
     context.after(async () =>
         rm(rootDirectory, { recursive: true, force: true }),
     );
-    const recorder = await FileTestRunRecorder.start({
+    const recorder = await FileRunRecorder.start({
         rootDirectory,
         runId: "run-handoff-events",
         goal: "Recover a customer lookup",
@@ -162,7 +162,7 @@ test("round-trips handoff events through the file ledger", async (context) => {
             },
             reason: "The fresh observation did not match an admitted checkpoint.",
         },
-    ] satisfies readonly DiscoveryEvent[];
+    ] satisfies readonly RunEvent[];
 
     for (const event of events) await recorder.append(event);
 
@@ -174,7 +174,7 @@ test("round-trips handoff events through the file ledger", async (context) => {
         checkpoint: "lookup-complete",
     });
     const evidenceDirectory = join(rootDirectory, "evidence");
-    await promoteTestRuns({
+    await promoteRuns({
         runsDirectory: rootDirectory,
         evidenceDirectory,
         runIds: ["run-handoff-events"],
@@ -231,7 +231,7 @@ test("rejects malformed handoff events when reading the file ledger", async (con
     ];
 
     for (const [index, event] of malformedEvents.entries()) {
-        const recorder = await FileTestRunRecorder.start({
+        const recorder = await FileRunRecorder.start({
             rootDirectory,
             runId: `run-malformed-handoff-${String(index)}`,
             goal: "Read a handoff ledger",
@@ -254,7 +254,7 @@ test("rejects events after a run is finalized", async (context) => {
         rm(rootDirectory, { recursive: true, force: true }),
     );
 
-    const recorder = await FileTestRunRecorder.start({
+    const recorder = await FileRunRecorder.start({
         rootDirectory,
         runId: "run-002",
         goal: "Exercise a missing customer",
@@ -293,7 +293,7 @@ test("seals the producer record and receipt chain into the finalized manifest", 
         rm(rootDirectory, { recursive: true, force: true }),
     );
 
-    const recorder = await FileTestRunRecorder.start({
+    const recorder = await FileRunRecorder.start({
         rootDirectory,
         runId: "run-003",
         goal: "Look up a third party by exact name",
@@ -369,7 +369,7 @@ test("a receipt is unbound until an observation is recorded", async (context) =>
         rm(rootDirectory, { recursive: true, force: true }),
     );
 
-    const recorder = await FileTestRunRecorder.start({
+    const recorder = await FileRunRecorder.start({
         rootDirectory,
         runId: "run-004",
         goal: "Act only on a seen screen",
@@ -395,7 +395,7 @@ test("receipt-bearing events are refused without a sealed producer", async (cont
         rm(rootDirectory, { recursive: true, force: true }),
     );
 
-    const recorder = await FileTestRunRecorder.start({
+    const recorder = await FileRunRecorder.start({
         rootDirectory,
         runId: "run-005",
         goal: "No producer was sealed",
@@ -449,7 +449,7 @@ test("redacts declared sensitive values from the ledger and summary files", asyn
         rm(rootDirectory, { recursive: true, force: true }),
     );
     const sentinel = "synthetic-sensitive-sentinel";
-    const recorder = await FileTestRunRecorder.start({
+    const recorder = await FileRunRecorder.start({
         rootDirectory,
         runId: "declared-sensitive-value",
         goal: "Fill the account field",
@@ -498,7 +498,7 @@ test("folds host attestation into discovery manifests and rejects absent or dive
     context.after(async () =>
         rm(rootDirectory, { recursive: true, force: true }),
     );
-    const recorder = await FileTestRunRecorder.start({
+    const recorder = await FileRunRecorder.start({
         rootDirectory,
         runId: "host-attested-run",
         goal: "Discover a third-party lookup",

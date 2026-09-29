@@ -18,11 +18,12 @@ import type { ControlLeaseState } from "../intervention/control-lease.js";
 import type { InterventionRequest } from "../intervention/request.js";
 import type {
     DecisionReceipt,
-    DiscoveryEvent,
+    RunEvent,
     EventIdentity,
     EventRecorder,
 } from "./event-recorder.js";
 import { redactKnownSecrets } from "./redaction.js";
+import type { CodexRunStatus } from "./codex-run.js";
 
 /**
  * The on-disk unit of discovery evidence: one directory per test run.
@@ -50,7 +51,7 @@ import { redactKnownSecrets } from "./redaction.js";
  */
 
 /** What a run needs to identify itself before it starts. */
-export interface TestRunStart {
+export interface RunStart {
     rootDirectory: string;
     runId?: string;
     goal: string;
@@ -97,18 +98,16 @@ export interface ProducerRecord {
     streamDigest?: string;
     /** Digest over the host-attested fields folded into this manifest. */
     hostAttestationDigest?: string;
-    hostExitStatus?: CodexHostExitStatus;
+    hostExitStatus?: CodexRunStatus;
     hostExitCode?: number | null;
 }
-
-export type CodexHostExitStatus = "exited" | "timeout" | "failed";
 
 export interface HostProducerAttestation {
     sessionNonce: string;
     sessionId: string | null;
     resolvedModel: string | null;
     streamDigest: string;
-    exitStatus: CodexHostExitStatus;
+    exitStatus: CodexRunStatus;
     exitCode: number | null;
 }
 
@@ -119,7 +118,7 @@ export interface HostProducerAttestation {
  * must name a code, so failures group by class instead of accumulating as prose
  * that has to be read one at a time.
  */
-export type TestRunOutcome =
+export type RunOutcome =
     | {
           status: "satisfied";
           summary: string;
@@ -132,9 +131,9 @@ export type TestRunOutcome =
       };
 
 /** The machine-readable index of one run directory. */
-export interface TestRunManifest {
+export interface RunManifest {
     runId: string;
-    status: "running" | TestRunOutcome["status"];
+    status: "running" | RunOutcome["status"];
     goal: string;
     situation: string;
     targetProfile: string;
@@ -148,7 +147,7 @@ export interface TestRunManifest {
     resumeBinding?: ReviewedResumeBinding | undefined;
     startedAt: string;
     finishedAt?: string;
-    outcome?: TestRunOutcome;
+    outcome?: RunOutcome;
     files: {
         readme: "README.md";
         events: "events.jsonl";
@@ -159,7 +158,7 @@ export interface TestRunManifest {
 
 const RUN_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
 
-export class FileTestRunRecorder implements EventRecorder {
+export class FileRunRecorder implements EventRecorder {
     readonly #now: () => string;
     #finalized = false;
     #writeQueue: Promise<void> = Promise.resolve();
@@ -182,7 +181,7 @@ export class FileTestRunRecorder implements EventRecorder {
         public readonly eventsPath: string,
         public readonly readmePath: string,
         public readonly tracePath: string,
-        private readonly manifest: TestRunManifest,
+        private readonly manifest: RunManifest,
         producer: ProducerRecord | undefined,
         eventChainGenesis: string,
         receiptChainGenesis: string,
@@ -203,9 +202,7 @@ export class FileTestRunRecorder implements EventRecorder {
      * directory collision-proof: two runs cannot silently share a directory and
      * interleave their evidence.
      */
-    public static async start(
-        options: TestRunStart,
-    ): Promise<FileTestRunRecorder> {
+    public static async start(options: RunStart): Promise<FileRunRecorder> {
         const now = options.now ?? (() => new Date().toISOString());
         const startedAt = now();
         const runId = options.runId ?? createRunId(startedAt);
@@ -217,7 +214,7 @@ export class FileTestRunRecorder implements EventRecorder {
         await mkdir(options.rootDirectory, { recursive: true });
         await mkdir(directory);
 
-        const manifest: TestRunManifest = {
+        const manifest: RunManifest = {
             runId,
             status: "running",
             goal: options.goal,
@@ -237,7 +234,7 @@ export class FileTestRunRecorder implements EventRecorder {
                 screenshots: "screenshots/",
             },
         };
-        const recorder = new FileTestRunRecorder(
+        const recorder = new FileRunRecorder(
             directory,
             join(directory, "run.json"),
             join(directory, manifest.files.events),
@@ -270,7 +267,7 @@ export class FileTestRunRecorder implements EventRecorder {
      * decisions have their receipt sealed here — sequence and chain hash are
      * always computed by this recorder, overwriting whatever a caller supplied.
      */
-    public append(event: DiscoveryEvent): Promise<EventIdentity> {
+    public append(event: RunEvent): Promise<EventIdentity> {
         if (this.#finalized) {
             return Promise.reject(
                 new Error(`Run ${this.manifest.runId} is already finalized`),
@@ -334,13 +331,13 @@ export class FileTestRunRecorder implements EventRecorder {
         };
     }
 
-    public async readAll(): Promise<readonly DiscoveryEvent[]> {
+    public async readAll(): Promise<readonly RunEvent[]> {
         await this.#writeQueue;
         const source = await readFile(this.eventsPath, "utf8");
         if (source.trim() === "") {
             return [];
         }
-        return source.trimEnd().split("\n").map(parseDiscoveryEventLine);
+        return source.trimEnd().split("\n").map(parseRunEventLine);
     }
 
     /**
@@ -349,7 +346,7 @@ export class FileTestRunRecorder implements EventRecorder {
      * Queued appends are awaited first, so the summary never describes a run whose
      * last events are still in flight.
      */
-    public async finalize(outcome: TestRunOutcome): Promise<void> {
+    public async finalize(outcome: RunOutcome): Promise<void> {
         if (this.#finalized) {
             throw new Error(`Run ${this.manifest.runId} is already finalized`);
         }
@@ -369,15 +366,15 @@ export class FileTestRunRecorder implements EventRecorder {
     }
 
     /** Runs inside the write queue, so chain state advances in arrival order. */
-    #appendSerialized(event: DiscoveryEvent): {
+    #appendSerialized(event: RunEvent): {
         sequence: number;
         hash: string;
-        event: DiscoveryEvent;
+        event: RunEvent;
     } {
         const clean = redactKnownSecrets(
             event,
             this.#sensitiveInputValues,
-        ) as DiscoveryEvent;
+        ) as RunEvent;
         if (clean.type === "proposal") {
             const receipt = this.#sealReceipt(clean.receipt);
             clean.receipt = receipt;
@@ -454,7 +451,7 @@ export class FileTestRunRecorder implements EventRecorder {
                 redactKnownSecrets(
                     this.manifest,
                     this.#sensitiveInputValues,
-                ) as TestRunManifest,
+                ) as RunManifest,
             ),
             "utf8",
         );
@@ -580,8 +577,7 @@ export function validateRunAttestation(
 
     let receiptCount = 0;
     const observations = new Map<number, string>();
-    let previousProposal: Extract<DiscoveryEvent, { type: "proposal" }> | null =
-        null;
+    let previousProposal: Extract<RunEvent, { type: "proposal" }> | null = null;
 
     for (const [sequence, event] of events.entries()) {
         const eventHash = createHash("sha256")
@@ -649,7 +645,7 @@ export function validateRunAttestation(
 }
 
 /** Whether a ledger event is a decision or handoff that a producer must attest. */
-function recordsDecision(event: DiscoveryEvent): boolean {
+function recordsDecision(event: RunEvent): boolean {
     switch (event.type) {
         case "proposal":
         case "decision-rejected":
@@ -760,9 +756,9 @@ function sameDecisionReceipt(
     );
 }
 
-function parseEventLedger(source: string): readonly DiscoveryEvent[] {
+function parseEventLedger(source: string): readonly RunEvent[] {
     if (source.trim() === "") return [];
-    return source.trimEnd().split("\n").map(parseDiscoveryEventLine);
+    return source.trimEnd().split("\n").map(parseRunEventLine);
 }
 
 function isLauncherSealedProducer(value: unknown): value is ProducerRecord {
@@ -841,9 +837,9 @@ function parseJson(source: string): unknown {
     return JSON.parse(source);
 }
 
-function parseDiscoveryEventLine(line: string): DiscoveryEvent {
+function parseRunEventLine(line: string): RunEvent {
     const value = parseJson(line);
-    if (!isDiscoveryEvent(value)) {
+    if (!isRunEvent(value)) {
         throw new Error(
             "Event ledger line must be a recognized discovery event",
         );
@@ -851,7 +847,7 @@ function parseDiscoveryEventLine(line: string): DiscoveryEvent {
     return value;
 }
 
-function isDiscoveryEvent(value: unknown): value is DiscoveryEvent {
+function isRunEvent(value: unknown): value is RunEvent {
     if (!isRecord(value)) return false;
     if (typeof value.recordedAt !== "string") return false;
     switch (value.type) {
@@ -920,7 +916,7 @@ function isDiscoveryEvent(value: unknown): value is DiscoveryEvent {
     }
 }
 
-function isTestRunOutcome(value: unknown): value is TestRunOutcome {
+function isTestRunOutcome(value: unknown): value is RunOutcome {
     if (
         !isRecord(value) ||
         typeof value.status !== "string" ||
@@ -1020,21 +1016,21 @@ function quote(value: string): string {
         .join("\n");
 }
 
-function producerLine(manifest: TestRunManifest): string {
+function producerLine(manifest: RunManifest): string {
     const producer = manifest.producer;
     return producer === undefined
         ? ""
         : `- Producer: \`${producer.kind}/${producer.provider}\` model \`${producer.model ?? "not reported"}\` sealed nonce \`${producer.sessionNonce}\`\n`;
 }
 
-function receiptLine(manifest: TestRunManifest): string {
+function receiptLine(manifest: RunManifest): string {
     const receipts = manifest.decisionReceipts;
     return receipts === undefined
         ? ""
         : `- Decision receipts: \`${String(receipts.count)}\` sealed, terminal digest \`${receipts.digest}\`\n`;
 }
 
-function renderReadme(manifest: TestRunManifest): string {
+function renderReadme(manifest: RunManifest): string {
     const outcome = manifest.outcome;
     const outcomeBody =
         outcome === undefined

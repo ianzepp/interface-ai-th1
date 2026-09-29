@@ -6,12 +6,12 @@ import { join } from "node:path";
 import test from "node:test";
 
 import {
-    PlaywrightTestRunCapture,
+    PlaywrightRunCapture,
     type TraceController,
     type TraceStartOptions,
     type TraceStopOptions,
 } from "../src/authoring/playwright-run-capture.js";
-import { FileTestRunRecorder } from "../src/authoring/run-recorder.js";
+import { FileRunRecorder } from "../src/authoring/run-recorder.js";
 
 class FakeTraceController implements TraceController {
     public startOptions?: TraceStartOptions;
@@ -34,7 +34,7 @@ test("saves one Playwright trace inside the finalized run", async (context) => {
         rm(rootDirectory, { recursive: true, force: true }),
     );
 
-    const recorder = await FileTestRunRecorder.start({
+    const recorder = await FileRunRecorder.start({
         rootDirectory,
         runId: "run-with-trace",
         goal: "Find an account",
@@ -44,7 +44,7 @@ test("saves one Playwright trace inside the finalized run", async (context) => {
         fixtureId: "baseline-v1",
     });
     const tracing = new FakeTraceController();
-    const capture = await PlaywrightTestRunCapture.start(tracing, recorder);
+    const capture = await PlaywrightRunCapture.start(tracing, recorder);
 
     await capture.finish({
         status: "satisfied",
@@ -71,7 +71,7 @@ test("finalizes the run as an error when trace persistence fails", async (contex
         rm(rootDirectory, { recursive: true, force: true }),
     );
 
-    const recorder = await FileTestRunRecorder.start({
+    const recorder = await FileRunRecorder.start({
         rootDirectory,
         runId: "failed-trace",
         goal: "Find an account",
@@ -84,7 +84,7 @@ test("finalizes the run as an error when trace persistence fails", async (contex
         start: () => Promise.resolve(),
         stop: () => Promise.reject(new Error("disk unavailable")),
     };
-    const capture = await PlaywrightTestRunCapture.start(tracing, recorder);
+    const capture = await PlaywrightRunCapture.start(tracing, recorder);
 
     await assert.rejects(
         capture.finish({
@@ -108,7 +108,7 @@ test("suspends tracing for sensitive actions and rejects contaminated candidates
         rm(rootDirectory, { recursive: true, force: true }),
     );
     const sentinel = "synthetic-sensitive-sentinel";
-    const recorder = await FileTestRunRecorder.start({
+    const recorder = await FileRunRecorder.start({
         rootDirectory,
         runId: "contaminated-trace",
         goal: "Find an account",
@@ -131,7 +131,7 @@ test("suspends tracing for sensitive actions and rejects contaminated candidates
             );
         },
     };
-    const capture = await PlaywrightTestRunCapture.start(tracing, recorder, [
+    const capture = await PlaywrightRunCapture.start(tracing, recorder, [
         sentinel,
     ]);
     await capture.execute({ type: "fill", value: sentinel }, () =>
@@ -158,7 +158,7 @@ test("fails closed when a candidate trace cannot be read as an archive", async (
         rm(rootDirectory, { recursive: true, force: true }),
     );
 
-    const recorder = await FileTestRunRecorder.start({
+    const recorder = await FileRunRecorder.start({
         rootDirectory,
         runId: "malformed-trace",
         goal: "Find an account",
@@ -172,7 +172,7 @@ test("fails closed when a candidate trace cannot be read as an archive", async (
         start: () => Promise.resolve(),
         stop: ({ path }) => writeFile(path, "not a ZIP archive", "utf8"),
     };
-    const capture = await PlaywrightTestRunCapture.start(tracing, recorder, [
+    const capture = await PlaywrightRunCapture.start(tracing, recorder, [
         "synthetic-sensitive-sentinel",
     ]);
 

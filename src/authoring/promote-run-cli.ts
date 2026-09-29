@@ -1,6 +1,6 @@
 import process from "node:process";
 
-import { promoteTestRuns } from "./evidence-promotion.js";
+import { promoteRuns } from "./evidence-promotion.js";
 
 /**
  * Operator entry point for promoting reviewed runs into `evidence/`:
@@ -14,7 +14,7 @@ import { promoteTestRuns } from "./evidence-promotion.js";
 const runIds = process.argv.slice(2);
 
 try {
-    const promoted = await promoteTestRuns({
+    const promoted = await promoteRuns({
         runsDirectory: "runs",
         evidenceDirectory: "evidence",
         runIds,

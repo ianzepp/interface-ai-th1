@@ -60,7 +60,7 @@ export interface EventIdentity {
 export type ObservationIdentity = EventIdentity;
 
 /** One recorded moment: what was seen, what was done and why, or a checkpoint. */
-export type DiscoveryEvent =
+export type RunEvent =
     | {
           type: "observation";
           recordedAt: string;
@@ -141,7 +141,7 @@ export type DiscoveryEvent =
     | {
           type: "terminal";
           recordedAt: string;
-          outcome: import("./run-recorder.js").TestRunOutcome;
+          outcome: import("./run-recorder.js").RunOutcome;
       };
 
 /**
@@ -151,15 +151,15 @@ export type DiscoveryEvent =
  * same contract as the in-memory one without changing its callers.
  */
 export interface EventRecorder {
-    append(event: DiscoveryEvent): Promise<EventIdentity>;
-    readAll(): Promise<readonly DiscoveryEvent[]>;
+    append(event: RunEvent): Promise<EventIdentity>;
+    readAll(): Promise<readonly RunEvent[]>;
 }
 
-/** Keeps the ledger in memory; `FileTestRunRecorder` is the durable form. */
+/** Keeps the ledger in memory; `FileRunRecorder` is the durable form. */
 export class InMemoryEventRecorder implements EventRecorder {
-    readonly #events: DiscoveryEvent[] = [];
+    readonly #events: RunEvent[] = [];
 
-    public append(event: DiscoveryEvent): Promise<EventIdentity> {
+    public append(event: RunEvent): Promise<EventIdentity> {
         const sequence = this.#events.length;
         const hash = createHash("sha256")
             .update(`${String(sequence)}|${JSON.stringify(event)}`)
@@ -168,7 +168,7 @@ export class InMemoryEventRecorder implements EventRecorder {
         return Promise.resolve({ sequence, hash });
     }
 
-    public readAll(): Promise<readonly DiscoveryEvent[]> {
+    public readAll(): Promise<readonly RunEvent[]> {
         return Promise.resolve([...this.#events]);
     }
 }

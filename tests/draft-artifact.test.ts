@@ -6,8 +6,8 @@ import {
     compareArtifacts,
     type TraceSummary,
 } from "../src/authoring/draft-artifact.js";
-import type { DiscoveryEvent } from "../src/authoring/event-recorder.js";
-import type { TestRunManifest } from "../src/authoring/run-recorder.js";
+import type { RunEvent } from "../src/authoring/event-recorder.js";
+import type { RunManifest } from "../src/authoring/run-recorder.js";
 
 const trace: TraceSummary = {
     playwrightVersion: "1.63.0",
@@ -18,7 +18,7 @@ const trace: TraceSummary = {
     screenshotCount: 3,
 };
 
-const manifest: TestRunManifest = {
+const manifest: RunManifest = {
     runId: "run-1",
     status: "satisfied",
     goal: "Create the record.",
@@ -41,7 +41,7 @@ const manifest: TestRunManifest = {
     },
 };
 
-const events: readonly DiscoveryEvent[] = [
+const events: readonly RunEvent[] = [
     {
         type: "action",
         recordedAt: "2026-09-15T00:00:00.100Z",
