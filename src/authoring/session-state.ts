@@ -1,29 +1,25 @@
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
-
-import type { ObservationIdentity } from "./event-recorder.js";
-import { isNodeError } from "../common/errors.js";
-
 /**
  * How a caller finds the live session it is allowed to drive.
  *
- * The session is a long-lived process while the callers are short-lived ones, so
- * the two need a rendezvous. A state file is that rendezvous: the session writes
- * it once it is accepting commands, and every caller reads it to learn the socket
- * path and which run it is talking to.
- *
- * The path is per-lane and resolved from the environment so the launcher decides
- * which session a caller reaches. That is what makes concurrent authoring
- * possible: each launcher exports its own state path, so an LLM's shell tool
- * resolves to its own session without the caller ever naming a socket. Lanes are
- * otherwise identical, which is why nothing here assumes a single session exists.
+ * The session is a long-lived process and its callers are short-lived ones, so
+ * a state file is their rendezvous: the session writes it once it is accepting
+ * commands, and every caller reads it to learn the socket path and the run it
+ * is talking to. The path is per lane and comes from the environment, so each
+ * launcher decides which session its caller's shell reaches, and concurrent
+ * lanes never share a session.
  *
  * INVARIANTS
- * - The file is written only after the socket is listening, so its presence means
- *   "reachable" rather than "intended".
+ * - The file is written only after the socket is listening, so its presence
+ *   means "reachable" rather than "intended".
  * - A state file naming a dead process is treated as absent, so a crash cannot
  *   leave callers permanently pointed at a socket nobody serves.
  */
+
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
+
+import { isNodeError } from "../common/errors.js";
+import type { ObservationIdentity } from "./event-recorder.js";
 
 /** Everything a caller needs to reach one live session. */
 export interface SessionState {
@@ -49,12 +45,18 @@ export function resolveSessionStatePath(lane?: string): string {
     return join("tmp", "session", `${lane ?? "default"}.json`);
 }
 
+/** Write the state file, creating its directory. */
 export async function writeSessionState(
     statePath: string,
     state: SessionState,
 ): Promise<void> {
     await mkdir(dirname(statePath), { recursive: true });
     await writeFile(statePath, `${JSON.stringify(state, null, 2)}\n`, "utf8");
+}
+
+/** Remove the state file; a missing file is not an error. */
+export async function clearSessionState(statePath: string): Promise<void> {
+    await rm(statePath, { force: true });
 }
 
 /** Read the state file, or `null` when no live session is recorded there. */
@@ -75,13 +77,9 @@ export async function readSessionState(
 }
 
 /**
- * Validate a state file before trusting it.
- *
- * The file is written by this code, but it is still a file: it can be truncated
- * by a killed process, left behind by a different version, or edited by hand.
- * Every field a caller depends on is therefore narrowed rather than cast, so an
- * incomplete file fails loudly here instead of producing a confusing failure
- * somewhere downstream.
+ * Validate a state file before trusting it. The file can be truncated by a
+ * killed process, left by another version, or edited by hand, so every field a
+ * caller depends on is narrowed here rather than failing confusingly later.
  */
 export function parseSessionState(value: unknown): SessionState {
     if (value === null || typeof value !== "object" || Array.isArray(value)) {
@@ -118,7 +116,7 @@ export function parseSessionState(value: unknown): SessionState {
     if (typeof pid !== "number" || typeof controlEpoch !== "number") {
         throw new Error("Session state is missing a required numeric field");
     }
-    if (!isObservationIdentity(currentObservationIdentity)) {
+    if (!isOptionalObservationIdentity(currentObservationIdentity)) {
         throw new Error(
             "Session state is missing a valid observation identity",
         );
@@ -142,7 +140,18 @@ export function parseSessionState(value: unknown): SessionState {
     };
 }
 
-function isObservationIdentity(
+/** Signal liveness without killing: signal 0 performs the permission check only. */
+function isProcessAlive(pid: number): boolean {
+    try {
+        process.kill(pid, 0);
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+/** An observation identity, or `null`/absent when none is recorded. */
+function isOptionalObservationIdentity(
     value: unknown,
 ): value is ObservationIdentity | null | undefined {
     if (value === null || value === undefined) return true;
@@ -154,18 +163,4 @@ function isObservationIdentity(
         typeof identity.sequence === "number" &&
         typeof identity.hash === "string"
     );
-}
-
-export async function clearSessionState(statePath: string): Promise<void> {
-    await rm(statePath, { force: true });
-}
-
-/** Signal liveness without killing: signal 0 performs the permission check only. */
-function isProcessAlive(pid: number): boolean {
-    try {
-        process.kill(pid, 0);
-        return true;
-    } catch {
-        return false;
-    }
 }

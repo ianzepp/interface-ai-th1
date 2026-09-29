@@ -46,7 +46,6 @@ test("treats a state file naming a dead process as no session", async (context) 
     const directory = await mkdtemp(join(tmpdir(), "interface-ai-state-"));
     context.after(async () => rm(directory, { recursive: true, force: true }));
     const statePath = join(directory, "session.json");
-    await writeSessionState(statePath, state);
 
     // A pid that cannot be alive, so a crashed session cannot leave callers
     // permanently pointed at a socket nobody serves.
