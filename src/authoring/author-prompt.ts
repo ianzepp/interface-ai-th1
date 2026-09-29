@@ -225,3 +225,97 @@ export function buildAuthorPrompt(options: AuthorPromptOptions): string {
         "than falling back to another browser mechanism.",
     ].join("\n");
 }
+
+export interface DiscoveryRunPromptOptions {
+    goal: string;
+    target: string;
+    fixtureId: string;
+    lane: string;
+    origin: string;
+    maxActionsPerRun: number;
+}
+
+/**
+ * Build the instruction block for one recorded discovery run.
+ *
+ * This is the demo path's discovery step: one goal, one reset, one session, one
+ * run. It is deliberately narrower than `buildAuthorPrompt`, which works a whole
+ * corpus into an artifact. The escalation rule is stated generically — what to
+ * do when a judgment is not the model's to make — and never names a scenario,
+ * so a run that escalates shows the model deciding it was stuck rather than
+ * being told to stop.
+ */
+export function buildDiscoveryRunPrompt(
+    options: DiscoveryRunPromptOptions,
+): string {
+    const fixture = options.fixtureId.slice(options.target.length + 1);
+    const lane = `--lane ${options.lane}`;
+    return [
+        "You are the decision maker in one recorded computer-use run. Work",
+        "autonomously toward the goal; do not stop to ask for confirmation.",
+        "",
+        "## The goal",
+        "",
+        options.goal,
+        "",
+        "## Your environment",
+        "",
+        `- Target: \`${options.target}\``,
+        `- Starting fixture: \`${options.fixtureId}\``,
+        `- Session lane: \`${options.lane}\``,
+        `- Target origin: \`${options.origin}\``,
+        "- The repository root is your working directory.",
+        "",
+        "## Run it",
+        "",
+        "Reset the fixture once, then start the session. The session",
+        "authenticates before recording, so you begin signed in:",
+        "",
+        `    scripts/target reset ${options.target} ${fixture}`,
+        `    scripts/session start ${lane} --target ${options.target} --fixture ${fixture} --origin ${options.origin} --goal "<the goal above>"`,
+        "",
+        "`scripts/session` is the only permitted way to touch the browser. Run",
+        "`scripts/session --help` for the grammar. Do not use any browser or",
+        "computer-use tooling of your own: it would bypass the recorder, the",
+        "policy gate, and the trace.",
+        "",
+        `Pass \`${lane}\` to every session command. Observe before every`,
+        "decision and act once per observation; the session refuses an action that",
+        "is not bound to the latest observation. Declare each action's risk",
+        "honestly with `--risk`. Record a checkpoint with a screenshot",
+        "(`scripts/session observe --screenshot` first) at the point that proves",
+        "the goal, then finish with `scripts/session finish` and a declared",
+        "outcome. If the goal cannot be met, finish with `--status error` and a",
+        "short code that names why.",
+        "",
+        "## When you are stuck",
+        "",
+        "Some states need a judgment you are not authorized to make: the goal",
+        "does not distinguish between candidates you can see, continuing needs a",
+        "credential, or the next step would be irreversible. In that case do not",
+        "guess. Escalate with a reason an operator can act on — what you see and",
+        "why you stopped:",
+        "",
+        `    scripts/session escalate ${lane} --reason "<what you see and why you stopped>"`,
+        `    scripts/session wait-for-control ${lane}`,
+        "",
+        "Escalation hands this same live browser to a human operator. If",
+        "`wait-for-control` is cut short by your shell, run it again. When control",
+        "returns, observe again before anything else: the operator may have",
+        "changed the page, and you continue from what you see, not from what you",
+        "saw.",
+        "",
+        "## Hard limits",
+        "",
+        `- At most ${String(options.maxActionsPerRun)} browser actions in this run.`,
+        "- Exactly one recorded run. Do not start a second session.",
+        "- Do not author or edit a capability artifact, and do not modify any",
+        "  file in the repository.",
+        "- Never write a credential into a rationale, reason, or checkpoint.",
+        "",
+        "## When you finish",
+        "",
+        "State in your final message: the run id, the values you read (if any),",
+        "whether you escalated and why, and the outcome you declared.",
+    ].join("\n");
+}

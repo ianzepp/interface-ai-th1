@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { buildAuthorPrompt } from "../src/authoring/author-prompt.js";
+import {
+    buildAuthorPrompt,
+    buildDiscoveryRunPrompt,
+} from "../src/authoring/author-prompt.js";
 
 const prompt = buildAuthorPrompt({
     goal: "Look up a Dolibarr third party by exact name.",
@@ -153,4 +156,48 @@ test("still requires a corpus rather than a single run", () => {
 test("keeps credentials out of the recorded run", () => {
     assert.match(prompt, /Never write a credential into an event ledger/);
     assert.doesNotMatch(prompt, /FIXTURE_PASSWORD/);
+});
+
+const runPrompt = buildDiscoveryRunPrompt({
+    goal: "Look up the Dolibarr third party named exactly aaa.",
+    target: "dolibarr",
+    fixtureId: "dolibarr/demo-install-smoke",
+    lane: "lane-9",
+    origin: "http://127.0.0.1:8080",
+    maxActionsPerRun: 25,
+});
+
+/** Assert a single-run instruction survived line wrapping. */
+function runMentions(fragment: string): void {
+    const pattern = fragment
+        .replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+        .replace(/\s+/g, "\\s+");
+    assert.match(
+        runPrompt,
+        new RegExp(pattern),
+        `the single-run prompt no longer says: ${fragment}`,
+    );
+}
+
+test("a single discovery run starts one fully specified session", () => {
+    runMentions("Look up the Dolibarr third party named exactly aaa.");
+    runMentions(
+        "scripts/session start --lane lane-9 --target dolibarr --fixture demo-install-smoke --origin http://127.0.0.1:8080",
+    );
+    runMentions("scripts/target reset dolibarr demo-install-smoke");
+    runMentions("At most 25 browser actions");
+});
+
+test("a single discovery run escalates instead of guessing", () => {
+    runMentions("scripts/session escalate --lane lane-9 --reason");
+    runMentions("scripts/session wait-for-control --lane lane-9");
+    runMentions("do not guess");
+    runMentions("observe again");
+});
+
+test("a single discovery run does not author an artifact", () => {
+    runMentions("Do not author or edit a capability artifact");
+    runMentions(
+        "`scripts/session` is the only permitted way to touch the browser",
+    );
 });

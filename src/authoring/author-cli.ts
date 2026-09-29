@@ -5,7 +5,7 @@ import process from "node:process";
 import { runCodexSessionWithCapture } from "./codex-run.js";
 
 import { getTargetProfile } from "../targets/index.js";
-import { buildAuthorPrompt } from "./author-prompt.js";
+import { buildAuthorPrompt, buildDiscoveryRunPrompt } from "./author-prompt.js";
 import { parseFlags, requireFlag } from "./flag-args.js";
 import { attestDiscoveryRuns } from "./run-recorder.js";
 
@@ -76,15 +76,24 @@ async function author(): Promise<void> {
 
     const prompt = flags.has("preflight")
         ? buildPreflightPrompt(target, fixtureName, lane, origin)
-        : buildAuthorPrompt({
-              goal,
-              target,
-              fixtureId: `${target}/${fixtureName}`,
-              lane,
-              origin,
-              maxRuns,
-              maxActionsPerRun: maxActions,
-          });
+        : flags.has("single-run")
+          ? buildDiscoveryRunPrompt({
+                goal,
+                target,
+                fixtureId: `${target}/${fixtureName}`,
+                lane,
+                origin,
+                maxActionsPerRun: maxActions,
+            })
+          : buildAuthorPrompt({
+                goal,
+                target,
+                fixtureId: `${target}/${fixtureName}`,
+                lane,
+                origin,
+                maxRuns,
+                maxActionsPerRun: maxActions,
+            });
 
     if (flags.has("print-prompt")) {
         print(prompt);
@@ -204,7 +213,9 @@ async function run(options: AuthorRunOptions): Promise<void> {
             {
                 kind: "external-llm",
                 provider: "codex",
-                model: null,
+                // The requested model, when one was named. What the host
+                // actually resolved is sealed separately in the attestation.
+                model: model ?? null,
                 sessionNonce,
                 lane,
                 sealedAt: new Date().toISOString(),
@@ -357,6 +368,9 @@ Options:
   --codex-sandbox <mode>     read-only, workspace-write, or danger-full-access.
                              Defaults to danger-full-access, because fixture
                              resets need Docker and the session needs a socket.
+  --single-run               Capture one recorded discovery run toward the goal,
+                             escalating to a human when stuck, instead of
+                             authoring a whole capability.
   --preflight                Verify the session transport only, in seconds.
   --print-prompt             Print the prompt and exit without running anything.
   --help                     Show this message.

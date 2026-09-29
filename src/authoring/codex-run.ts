@@ -172,7 +172,7 @@ function buildCodexArgs(options: CodexRunOptions, json: boolean): string[] {
     return args;
 }
 
-function scanHostIdentityLine(
+export function scanHostIdentityLine(
     line: string,
     identity: HostStreamIdentity,
 ): void {
@@ -188,7 +188,11 @@ function scanHostIdentityLine(
     const event = value as Record<string, unknown>;
     const session = asRecord(event.session);
     const thread = asRecord(event.thread);
+    // codex 0.158 reports its session only as `thread.started`'s top-level
+    // `thread_id`, and reports no model at all; the other shapes are kept for
+    // versions that nest them.
     identity.sessionId ??=
+        asString(event.thread_id) ??
         asString(event.session_id) ??
         asString(session?.id) ??
         asString(thread?.id) ??
