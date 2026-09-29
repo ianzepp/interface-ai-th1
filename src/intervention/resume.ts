@@ -1,10 +1,3 @@
-import type {
-    CapabilityStage,
-    StageDestination,
-} from "../runtime/state-machine.js";
-import { selectDestination } from "../runtime/state-machine.js";
-import type { Observation } from "../surfaces/surface-driver.js";
-
 /**
  * Whether a run may continue after a person has intervened.
  *
@@ -12,6 +5,13 @@ import type { Observation } from "../surfaces/surface-driver.js";
  * observation against a reviewed checkpoint before it can take the session
  * back from the person.
  */
+
+import {
+    selectDestination,
+    type CapabilityStage,
+    type StageDestination,
+} from "../runtime/state-machine.js";
+import type { Observation } from "../surfaces/surface-driver.js";
 
 /** A reviewed artifact stage admitted as a state from which a run can resume. */
 export interface ResumeCheckpoint {
@@ -49,14 +49,15 @@ export function evaluateResume(
     }
 
     return Promise.resolve(
-        decisionForDestination(
+        buildResumeDecision(
             checkpoint.stage.id,
             selectDestination(checkpoint.stage, checkpoint.detectorId),
         ),
     );
 }
 
-function decisionForDestination(
+/** Only a success ending completes; any other ending declines to resume. */
+function buildResumeDecision(
     checkpoint: string,
     destination: StageDestination,
 ): ResumeDecision {
