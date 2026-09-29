@@ -11,10 +11,14 @@
  *   run only when no declared sensitive value appears in any archive member.
  * - A contaminated trace finalizes the run as `sensitive-evidence-detected` and
  *   is discarded.
+ * - Suspension does not nest: work run while tracing is already suspended stays
+ *   inside that one suspension.
  *
  * LIMITS
  * - Screenshot pixels are not scanned: byte matching cannot recover values
  *   merely rendered in PNGs.
+ * - Suspending tracing discards the trace recorded so far: the saved trace
+ *   covers only what happened after the last suspension.
  * - Archive scanning shells out to `unzip`, which must be on `PATH`.
  */
 
@@ -70,6 +74,7 @@ export class PlaywrightRunCapture {
     readonly #recorder: FileRunRecorder;
     readonly #sensitiveInputValues: readonly string[];
     #finished = false;
+    #suspended = false;
 
     private constructor(
         tracing: TraceController,
@@ -112,6 +117,18 @@ export class PlaywrightRunCapture {
         if (!containsSensitiveValue(action, this.#sensitiveInputValues)) {
             return operation();
         }
+        return this.suspended(operation);
+    }
+
+    /**
+     * Runs `operation` with tracing stopped, then resumes tracing.
+     *
+     * Use it around a whole credential-bearing exchange, not just the action
+     * that names the value: a later submit click carries the value in its
+     * request body even though the click itself names nothing.
+     */
+    public async suspended<T>(operation: () => Promise<T>): Promise<T> {
+        if (this.#suspended) return operation();
         const temporaryDirectory = await mkdtemp(
             join(tmpdir(), "interface-ai-trace-"),
         );
@@ -120,6 +137,7 @@ export class PlaywrightRunCapture {
             await this.#finalizeOnFailure("trace-suspend-failed", () =>
                 this.#tracing.stop({ path: temporaryTrace }),
             );
+            this.#suspended = true;
             let result: T | undefined;
             let actionError: unknown;
             try {
@@ -127,6 +145,7 @@ export class PlaywrightRunCapture {
             } catch (error) {
                 actionError = error;
             }
+            this.#suspended = false;
             // Tracing resumes even after a failed action, so the rest of the
             // run is still captured.
             await this.#finalizeOnFailure("trace-suspend-failed", () =>

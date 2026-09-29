@@ -16,7 +16,6 @@
 
 import { runMain } from "../common/cli.js";
 import {
-    LEDGERSMB_ORIGIN,
     type LedgerSmbPilot,
     roleTarget,
     runLedgerSmbPilot,
@@ -28,9 +27,9 @@ async function main(): Promise<void> {
         situation:
             "LedgerSMB initialized with the fixture administrator and no trading partners.",
         fixtureId: "ledgersmb/initialized-company",
+        authenticateTo: "interface_ai",
         errorCode: "create-trading-partners-failed",
-        async steps(pilot, password) {
-            await logIn(pilot, password);
+        async steps(pilot) {
             await createTradingPartner(
                 pilot,
                 "Northwind Outdoor Supply",
@@ -52,35 +51,6 @@ async function main(): Promise<void> {
             );
         },
     });
-}
-
-async function logIn(pilot: LedgerSmbPilot, password: string): Promise<void> {
-    const { page } = pilot;
-    await pilot.navigate(
-        `${LEDGERSMB_ORIGIN}/login.pl`,
-        "Open the LedgerSMB login surface.",
-    );
-    await pilot.fill("#username", "admin", "Enter the fixture administrator.");
-    await pilot.fill("#password", password, "Enter the fixture password.");
-    await pilot.fill(
-        "#company",
-        "interface_ai",
-        "Enter the initialized company.",
-    );
-    await pilot.click(
-        roleTarget("button", "Login"),
-        "Authenticate to the initialized company.",
-        page.getByRole("button", { name: "Login", exact: true }),
-    );
-    await page.getByText("Welcome to LedgerSMB", { exact: true }).waitFor();
-    const expiryNotice = page.getByRole("button", { name: "OK", exact: true });
-    if (await expiryNotice.isVisible()) {
-        await pilot.click(
-            roleTarget("button", "OK"),
-            "Dismiss the password notice.",
-            expiryNotice,
-        );
-    }
 }
 
 /** Create one company entity and the customer or vendor credit account on it. */

@@ -1,8 +1,9 @@
 /**
  * The shared harness behind the four scripted LedgerSMB capture pilots.
  *
- * A pilot is one recorded run of fixed browser steps: authenticate outside the
- * trace boundary, act through the artifact policy gate, append a redacted action
+ * A pilot is one recorded run of fixed browser steps: authenticate before the
+ * run and trace open (or, for the pilot whose capability is creating the
+ * credentials, suspend the trace across each credential-bearing exchange), act through the artifact policy gate, append a redacted action
  * event with the rationale for each step, and finalize the run. The pilots
  * differ only in their goal, starting fixture, and steps; everything else lives
  * here so the four record identically.
@@ -12,6 +13,9 @@
  * - The fixture password is declared a sensitive value to both the recorder and
  *   the trace capture, so it is redacted from the ledger and scanned out of the
  *   trace.
+ * - Fixture authentication is never in the trace: the submit click of a login
+ *   carries the password in its request body, so the login happens before
+ *   tracing starts, or inside `pilot.untraced`.
  * - A run finalizes exactly once: `satisfied` through the steps'
  *   `finishSatisfied`, or `error` with a screenshot when any step throws.
  */
@@ -19,7 +23,12 @@
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 
-import { chromium, type Locator, type Page } from "playwright";
+import {
+    type BrowserContext,
+    chromium,
+    type Locator,
+    type Page,
+} from "playwright";
 
 import { print } from "../common/cli.js";
 import { requireEnv } from "../common/env.js";
@@ -54,6 +63,11 @@ export interface LedgerSmbPilotRun {
     situation: string;
     /** Snapshot ID the run starts from, e.g. `ledgersmb/partners-ready`. */
     fixtureId: string;
+    /**
+     * Company to log in to before the run opens. Omit it when the run itself
+     * creates the credentials and handles them inside `pilot.untraced`.
+     */
+    authenticateTo?: string;
     /** Terminal error code recorded when any step throws. */
     errorCode: string;
     /** The steps, ending in `pilot.finishSatisfied`. */
@@ -63,6 +77,25 @@ export interface LedgerSmbPilotRun {
 /** Record one pilot run from browser launch through finalization. */
 export async function runLedgerSmbPilot(run: LedgerSmbPilotRun): Promise<void> {
     const password = requireEnv("LEDGERSMB_FIXTURE_PASSWORD");
+    const browser = await chromium.launch({ headless: true });
+    try {
+        const context = await browser.newContext({ locale: "en-US" });
+        const page = await context.newPage();
+        if (run.authenticateTo !== undefined) {
+            await authenticate(page, run.authenticateTo, password);
+        }
+        await recordRun(run, password, context, page);
+    } finally {
+        await browser.close();
+    }
+}
+
+async function recordRun(
+    run: LedgerSmbPilotRun,
+    password: string,
+    context: BrowserContext,
+    page: Page,
+): Promise<void> {
     const recorder = await FileRunRecorder.start({
         rootDirectory: join(process.cwd(), "runs"),
         goal: run.goal,
@@ -72,9 +105,6 @@ export async function runLedgerSmbPilot(run: LedgerSmbPilotRun): Promise<void> {
         fixtureId: run.fixtureId,
         sensitiveInputValues: [password],
     });
-    const browser = await chromium.launch({ headless: true });
-    const context = await browser.newContext({ locale: "en-US" });
-    const page = await context.newPage();
     const capture = await PlaywrightRunCapture.start(
         context.tracing,
         recorder,
@@ -89,9 +119,32 @@ export async function runLedgerSmbPilot(run: LedgerSmbPilotRun): Promise<void> {
         throw error;
     } finally {
         await context.close();
-        await browser.close();
         print(`Run directory: ${recorder.directory}`);
     }
+}
+
+/**
+ * Log in as the fixture administrator, unrecorded and untraced.
+ *
+ * This is fixture bootstrap, like the discovery session's: the session cookie
+ * it leaves in the context is the run's starting state. It is not capability
+ * knowledge, and it must precede tracing because the submit request carries
+ * the password.
+ */
+async function authenticate(
+    page: Page,
+    company: string,
+    password: string,
+): Promise<void> {
+    await page.goto(`${LEDGERSMB_ORIGIN}/login.pl`);
+    await page.locator("#username").fill("admin");
+    await page.locator("#password").fill(password);
+    await page.locator("#company").fill(company);
+    await page.getByRole("button", { name: "Login", exact: true }).click();
+    await page.getByText("Welcome to LedgerSMB", { exact: true }).waitFor();
+    // A disposable-password expiry notice can cover the first menu action.
+    const expiryNotice = page.getByRole("button", { name: "OK", exact: true });
+    if (await expiryNotice.isVisible()) await expiryNotice.click();
 }
 
 /** The page, recorder, and capture of one run, behind recorded actions. */
@@ -101,6 +154,17 @@ export class LedgerSmbPilot {
         private readonly recorder: FileRunRecorder,
         private readonly capture: PlaywrightRunCapture,
     ) {}
+
+    /**
+     * Run steps with tracing suspended for their whole span.
+     *
+     * Wrap every exchange that submits a credential, from the first field to
+     * the response, because the submit click names no value yet sends it. The
+     * steps still append redacted ledger events.
+     */
+    untraced<T>(steps: () => Promise<T>): Promise<T> {
+        return this.capture.suspended(steps);
+    }
 
     async navigate(url: string, rationale: string): Promise<void> {
         await this.recordAction({ type: "navigate", url }, rationale, () =>

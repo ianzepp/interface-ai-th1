@@ -152,6 +152,53 @@ test("suspends tracing for sensitive actions and rejects contaminated candidates
     assert.doesNotMatch(readme, new RegExp(sentinel));
 });
 
+test("suspends tracing once across a whole exchange and resumes after a failure", async (context) => {
+    const rootDirectory = await mkdtemp(join(tmpdir(), "interface-ai-run-"));
+    context.after(async () =>
+        rm(rootDirectory, { recursive: true, force: true }),
+    );
+    const sentinel = "synthetic-sensitive-sentinel";
+    const recorder = await FileRunRecorder.start({
+        rootDirectory,
+        runId: "suspended-exchange",
+        goal: "Submit a credential",
+        situation: "Baseline fixture",
+        targetProfile: "ledgersmb",
+        targetVersion: "1.13",
+        fixtureId: "baseline-v1",
+        sensitiveInputValues: [sentinel],
+    });
+    const calls: string[] = [];
+    const tracing: TraceController = {
+        start: () => {
+            calls.push("start");
+            return Promise.resolve();
+        },
+        stop: async ({ path }) => {
+            calls.push("stop");
+            await writeFile(path, "temporary");
+        },
+    };
+    const capture = await PlaywrightRunCapture.start(tracing, recorder, [
+        sentinel,
+    ]);
+
+    await capture.suspended(async () => {
+        // The click names no value, and the nested fill must not suspend again.
+        await capture.execute({ type: "fill", value: sentinel }, () =>
+            Promise.resolve(),
+        );
+        await capture.execute({ type: "activate" }, () => Promise.resolve());
+    });
+    assert.deepEqual(calls, ["start", "stop", "start"]);
+
+    await assert.rejects(
+        capture.suspended(() => Promise.reject(new Error("submit failed"))),
+        /submit failed/,
+    );
+    assert.deepEqual(calls, ["start", "stop", "start", "stop", "start"]);
+});
+
 test("fails closed when a candidate trace cannot be read as an archive", async (context) => {
     const rootDirectory = await mkdtemp(join(tmpdir(), "interface-ai-run-"));
     context.after(async () =>

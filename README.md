@@ -487,11 +487,11 @@ scripts/promote-run <run-id> [<run-id> ...]
 
 ### LedgerSMB initialization capture pilot
 
-**Known issue.** The four scripted LedgerSMB pilots currently perform every
-step but finalize as `sensitive-evidence-detected`. They log in as recorded
-steps, and the login submission carries the fixture password into the trace.
-The capture boundary refuses those runs as designed; the replay runner, which
-authenticates before tracing, is unaffected.
+The three later pilots log in before the run and trace open, like the
+discovery session. Initialization creates the credentials, so it instead
+suspends tracing across each exchange that submits the password (database
+creation, administrator creation, and the verifying login); its saved trace
+covers only what follows the last one. The trace scan still gates every run.
 
 Build the pilot, replace the current LedgerSMB volumes with a fresh install,
 and record the complete company-and-user initialization as one run:

@@ -19,7 +19,6 @@
 
 import { runMain } from "../common/cli.js";
 import {
-    LEDGERSMB_ORIGIN,
     type LedgerSmbPilot,
     roleTarget,
     runLedgerSmbPilot,
@@ -31,9 +30,9 @@ async function main(): Promise<void> {
         situation:
             "LedgerSMB initialized with customer CUST-1001 and vendor VEND-2001, but no warehouse or parts.",
         fixtureId: "ledgersmb/partners-ready",
+        authenticateTo: "interface_ai",
         errorCode: "create-inventory-catalog-failed",
-        async steps(pilot, password) {
-            await logIn(pilot, password);
+        async steps(pilot) {
             await createWarehouse(pilot);
             await createPart(pilot);
             await pilot.saveScreenshot("catalog-ready.png");
@@ -43,27 +42,6 @@ async function main(): Promise<void> {
             );
         },
     });
-}
-
-async function logIn(pilot: LedgerSmbPilot, password: string): Promise<void> {
-    const { page } = pilot;
-    await pilot.navigate(
-        `${LEDGERSMB_ORIGIN}/login.pl`,
-        "Open the LedgerSMB login surface.",
-    );
-    await pilot.fill("#username", "admin", "Enter the fixture administrator.");
-    await pilot.fill("#password", password, "Enter the fixture password.");
-    await pilot.fill(
-        "#company",
-        "interface_ai",
-        "Enter the initialized company.",
-    );
-    await pilot.click(
-        roleTarget("button", "Login"),
-        "Authenticate to the partner-ready company.",
-        page.getByRole("button", { name: "Login", exact: true }),
-    );
-    await page.getByText("Welcome to LedgerSMB", { exact: true }).waitFor();
 }
 
 async function createWarehouse(pilot: LedgerSmbPilot): Promise<void> {

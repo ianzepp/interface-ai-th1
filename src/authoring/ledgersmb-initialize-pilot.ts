@@ -10,6 +10,14 @@
  * fixture reset first.
  *
  * INVARIANTS
+ * - The password never reaches the trace. This capability creates the
+ *   credentials, so it cannot authenticate before the run as the other pilots
+ *   do. Instead each of its three credential-bearing exchanges (database
+ *   creation, administrator creation, and the verifying login) runs inside
+ *   `pilot.untraced`, from the first field to the response, because the submit
+ *   click names no value yet carries the password in its request body. Their
+ *   ledger events stay, redacted; only Playwright's trace of them is dropped.
+ *   The saved trace therefore covers only what follows the last such exchange.
  * - The run finalizes `satisfied` at the authenticated home screen, or `error`
  *   with a screenshot when any step throws.
  * - It creates no snapshot: `initialized-company` is a review action taken
@@ -36,12 +44,12 @@ async function main(): Promise<void> {
         fixtureId: "ledgersmb/fresh",
         errorCode: "initialize-company-failed",
         async steps(pilot, password) {
-            await createCompanyDatabase(pilot, password);
+            await pilot.untraced(() => createCompanyDatabase(pilot, password));
             await acceptChartAndTemplates(pilot);
-            await createAdministrator(pilot, password);
+            await pilot.untraced(() => createAdministrator(pilot, password));
             await pilot.saveScreenshot("setup-complete.png");
             await pilot.recordObservation("screenshots/setup-complete.png");
-            await logIn(pilot, password);
+            await pilot.untraced(() => logIn(pilot, password));
             await pilot.saveScreenshot("authenticated.png");
             await pilot.recordObservation("screenshots/authenticated.png");
             await pilot.finishSatisfied(

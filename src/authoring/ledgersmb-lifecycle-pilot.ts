@@ -10,8 +10,9 @@
  *
  * INVARIANTS
  * - Every wait is on something the application owns, never a sleep.
- * - A disposable-password expiry notice can cover the first menu action, so it
- *   is dismissed explicitly after login.
+ * - The run starts authenticated: the harness logs in before tracing begins and
+ *   dismisses the disposable-password expiry notice that can cover the first
+ *   menu action.
  * - A route change can land before the client-rendered frame changes, leaving a
  *   control whose label the previous screen shares briefly present, so each
  *   stage waits for a marker unique to its destination screen.
@@ -25,7 +26,6 @@
 
 import { runMain } from "../common/cli.js";
 import {
-    LEDGERSMB_ORIGIN,
     type LedgerSmbPilot,
     roleTarget,
     runLedgerSmbPilot,
@@ -37,10 +37,10 @@ async function main(): Promise<void> {
         situation:
             "LedgerSMB catalog-ready with TRAIL-PACK-40 on hand at zero.",
         fixtureId: "ledgersmb/catalog-ready",
+        authenticateTo: "interface_ai",
         errorCode: "inventory-lifecycle-failed",
-        async steps(pilot, password) {
+        async steps(pilot) {
             const today = new Date().toISOString().slice(0, 10);
-            await logIn(pilot, password);
             await createInvoice(
                 pilot,
                 "Accounts Payable",
@@ -68,35 +68,6 @@ async function main(): Promise<void> {
             );
         },
     });
-}
-
-async function logIn(pilot: LedgerSmbPilot, password: string): Promise<void> {
-    const { page } = pilot;
-    await pilot.navigate(
-        `${LEDGERSMB_ORIGIN}/login.pl`,
-        "Open the LedgerSMB login surface.",
-    );
-    await pilot.fill("#username", "admin", "Enter the fixture administrator.");
-    await pilot.fill("#password", password, "Enter the fixture password.");
-    await pilot.fill(
-        "#company",
-        "interface_ai",
-        "Enter the catalog-ready company.",
-    );
-    await pilot.click(
-        roleTarget("button", "Login"),
-        "Authenticate to the catalog-ready company.",
-        page.getByRole("button", { name: "Login", exact: true }),
-    );
-    await page.getByText("Welcome to LedgerSMB", { exact: true }).waitFor();
-    const expiryNotice = page.getByRole("button", { name: "OK", exact: true });
-    if (await expiryNotice.isVisible()) {
-        await pilot.click(
-            roleTarget("button", "OK"),
-            "Dismiss the known password-expiry interstitial.",
-            expiryNotice,
-        );
-    }
 }
 
 /** Enter, total, save, and post a one-line TRAIL-PACK-40 invoice. */
