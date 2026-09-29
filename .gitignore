@@ -13,3 +13,7 @@ runs/*/
 snapshots/*/*/
 worktrees/
 .vivi/
+
+# Promoted runs keep their trace locally: traces carry session cookies that
+# text redaction cannot reach (see SECURITY.md).
+evidence/runs/*/trace.zip

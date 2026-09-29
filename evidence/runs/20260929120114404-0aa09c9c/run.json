@@ -1,0 +1,78 @@
+{
+  "runId": "20260929120114404-0aa09c9c",
+  "status": "satisfied",
+  "goal": "Look up the Dolibarr third party named exactly \"aaa\" and report its customer code, vendor code, currency, and status.",
+  "situation": "Fixture dolibarr/demo-install-smoke reset and authenticated for authoring.",
+  "targetProfile": "dolibarr",
+  "targetVersion": "23.0.4",
+  "fixtureId": "dolibarr/demo-install-smoke",
+  "producer": {
+    "kind": "external-llm",
+    "provider": "codex",
+    "model": null,
+    "sessionNonce": "fbb1a2f4-1ac4-4fa0-ba0a-b5e49d4c4f21",
+    "sealPath": "/Users/ianzepp/personal/projects/interface.ai/take-home/tmp/discovery/handoff-demo/producer-seal.json",
+    "hostSessionId": "01a0ed09-e74f-78f0-9eb7-f915d6ca73a6",
+    "streamDigest": "c0c18af00e2024af1d7c0a999152f9af9f38d53bbf0dae2439a9f5e2af477f7c",
+    "hostAttestationDigest": "1637929499e899e0aee40fa2615aef40642ba91896542a4dad07542759541b34",
+    "hostExitStatus": "exited",
+    "hostExitCode": 0
+  },
+  "resumeBinding": {
+    "artifactId": "dolibarr.lookup-third-party",
+    "checkpoints": [
+      {
+        "stageId": "open-list",
+        "detectorIds": [
+          "dolibarr-authentication-required",
+          "dolibarr-third-party-search-ready"
+        ]
+      },
+      {
+        "stageId": "fill-name",
+        "detectorIds": [
+          "dolibarr-third-party-submit-ready"
+        ]
+      },
+      {
+        "stageId": "submit-search",
+        "detectorIds": [
+          "dolibarr-authentication-required",
+          "dolibarr-third-party-no-match",
+          "dolibarr-third-party-ambiguous-match",
+          "dolibarr-third-party-unique-match"
+        ]
+      },
+      {
+        "stageId": "open-result",
+        "detectorIds": [
+          "dolibarr-authentication-required",
+          "dolibarr-third-party-profile-visible"
+        ]
+      },
+      {
+        "stageId": "extract-profile",
+        "detectorIds": [
+          "dolibarr-third-party-profile-visible"
+        ]
+      }
+    ]
+  },
+  "startedAt": "2026-09-29T12:01:14.404Z",
+  "files": {
+    "readme": "README.md",
+    "events": "events.jsonl",
+    "trace": "trace.zip",
+    "screenshots": "screenshots/"
+  },
+  "finishedAt": "2026-09-29T12:02:33.394Z",
+  "outcome": {
+    "status": "satisfied",
+    "checkpoint": "extract-profile",
+    "summary": "Validated resume returned control to automation at checkpoint extract-profile."
+  },
+  "decisionReceipts": {
+    "count": 4,
+    "digest": "21a6c1067775f837a0596e980a45d9d7fb442535020f640425624526c19e367f"
+  }
+}

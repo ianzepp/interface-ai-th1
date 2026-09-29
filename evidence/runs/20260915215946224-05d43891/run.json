@@ -1,0 +1,22 @@
+{
+  "runId": "20260915215946224-05d43891",
+  "status": "satisfied",
+  "goal": "Create a new customer third-party record and add one contact linked to it.",
+  "situation": "Deterministic replay from the dolibarr/demo-install-smoke fixture.",
+  "targetProfile": "dolibarr",
+  "targetVersion": "23.0.4",
+  "fixtureId": "dolibarr/demo-install-smoke",
+  "startedAt": "2026-09-15T21:59:46.224Z",
+  "files": {
+    "readme": "README.md",
+    "events": "events.jsonl",
+    "trace": "trace.zip",
+    "screenshots": "screenshots/"
+  },
+  "finishedAt": "2026-09-15T21:59:47.380Z",
+  "outcome": {
+    "status": "satisfied",
+    "summary": "The deterministic artifact returned the expected typed result: success.",
+    "checkpoint": "success"
+  }
+}

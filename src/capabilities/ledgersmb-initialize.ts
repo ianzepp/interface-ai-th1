@@ -78,10 +78,10 @@ export const ledgerSmbInitializeArtifact: CapabilityArtifact = {
     provenance: {
         discoveryRunId: RUN_ID,
         createdAt: "2026-09-15T16:24:57.450Z",
-        validatedRunIds: [
-            "20260915170358856-fe344f46",
-            "20260915170434612-2d03545d",
-        ],
+        // The two 2026-09-15 validation replays predate declared-value
+        // redaction and carry the fixture password in their ledgers, so they
+        // stay local; this replay went through the current capture boundary.
+        validatedRunIds: ["20260929120812777-6d5315d1"],
     },
 };
 

@@ -1,0 +1,22 @@
+{
+  "runId": "20260929120812777-6d5315d1",
+  "status": "satisfied",
+  "goal": "Create a LedgerSMB company and its first administrator, then prove the account can authenticate.",
+  "situation": "Deterministic replay against fresh LedgerSMB Docker volumes.",
+  "targetProfile": "ledgersmb",
+  "targetVersion": "1.13.7",
+  "fixtureId": "ledgersmb/fresh",
+  "startedAt": "2026-09-29T12:08:12.777Z",
+  "files": {
+    "readme": "README.md",
+    "events": "events.jsonl",
+    "trace": "trace.zip",
+    "screenshots": "screenshots/"
+  },
+  "finishedAt": "2026-09-29T12:08:18.697Z",
+  "outcome": {
+    "status": "satisfied",
+    "summary": "The deterministic artifact initialized LedgerSMB and reached the authenticated home screen.",
+    "checkpoint": "authenticated-ledgersmb-home"
+  }
+}
