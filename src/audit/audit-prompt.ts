@@ -1,25 +1,20 @@
 /**
- * The instructions for an artifact review.
+ * The instructions for the judgment half of artifact review.
  *
- * This is the judgment half of artifact review. The mechanical half lives in
- * `artifact-rubric.ts` and decides what a program can decide, cheaply and
- * repeatably. This half exists only for what a program cannot: whether a detector
- * actually means what it claims, whether a branch is real, whether the graph is
- * minimal.
+ * The mechanical half, `artifact-rubric.ts`, decides what a program can decide.
+ * This prompt covers only what a program cannot: whether a detector means what
+ * it claims, whether a branch is real, whether the graph is minimal. A model
+ * reads the text, so its wording is the contract.
  *
- * The prompt is shaped by the ways a review like this fails:
- *
- * - **Rubber-stamping.** Asked "is this good?", a model says yes. So the review is
- *   framed as a rubric with explicit questions, and reporting nothing requires
- *   justification rather than being the easy answer.
- * - **Paraphrasing the author.** A well-written artifact documents its own
- *   weaknesses. A reviewer that only repeats the artifact's own caveats has added
- *   nothing, so the prompt names that as a failure.
- * - **Editing.** The reviewer reports; it does not rewrite. Two models editing one
- *   artifact produces a file neither of them reviewed.
- * - **Redesigning.** The engine and the schema are the reviewer's premises, not
- *   its subject. A finding that needs a platform change is recorded as such rather
- *   than proposed as an artifact fix.
+ * FAILURE MODES
+ * - Rubber-stamping. Asked "is this good?", a model says yes, so the review is a
+ *   rubric of explicit questions, and reporting nothing needs justification.
+ * - Paraphrasing the author. A reviewer that only repeats the artifact's own
+ *   caveats has added nothing, so the prompt names that as a failure.
+ * - Editing. The reviewer reports and does not rewrite: two models editing one
+ *   artifact produce a file neither of them reviewed.
+ * - Redesigning. The engine and the schema are the reviewer's premises, not its
+ *   subject. A finding that needs a platform change is recorded as such.
  *
  * INVARIANTS
  * - The skill is named by path and read, never paraphrased, so the rubric cannot
@@ -37,6 +32,7 @@ export interface AuditPromptOptions {
     mechanicalFindings: readonly string[];
 }
 
+/** Build the reviewer prompt for one artifact. */
 export function buildAuditPrompt(options: AuditPromptOptions): string {
     return [
         "You are reviewing a capability artifact that another model authored. Your",
