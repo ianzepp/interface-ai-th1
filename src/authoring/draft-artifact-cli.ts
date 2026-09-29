@@ -1,50 +1,57 @@
 /**
  * Operator entry point for draft extraction: `npm run draft:artifact`.
  *
- * Everything here is argument parsing, module loading, and operator-facing output.
- * The extraction itself lives in `draft-artifact.ts`, which keeps that module
- * free of process arguments and dynamic imports.
+ * Argument parsing, module loading, and operator-facing output live here; the
+ * extraction itself lives in `draft-artifact.ts`, which stays free of process
+ * arguments and dynamic imports.
  *
- * `--compare` is the review aid: it diffs the generated draft against an existing
- * compiled artifact by observed stage order and reports exact action and detector
- * matches, which is how a reviewer sees the distance between a mechanical draft
- * and the reviewed graph it is meant to approximate.
+ * `--compare` is the review aid: it diffs the draft against an existing
+ * compiled artifact by observed stage order and reports exact action and
+ * detector matches, showing how far the mechanical draft is from the reviewed
+ * graph it approximates.
+ *
+ * EXIT CODES
+ * - 1 when the run cannot be drafted or the comparison artifact is missing.
+ * - 2 for a malformed argument list.
  */
 
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
+import { print, runMain } from "../common/cli.js";
+import type { CapabilityArtifact } from "../runtime/state-machine.js";
 import {
     buildDraftArtifact,
     compareArtifacts,
     readSuccessfulRun,
     type ArtifactComparison,
 } from "./draft-artifact.js";
-import type { CapabilityArtifact } from "../runtime/state-machine.js";
 
-interface Options {
+interface DraftOptions {
     runDirectory: string;
     capabilityId: string;
     outputPath: string;
-    comparisonPath?: string;
-    comparisonExport?: string;
+    /** A compiled module holding the artifact to compare against. */
+    comparisonPath: string | undefined;
+    comparisonExport: string | undefined;
 }
 
-const argv = process.argv.slice(2);
-if (argv.includes("--help") || argv.includes("-h")) {
-    printUsage();
-} else {
+await runMain(main);
+
+async function main(): Promise<void> {
+    const argv = process.argv.slice(2);
+    if (argv.includes("--help") || argv.includes("-h")) {
+        printUsage();
+        return;
+    }
     const options = parseOptions(argv);
     if (options === null) {
         printUsage();
         process.exitCode = 2;
-    } else {
-        await run(options);
+        return;
     }
-}
 
-async function run(options: Options): Promise<void> {
     const runEvidence = await readSuccessfulRun(options.runDirectory);
     const draft = buildDraftArtifact({
         ...runEvidence,
@@ -52,11 +59,11 @@ async function run(options: Options): Promise<void> {
     });
     await writeJson(options.outputPath, draft);
 
-    console.log(`Draft written: ${options.outputPath}`);
-    console.log(
+    print(`Draft written: ${options.outputPath}`);
+    print(
         `Source run: ${draft.source.runId}; ${String(draft.source.actionCount)} ledger actions; ${String(draft.source.trace.actionCount)} trace actions`,
     );
-    console.log(
+    print(
         `Draft artifact: ${draft.artifact.id}; ${String(draft.artifact.stages.length)} stages; ${String(draft.warnings.length)} warnings`,
     );
 
@@ -66,15 +73,16 @@ async function run(options: Options): Promise<void> {
             options.comparisonExport,
         );
         const comparison = compareArtifacts(draft.artifact, current);
-        const comparisonPath = options.comparisonPath.endsWith(".json")
+        const comparisonOutputPath = options.comparisonPath.endsWith(".json")
             ? options.comparisonPath.replace(/\.json$/, ".comparison.json")
             : `${options.outputPath.replace(/\.json$/, "")}.comparison.json`;
-        await writeJson(comparisonPath, comparison);
-        printComparison(comparison, comparisonPath);
+        await writeJson(comparisonOutputPath, comparison);
+        printComparison(comparison, comparisonOutputPath);
     }
 }
 
-function parseOptions(argv: readonly string[]): Options | null {
+/** Read `--flag value` pairs, or `null` when the argument list is malformed. */
+function parseOptions(argv: readonly string[]): DraftOptions | null {
     const values = new Map<string, string>();
     for (let index = 0; index < argv.length; index += 1) {
         const argument = argv[index];
@@ -89,19 +97,15 @@ function parseOptions(argv: readonly string[]): Options | null {
     const capabilityId = values.get("--id");
     if (runDirectory === undefined || capabilityId === undefined) return null;
 
-    const options: Options = {
+    return {
         runDirectory,
         capabilityId,
         outputPath:
             values.get("--out") ??
             `tmp/drafts/${capabilityId.replaceAll(".", "-")}.json`,
+        comparisonPath: values.get("--compare"),
+        comparisonExport: values.get("--compare-export"),
     };
-    const comparisonPath = values.get("--compare");
-    if (comparisonPath !== undefined) options.comparisonPath = comparisonPath;
-    const comparisonExport = values.get("--compare-export");
-    if (comparisonExport !== undefined)
-        options.comparisonExport = comparisonExport;
-    return options;
 }
 
 async function loadCapabilityArtifact(
@@ -145,33 +149,33 @@ function printComparison(
     comparison: ArtifactComparison,
     comparisonPath: string,
 ): void {
-    console.log(`Comparison written: ${comparisonPath}`);
-    console.log(
+    print(`Comparison written: ${comparisonPath}`);
+    print(
         `Stages: draft ${String(comparison.draftStageCount)}, current ${String(comparison.currentStageCount)}`,
     );
-    console.log(
+    print(
         `Exact action matches: ${String(comparison.exactActionMatches)}/${String(comparison.currentStageCount)}`,
     );
-    console.log(
+    print(
         `Exact detector matches: ${String(comparison.exactDetectorMatches)}/${String(comparison.currentStageCount)}`,
     );
-    console.log(
+    print(
         `Exact detector-signal matches: ${String(comparison.exactDetectorSignalMatches)}/${String(comparison.currentStageCount)}`,
     );
     if (comparison.differentTopLevelFields.length > 0)
-        console.log(
+        print(
             `Different top-level fields: ${comparison.differentTopLevelFields.join(", ")}`,
         );
     for (const stage of comparison.stageComparisons) {
         if (stage.differentFields.length === 0) continue;
-        console.log(
+        print(
             `Stage ${String(stage.index)} (${stage.draftStageId ?? "missing"} vs ${stage.currentStageId ?? "missing"}): ${stage.differentFields.join(", ")}`,
         );
     }
 }
 
 function printUsage(): void {
-    console.log(`Usage:
+    print(`Usage:
   npm run draft:artifact -- --run <run-directory> --id <capability-id> [options]
 
 Options:
