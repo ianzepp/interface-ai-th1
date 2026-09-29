@@ -1,11 +1,15 @@
 #!/bin/sh
-# Point this clone's hooks at the versioned hooks in scripts/hooks.
-#
-# Git never shares hooks through history, so this is a per-clone step rather than
-# something a clone inherits. It is idempotent, and it refuses to replace a hook
-# configuration it did not create: silently disabling someone else's hooks would
-# be worse than not installing this one.
 set -eu
+
+# Point this clone's core.hooksPath at the versioned hooks in scripts/hooks.
+# Usage: scripts/install-hooks
+#
+# Git never shares hooks through history, so this is a per-clone step.
+#
+# INVARIANTS
+# - Idempotent: rerunning over its own configuration changes nothing.
+# - Refuses to replace a hooksPath it did not set, because silently disabling
+#   someone else's hooks is worse than not installing these.
 
 project_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$project_dir"
