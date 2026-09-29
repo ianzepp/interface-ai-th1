@@ -194,33 +194,6 @@ test("binds inputs in action targets and detector targets", async () => {
     assert.equal(detectorText, "Book Keeping Company");
 });
 
-function fakeDriver(overrides: Partial<SurfaceDriver> = {}): SurfaceDriver {
-    return {
-        observe: () =>
-            Promise.resolve({ url: "http://local.test", title: "Test" }),
-        locate: () =>
-            Promise.resolve({
-                candidateIndex: 0,
-                matchCount: 1,
-                description: "test",
-            }),
-        act: () =>
-            Promise.resolve({
-                completed: true,
-                observation: { url: "http://local.test", title: "Test" },
-            }),
-        waitFor: () => Promise.resolve(null),
-        extract: () => Promise.resolve(undefined),
-        captureEvidence: () =>
-            Promise.resolve({
-                kind: "screenshot",
-                path: "failure.png",
-                redacted: false,
-            }),
-        ...overrides,
-    };
-}
-
 test("reports declared recoveries and stops before an exhausted recovery action", async () => {
     const initialStage = artifact.stages[0];
     assert.ok(initialStage);
@@ -337,3 +310,62 @@ test("reports declared recoveries and stops before an exhausted recovery action"
     assert.deepEqual(reports, result.recoveries);
     assert.equal(pressCount, 1);
 });
+
+test("fails typed when a placeholder names an input the invocation omits", async () => {
+    const engine = new DeterministicEngine(
+        fakeDriver({
+            waitFor: () =>
+                Promise.resolve({
+                    detectorId: "ready",
+                    observedAt: "2026-09-29T00:00:00.000Z",
+                }),
+        }),
+        new ArtifactPolicy(artifact.policy),
+    );
+    const result = await engine.run(artifact, {
+        capabilityId: artifact.id,
+        inputs: {},
+    });
+    assert.equal(result.type, "failure");
+    assert.equal(result.code, "stage-execution-failed");
+    assert.equal(result.detail.observed, "Missing invocation input: baseUrl");
+
+    // The placeholder pattern is shared across calls, so a thrown binding must
+    // not leave it unable to bind the next invocation.
+    assert.equal(
+        (
+            await engine.run(artifact, {
+                capabilityId: artifact.id,
+                inputs: { baseUrl: "http://local.test" },
+            })
+        ).type,
+        "success",
+    );
+});
+
+function fakeDriver(overrides: Partial<SurfaceDriver> = {}): SurfaceDriver {
+    return {
+        observe: () =>
+            Promise.resolve({ url: "http://local.test", title: "Test" }),
+        locate: () =>
+            Promise.resolve({
+                candidateIndex: 0,
+                matchCount: 1,
+                description: "test",
+            }),
+        act: () =>
+            Promise.resolve({
+                completed: true,
+                observation: { url: "http://local.test", title: "Test" },
+            }),
+        waitFor: () => Promise.resolve(null),
+        extract: () => Promise.resolve(undefined),
+        captureEvidence: () =>
+            Promise.resolve({
+                kind: "screenshot",
+                path: "failure.png",
+                redacted: false,
+            }),
+        ...overrides,
+    };
+}

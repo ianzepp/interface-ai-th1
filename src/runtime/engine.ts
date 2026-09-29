@@ -1,49 +1,57 @@
-import type {
-    ActionResult,
-    SurfaceAction,
-    SurfaceDriver,
-} from "../surfaces/surface-driver.js";
-import type { ArtifactPolicy } from "./policy.js";
-import type { RecoveryReport, RunResult } from "./result.js";
-import {
-    selectDestination,
-    selectTransition,
-    type CapabilityArtifact,
-} from "./state-machine.js";
-
 /**
- * The execution plane: the production path, with no model in the decision loop.
+ * The execution plane: walks a capability artifact with no model in the loop.
  *
- * The engine walks the artifact's stages, applies the recorded policy to each
- * action, matches the observed state against that stage's detectors, and returns
- * a terminal outcome. Determinism is the whole point: the same artifact against
- * the same target version with the same inputs must produce the same result and
- * the same outputs, which is what makes a capability safe to invoke unattended
- * and cheap enough to invoke often.
- *
- * Runtime conditions are expected rather than exceptional. An expired session, a
- * validation error, or a "record not found" page is a state to detect and route
- * on, not a crash to propagate.
+ * The engine applies the recorded policy to each stage's action, matches the
+ * observed state against that stage's detectors, and returns a typed terminal
+ * outcome. The same artifact against the same target version with the same
+ * inputs must produce the same result and outputs, which is what makes a
+ * capability safe to invoke unattended. An expired session, a validation
+ * error, or a "record not found" page is a state to route on, not a crash.
  *
  * INVARIANTS
  * - The engine holds no application knowledge. Stages, detectors, transitions,
  *   and bindings all arrive from the artifact.
- * - Input binding happens before policy and origin checks, so those two decide on
- *   the action that would actually run rather than on its template.
- * - The walk is step-limited by the artifact's own stage count, so a graph cycle
- *   ends as a typed failure instead of a hang.
+ * - Input binding happens before policy and origin checks, so those two decide
+ *   on the action that would actually run rather than on its template.
+ * - The walk is step-limited by the artifact's own stage count, so a graph
+ *   cycle ends as a typed failure instead of a hang.
  *
  * LIMITS
- * - Determinism is guaranteed over the graph, not over the surface. A recognized
- *   state always routes the same way; the engine cannot make the application
- *   reach that state.
+ * - Determinism is guaranteed over the graph, not over the surface. A
+ *   recognized state always routes the same way; the engine cannot make the
+ *   application reach that state.
  * - A driver exception becomes a `stage-execution-failed` failure instead of
- *   propagating, so a run always ends typed. The cost is that a driver bug and a
- *   genuinely unrecognized screen arrive by the same code, and only the recorded
- *   `observed` text tells them apart.
- * - The caller owns the session. The engine starts no browser, resets no fixture,
- *   and finalizes no run.
+ *   propagating, so a run always ends typed. The cost is that a driver bug and
+ *   a genuinely unrecognized screen arrive by the same code, and only the
+ *   recorded `observed` text tells them apart.
+ * - The caller owns the session. The engine starts no browser, resets no
+ *   fixture, and finalizes no run.
  */
+
+import { describeError } from "../common/errors.js";
+import type {
+    ActionResult,
+    EvidenceReference,
+    StateDetector,
+    SurfaceAction,
+    SurfaceDriver,
+    TargetDescriptor,
+} from "../surfaces/surface-driver.js";
+import type { ArtifactPolicy } from "./policy.js";
+import type { FailureDetail, RecoveryReport, RunResult } from "./result.js";
+import {
+    selectDestination,
+    selectTransition,
+    type CapabilityArtifact,
+    type CapabilityStage,
+    type RecoveryDeclaration,
+    type TerminalOutcome,
+} from "./state-machine.js";
+
+const DEFAULT_STAGE_TIMEOUT_MS = 15_000;
+
+/** A `{{input.NAME}}` placeholder; group 1 is the input name. */
+const INPUT_PLACEHOLDER = /\{\{input\.([a-zA-Z0-9_-]+)\}\}/g;
 
 /** One call: which capability, and the values for its declared inputs. */
 export interface CapabilityInvocation {
@@ -54,10 +62,10 @@ export interface CapabilityInvocation {
 /**
  * Where a replay reports progress.
  *
- * The engine is deliberately silent about evidence. A caller that wants a run
- * directory, a trace, or a live progress display supplies an observer, so replay
- * and discovery can produce the same evidence shape without the engine knowing
- * what a run directory is.
+ * The engine persists nothing. A caller that wants a run directory, a trace,
+ * or a live progress display supplies an observer, so replay and discovery can
+ * produce the same evidence shape without the engine knowing what a run
+ * directory is.
  */
 export interface EngineObserver {
     actionCompleted(
@@ -69,6 +77,7 @@ export interface EngineObserver {
     recoveryOccurred?(recovery: RecoveryReport): Promise<void>;
 }
 
+/** `stageTimeoutMs` bounds each stage's detector wait; it defaults to 15s. */
 export interface EngineOptions {
     stageTimeoutMs?: number;
     observer?: EngineObserver;
@@ -78,8 +87,8 @@ export interface EngineOptions {
  * Walk one artifact against one surface.
  *
  * The engine is stateless between calls: everything a run needs arrives as the
- * artifact plus the invocation, so two invocations cannot contaminate each other
- * and a failed run leaves nothing behind to reset.
+ * artifact plus the invocation, so two invocations cannot contaminate each
+ * other and a failed run leaves nothing behind to reset.
  */
 export class DeterministicEngine {
     public constructor(
@@ -88,26 +97,19 @@ export class DeterministicEngine {
         public readonly options: EngineOptions = {},
     ) {}
 
-    public run(
-        artifact: CapabilityArtifact,
-        invocation: CapabilityInvocation,
-    ): Promise<RunResult> {
-        return this.execute(artifact, invocation);
-    }
-
     /**
      * The stage loop: act, detect, extract, transition.
      *
-     * Each guard below refuses the run before any browser action happens, because
+     * The two guards refuse the run before any browser action happens, because
      * a mismatched artifact or policy means the reviewed graph is not the graph
      * that would execute.
      */
-    private async execute(
+    public async run(
         artifact: CapabilityArtifact,
         invocation: CapabilityInvocation,
     ): Promise<RunResult> {
         if (invocation.capabilityId !== artifact.id) {
-            return failure(
+            return buildFailure(
                 "artifact",
                 "capability-id-mismatch",
                 artifact.id,
@@ -120,7 +122,7 @@ export class DeterministicEngine {
             JSON.stringify(this.policy.configuration) !==
             JSON.stringify(artifact.policy)
         ) {
-            return failure(
+            return buildFailure(
                 "artifact",
                 "policy-mismatch",
                 JSON.stringify(artifact.policy),
@@ -140,8 +142,8 @@ export class DeterministicEngine {
         // from any admitted entry point; anything beyond that is a cycle.
         for (let step = 0; step <= artifact.stages.length * 2; step += 1) {
             const stage = stages.get(stageId);
-            if (stage === undefined)
-                return failure(
+            if (stage === undefined) {
+                return buildFailure(
                     stageId,
                     "missing-stage",
                     "declared stage",
@@ -149,164 +151,75 @@ export class DeterministicEngine {
                     [],
                     recoveries,
                 );
+            }
             try {
                 if (stage.action !== undefined) {
-                    const action = bindAction(stage.action, invocation.inputs);
-                    const currentUrl =
-                        action.type === "navigate"
-                            ? undefined
-                            : (
-                                  await this.driver.observe({
-                                      includeAccessibility: false,
-                                      includeScreenshot: false,
-                                  })
-                              ).url;
-                    const originFailure = validateOrigin(
-                        action,
-                        artifact.policy.allowedOrigins,
-                        currentUrl,
+                    const refusal = await this.performAction(
+                        artifact,
+                        stage,
+                        stage.action,
+                        invocation.inputs,
+                        recoveries,
                     );
-                    if (originFailure !== null)
-                        return failure(
-                            stage.id,
-                            "origin-blocked",
-                            artifact.policy.allowedOrigins.join(", "),
-                            originFailure,
-                            [],
-                            recoveries,
-                        );
-                    const decision = this.policy.evaluate(action, stage.risk);
-                    if (decision.type === "block")
-                        return failure(
-                            stage.id,
-                            "policy-blocked",
-                            "allow",
-                            decision.reason,
-                            [],
-                            recoveries,
-                        );
-                    if (decision.type === "require-confirmation") {
-                        return {
-                            type: "intervention-required",
-                            requestId: `${artifact.id}:${stage.id}`,
-                            code: "policy-confirmation-required",
-                            recoveries,
-                        };
-                    }
-                    // Navigating and pressing act on the page rather than on a
-                    // located control, so only the other verbs resolve a target
-                    // first. Locating early is what turns an ambiguous or missing
-                    // control into a typed failure before the action mutates state.
-                    if (action.type !== "navigate" && action.type !== "press")
-                        await this.driver.locate(action.target);
-                    const result = await this.driver.act(action);
-                    await this.options.observer?.actionCompleted(
-                        stage.id,
-                        action,
-                        result,
-                    );
+                    if (refusal !== null) return refusal;
                 }
 
                 const match = await this.driver.waitFor(
                     stage.detectors.map((detector) =>
                         bindDetector(detector, invocation.inputs),
                     ),
-                    this.options.stageTimeoutMs ?? 15_000,
+                    this.options.stageTimeoutMs ?? DEFAULT_STAGE_TIMEOUT_MS,
                 );
-                for (const extraction of stage.extractions)
+                for (const extraction of stage.extractions) {
                     outputs[extraction.name] =
                         await this.driver.extract(extraction);
-                if (match !== null)
+                }
+                if (match !== null) {
                     await this.options.observer?.checkpoint(
                         stage.id,
                         match.detectorId,
                     );
+                }
                 const detectorId = match?.detectorId ?? null;
                 const transition = selectTransition(stage, detectorId);
                 const destination = selectDestination(stage, detectorId);
                 if (transition?.recovery !== undefined) {
-                    const recovery = transition.recovery;
-                    const attempt =
-                        (recoveryAttempts.get(recovery.id) ?? 0) + 1;
-                    if (attempt > recovery.maxAttempts) {
-                        return failure(
-                            stage.id,
-                            "recovery-exhausted",
-                            recovery.id,
-                            recovery.condition,
-                            [],
-                            recoveries,
-                            {
-                                recoveryId: recovery.id,
-                                condition: recovery.condition,
-                            },
-                        );
-                    }
-                    const evidence = await this.driver
-                        .captureEvidence(
-                            `recovery-${recovery.id}-${String(attempt)}`,
-                        )
-                        .then((item) => [item])
-                        .catch(() => []);
-                    const report: RecoveryReport = {
-                        recoveryId: recovery.id,
-                        condition: recovery.condition,
-                        sourceRunId: recovery.sourceRunId,
-                        detectorId: transition.detectorId,
-                        attempt,
-                        evidence,
-                    };
-                    recoveryAttempts.set(recovery.id, attempt);
-                    recoveries.push(report);
-                    await this.options.observer?.recoveryOccurred?.(report);
+                    const exhausted = await this.recordRecovery(
+                        stage.id,
+                        transition.detectorId,
+                        transition.recovery,
+                        recoveryAttempts,
+                        recoveries,
+                    );
+                    if (exhausted !== null) return exhausted;
                 }
                 if (destination.type === "stage") {
                     stageId = destination.stageId;
                     continue;
                 }
-                switch (destination.outcome.type) {
-                    case "success":
-                        return { type: "success", outputs, recoveries };
-                    case "business-outcome":
-                        return {
-                            type: "business-outcome",
-                            code: destination.outcome.code,
-                            details: outputs,
-                            recoveries,
-                        };
-                    case "intervention-required":
-                        return {
-                            type: "intervention-required",
-                            requestId: `${artifact.id}:${stage.id}`,
-                            code: destination.outcome.code,
-                            recoveries,
-                        };
-                    case "failure":
-                        return failure(
-                            stage.id,
-                            destination.outcome.code,
-                            stage.detectors.map((d) => d.id).join(", "),
-                            match?.detectorId ?? "unrecognized state",
-                            [],
-                            recoveries,
-                        );
-                }
+                return buildTerminalResult(
+                    artifact.id,
+                    stage,
+                    destination.outcome,
+                    detectorId,
+                    outputs,
+                    recoveries,
+                );
             } catch (error) {
-                const evidence = await this.driver
-                    .captureEvidence(`failure-${stage.id}`)
-                    .then((item) => [item])
-                    .catch(() => []);
-                return failure(
+                const evidence = await this.captureOptionalEvidence(
+                    `failure-${stage.id}`,
+                );
+                return buildFailure(
                     stage.id,
                     "stage-execution-failed",
                     stage.description,
-                    error instanceof Error ? error.message : String(error),
+                    describeError(error),
                     evidence,
                     recoveries,
                 );
             }
         }
-        return failure(
+        return buildFailure(
             stageId,
             "stage-cycle",
             "terminating graph",
@@ -315,60 +228,189 @@ export class DeterministicEngine {
             recoveries,
         );
     }
+
+    /**
+     * Bind, vet, and perform one stage's action.
+     *
+     * Returns the result that ends the run when the origin or the policy
+     * refuses the action, or `null` once the action has run.
+     */
+    private async performAction(
+        artifact: CapabilityArtifact,
+        stage: CapabilityStage,
+        template: SurfaceAction,
+        inputs: Record<string, unknown>,
+        recoveries: readonly RecoveryReport[],
+    ): Promise<RunResult | null> {
+        const action = bindAction(template, inputs);
+        const currentUrl =
+            action.type === "navigate"
+                ? undefined
+                : (
+                      await this.driver.observe({
+                          includeAccessibility: false,
+                          includeScreenshot: false,
+                      })
+                  ).url;
+        const blockedOrigin = readBlockedOrigin(
+            action,
+            artifact.policy.allowedOrigins,
+            currentUrl,
+        );
+        if (blockedOrigin !== null) {
+            return buildFailure(
+                stage.id,
+                "origin-blocked",
+                artifact.policy.allowedOrigins.join(", "),
+                blockedOrigin,
+                [],
+                recoveries,
+            );
+        }
+        const decision = this.policy.evaluate(action, stage.risk);
+        if (decision.type === "block") {
+            return buildFailure(
+                stage.id,
+                "policy-blocked",
+                "allow",
+                decision.reason,
+                [],
+                recoveries,
+            );
+        }
+        if (decision.type === "require-confirmation") {
+            return {
+                type: "intervention-required",
+                requestId: `${artifact.id}:${stage.id}`,
+                code: "policy-confirmation-required",
+                recoveries,
+            };
+        }
+        // Navigating and pressing act on the page rather than on a located
+        // control, so only the other verbs resolve a target first. Locating
+        // early is what turns an ambiguous or missing control into a typed
+        // failure before the action mutates state.
+        if (action.type !== "navigate" && action.type !== "press") {
+            await this.driver.locate(action.target);
+        }
+        const result = await this.driver.act(action);
+        await this.options.observer?.actionCompleted(stage.id, action, result);
+        return null;
+    }
+
+    /**
+     * Count and report one declared recovery.
+     *
+     * Returns the `recovery-exhausted` failure once the declaration's attempt
+     * budget is spent, or `null` after the recovery has been recorded.
+     */
+    private async recordRecovery(
+        stageId: string,
+        detectorId: string,
+        recovery: RecoveryDeclaration,
+        recoveryAttempts: Map<string, number>,
+        recoveries: RecoveryReport[],
+    ): Promise<RunResult | null> {
+        const attempt = (recoveryAttempts.get(recovery.id) ?? 0) + 1;
+        if (attempt > recovery.maxAttempts) {
+            return buildFailure(
+                stageId,
+                "recovery-exhausted",
+                recovery.id,
+                recovery.condition,
+                [],
+                recoveries,
+                { recoveryId: recovery.id, condition: recovery.condition },
+            );
+        }
+        const evidence = await this.captureOptionalEvidence(
+            `recovery-${recovery.id}-${String(attempt)}`,
+        );
+        const report: RecoveryReport = {
+            recoveryId: recovery.id,
+            condition: recovery.condition,
+            sourceRunId: recovery.sourceRunId,
+            detectorId,
+            attempt,
+            evidence,
+        };
+        recoveryAttempts.set(recovery.id, attempt);
+        recoveries.push(report);
+        await this.options.observer?.recoveryOccurred?.(report);
+        return null;
+    }
+
+    /** Evidence for a report, or none when the capture itself fails. */
+    private captureOptionalEvidence(
+        reason: string,
+    ): Promise<EvidenceReference[]> {
+        return this.driver
+            .captureEvidence(reason)
+            .then((item) => [item])
+            .catch(() => []);
+    }
 }
 
-/**
- * Resolve `{{input.NAME}}` placeholders against the invocation's inputs.
- *
- * Binding is textual and total: an unbound placeholder is an error rather than an
- * empty string, because a half-resolved target would silently act on the wrong
- * control while still looking like a faithful replay of the reviewed artifact.
- *
- * The three functions below exist because a placeholder can appear in three
- * shapes: inside a detector signal, inside a target candidate nested in a
- * detector's count signal, and inside an action's own target. Each shape needs
- * its own traversal, but they share this one substitution rule.
- */
-function bindDetector(
-    detector: import("../surfaces/surface-driver.js").StateDetector,
-    inputs: Record<string, unknown>,
-): import("../surfaces/surface-driver.js").StateDetector {
-    const bind = (value: string): string =>
-        value.replaceAll(
-            /\{\{input\.([a-zA-Z0-9_-]+)\}\}/g,
-            (_match, name: string) => {
-                if (!(name in inputs))
-                    throw new Error(`Missing invocation input: ${name}`);
-                return String(inputs[name]);
-            },
-        );
+/** Build the unrecoverable result every refusal path returns. */
+function buildFailure(
+    stageId: string,
+    code: string,
+    expected: string,
+    observed: string,
+    evidence: readonly EvidenceReference[],
+    recoveries: readonly RecoveryReport[],
+    recovery?: FailureDetail["recovery"],
+): RunResult {
     return {
-        ...detector,
-        signals: detector.signals.map((signal) => {
-            switch (signal.kind) {
-                case "url":
-                    return { ...signal, pattern: bind(signal.pattern) };
-                case "text":
-                    return { ...signal, value: bind(signal.value) };
-                case "role":
-                    return { ...signal, name: bind(signal.name) };
-                case "count":
-                    return {
-                        ...signal,
-                        target: bindTarget(signal.target, bind),
-                    };
-                case "response-status":
-                case "timeout":
-                    return signal;
-            }
-        }),
+        type: "failure",
+        code,
+        detail: {
+            stageId,
+            expected,
+            observed,
+            evidence,
+            ...(recovery === undefined ? {} : { recovery }),
+        },
+        recoveries,
     };
 }
 
+/**
+ * Resolve `{{input.NAME}}` placeholders in an action's own target and value.
+ *
+ * Binding is textual and total: an unbound placeholder is an error rather than
+ * an empty string, because a half-resolved target would silently act on the
+ * wrong control while still looking like a faithful replay of the reviewed
+ * artifact. A placeholder can sit in an action, in a detector signal, or in a
+ * target candidate nested in a detector's count signal; each shape has its own
+ * traversal below, and all share `bindPlaceholders`.
+ */
+function bindAction(
+    action: SurfaceAction,
+    inputs: Record<string, unknown>,
+): SurfaceAction {
+    switch (action.type) {
+        case "navigate":
+            return { ...action, url: bindPlaceholders(action.url, inputs) };
+        case "fill":
+        case "select":
+            return {
+                ...action,
+                target: bindTarget(action.target, inputs),
+                value: bindPlaceholders(action.value, inputs),
+            };
+        case "activate":
+            return { ...action, target: bindTarget(action.target, inputs) };
+        case "press":
+            return action;
+    }
+}
+
 function bindTarget(
-    target: import("../surfaces/surface-driver.js").TargetDescriptor,
-    bind: (value: string) => string,
-): import("../surfaces/surface-driver.js").TargetDescriptor {
+    target: TargetDescriptor,
+    inputs: Record<string, unknown>,
+): TargetDescriptor {
+    const bind = (value: string): string => bindPlaceholders(value, inputs);
     return {
         ...target,
         candidates: target.candidates.map((candidate) => {
@@ -392,44 +434,32 @@ function bindTarget(
     };
 }
 
-/** Bind an action's own target and value, leaving action types without either alone. */
-function bindAction(
-    action: SurfaceAction,
+/** Substitute every placeholder, throwing on an input the caller omitted. */
+function bindPlaceholders(
+    value: string,
     inputs: Record<string, unknown>,
-): SurfaceAction {
-    const bind = (value: string): string =>
-        value.replaceAll(
-            /\{\{input\.([a-zA-Z0-9_-]+)\}\}/g,
-            (_match, name: string) => {
-                if (!(name in inputs))
-                    throw new Error(`Missing invocation input: ${name}`);
-                return String(inputs[name]);
-            },
-        );
-    if (action.type === "navigate") return { ...action, url: bind(action.url) };
-    if (action.type === "fill" || action.type === "select")
-        return {
-            ...action,
-            target: bindTarget(action.target, bind),
-            value: bind(action.value),
-        };
-    if (action.type === "activate")
-        return { ...action, target: bindTarget(action.target, bind) };
-    return action;
+): string {
+    return value.replaceAll(INPUT_PLACEHOLDER, (_match, name: string) => {
+        if (!(name in inputs)) {
+            throw new Error(`Missing invocation input: ${name}`);
+        }
+        return String(inputs[name]);
+    });
 }
 
 /**
- * Check the origin an action would actually touch.
+ * The origin an action would touch when it is outside the allowlist, else
+ * `null`.
  *
- * A navigation is judged by where it is going; every other action is judged by
- * the page it is already on. An action with no determinable URL is refused rather
- * than allowed, so a driver that cannot report its location cannot widen the
- * allowlist by omission.
+ * A navigation is judged by where it is going; every other action is judged
+ * by the page it is already on. An action with no determinable URL is refused
+ * rather than allowed, so a driver that cannot report its location cannot
+ * widen the allowlist by omission.
  */
-function validateOrigin(
+function readBlockedOrigin(
     action: SurfaceAction,
     allowedOrigins: readonly string[],
-    currentUrl?: string,
+    currentUrl: string | undefined,
 ): string | null {
     const url = action.type === "navigate" ? action.url : currentUrl;
     if (url === undefined) return "unknown origin";
@@ -437,26 +467,77 @@ function validateOrigin(
     return allowedOrigins.includes(origin) ? null : origin;
 }
 
-/** Build the unrecoverable result every refusal path returns. */
-function failure(
-    stageId: string,
-    code: string,
-    expected: string,
-    observed: string,
-    evidence: Awaited<ReturnType<SurfaceDriver["captureEvidence"]>>[],
-    recoveries: readonly RecoveryReport[],
-    recovery?: { recoveryId: string; condition: string },
-): RunResult {
+/** Bind a detector's signals, including targets nested in count signals. */
+function bindDetector(
+    detector: StateDetector,
+    inputs: Record<string, unknown>,
+): StateDetector {
     return {
-        type: "failure",
-        code,
-        detail: {
-            stageId,
-            expected,
-            observed,
-            evidence,
-            ...(recovery === undefined ? {} : { recovery }),
-        },
-        recoveries,
+        ...detector,
+        signals: detector.signals.map((signal) => {
+            switch (signal.kind) {
+                case "url":
+                    return {
+                        ...signal,
+                        pattern: bindPlaceholders(signal.pattern, inputs),
+                    };
+                case "text":
+                    return {
+                        ...signal,
+                        value: bindPlaceholders(signal.value, inputs),
+                    };
+                case "role":
+                    return {
+                        ...signal,
+                        name: bindPlaceholders(signal.name, inputs),
+                    };
+                case "count":
+                    return {
+                        ...signal,
+                        target: bindTarget(signal.target, inputs),
+                    };
+                case "response-status":
+                case "timeout":
+                    return signal;
+            }
+        }),
     };
+}
+
+/** Turn the artifact's declared ending into the invocation's result. */
+function buildTerminalResult(
+    artifactId: string,
+    stage: CapabilityStage,
+    outcome: TerminalOutcome,
+    detectorId: string | null,
+    outputs: Record<string, unknown>,
+    recoveries: readonly RecoveryReport[],
+): RunResult {
+    switch (outcome.type) {
+        case "success":
+            return { type: "success", outputs, recoveries };
+        case "business-outcome":
+            return {
+                type: "business-outcome",
+                code: outcome.code,
+                details: outputs,
+                recoveries,
+            };
+        case "intervention-required":
+            return {
+                type: "intervention-required",
+                requestId: `${artifactId}:${stage.id}`,
+                code: outcome.code,
+                recoveries,
+            };
+        case "failure":
+            return buildFailure(
+                stage.id,
+                outcome.code,
+                stage.detectors.map((detector) => detector.id).join(", "),
+                detectorId ?? "unrecognized state",
+                [],
+                recoveries,
+            );
+    }
 }
