@@ -1,43 +1,38 @@
 /**
  * Reviewed capability: initialize a fresh LedgerSMB company and its first
- * administrator.
+ * administrator, then prove the account can log in.
  *
- * This is the phase-zero artifact, and it is the one that establishes the shape
- * every later capability copies. It is reviewed TypeScript rather than generated
- * output: each stage, detector, and transition here was decided by comparing
- * repeated runs, and the file is the durable record of that review.
- *
- * It is a state graph, not a recording. `provenance` names the discovery run and
- * the two successful replays that validated it. The `authenticate` stage activates
- * by role and accessible name because an earlier draft carried the CSS selector
- * that the recorder *reported* instead of the role the discovery code had actually
- * used, and exact target resolution rejected it. The lesson is recorded in the
- * file rather than in a comment about CSS being bad.
+ * It is reviewed TypeScript rather than generated output: each stage, detector,
+ * and transition was decided by comparing repeated runs, and this file is the
+ * durable record of that review. Stages form a straight line, each listening
+ * for the one state that proves it completed.
  *
  * DESIGN NOTES
- * - Every stage declares `reversible` risk. Combined with `riskyActionMode:
- *   "block"`, policy never stops this graph for a person, which is what makes
+ * - Every stage declares `reversible` risk. With `riskyActionMode: "block"`,
+ *   policy never stops this graph for a person, which keeps
  *   `replay:ledgersmb:initialize` a single unattended command.
+ * - `authenticate` activates the Login button by role and accessible name, not
+ *   by the CSS selector the recorder reported: discovery had resolved the role,
+ *   and exact target resolution rejected the reported selector.
  * - The last stage dismisses the disposable-password expiry notice because the
  *   home screen only proves the account works once that interstitial is past.
- * - Authored values that are not the caller's business stay as literals: the
- *   salutation, country, birth date, tax identifier, employee number, and the
- *   administrator's first and last name are fixture constants the graph commits
- *   to, not invocation inputs.
+ * - Values that are not the caller's business stay literals: the salutation,
+ *   country, birth date, tax identifier, employee number, and administrator
+ *   name are fixture constants the graph commits to, not invocation inputs.
  *
  * LIMITS
- * - This graph has no recoverable branches. Any screen other than the expected one
- *   ends as `unexpected-screen`, which is honest for a flow whose starting state is
- *   an empty database: there is no upstream data to be wrong.
- * - Login is part of this capability because proving the created account works is
- *   its success condition. Later capabilities should bootstrap authentication
- *   rather than repeat this stage.
+ * - No recoverable branches. Any other screen ends as `unexpected-screen`,
+ *   which is honest for a flow that starts from an empty database.
+ * - Login is part of this capability because proving the created account works
+ *   is its success condition. Later capabilities should bootstrap
+ *   authentication rather than repeat these stages.
  */
 
 import type {
     CapabilityArtifact,
     CapabilityStage,
     StageDestination,
+    StageTransition,
 } from "../runtime/state-machine.js";
 import type {
     DetectorSignal,
@@ -45,8 +40,6 @@ import type {
     SurfaceAction,
     TargetDescriptor,
 } from "../surfaces/surface-driver.js";
-
-const RUN_ID = "20260915162457450-f9c72fa6";
 
 export const ledgerSmbInitializeArtifact: CapabilityArtifact = {
     schemaVersion: "1",
@@ -76,7 +69,7 @@ export const ledgerSmbInitializeArtifact: CapabilityArtifact = {
         riskyActionMode: "block",
     },
     provenance: {
-        discoveryRunId: RUN_ID,
+        discoveryRunId: "20260915162457450-f9c72fa6",
         createdAt: "2026-09-15T16:24:57.450Z",
         // The two 2026-09-15 validation replays predate declared-value
         // redaction and carry the fixture password in their ledgers, so they
@@ -91,216 +84,203 @@ function buildStages(): CapabilityStage[] {
             "open-setup",
             "Open the setup console.",
             { type: "navigate", url: "{{input.baseUrl}}/setup.pl" },
-            role("button", "Create"),
+            roleSignal("button", "Create"),
         ],
         [
             "fill-db-admin",
             "Enter the database administrator.",
             fill("#s-user", "{{input.databaseAdmin}}"),
-            role("button", "Create"),
+            roleSignal("button", "Create"),
         ],
         [
             "fill-db-password",
             "Enter the database password.",
             fill("#s-password", "{{input.databasePassword}}"),
-            role("button", "Create"),
+            roleSignal("button", "Create"),
         ],
         [
             "fill-company",
             "Enter the company database name.",
             fill("#database", "{{input.company}}"),
-            role("button", "Create"),
+            roleSignal("button", "Create"),
         ],
         [
             "create-company",
             "Create the company database.",
             activate(roleTarget("button", "Create")),
-            role("option", "Argentina"),
+            roleSignal("option", "Argentina"),
         ],
         [
             "open-country-list",
             "Open the chart country list.",
             activate(roleTarget("option", "Argentina")),
-            role("option", "United States"),
+            roleSignal("option", "United States"),
         ],
         [
             "choose-chart-country",
             "Choose the United States chart family.",
             activate(roleTarget("option", "United States")),
-            role("button", "Next"),
+            roleSignal("button", "Next"),
         ],
         [
             "confirm-chart-country",
             "Continue from the chart country selection.",
             activate(roleTarget("button", "Next")),
-            text("The selected country ('us') has"),
+            textSignal("The selected country ('us') has"),
         ],
         [
             "confirm-chart",
             "Accept the General chart of accounts.",
             activate(roleTarget("button", "Next")),
-            role("button", "Load Templates"),
+            roleSignal("button", "Load Templates"),
         ],
         [
             "load-templates",
             "Load the demo templates.",
             activate(roleTarget("button", "Load Templates")),
-            text("Create new user"),
+            textSignal("Create new user"),
         ],
         [
             "fill-username",
             "Enter the initial username.",
             fill("#username", "{{input.username}}"),
-            text("Create new user"),
+            textSignal("Create new user"),
         ],
         [
             "fill-user-password",
             "Enter the initial user password.",
             fill("#password", "{{input.password}}"),
-            text("Create new user"),
+            textSignal("Create new user"),
         ],
         [
             "fill-first-name",
             "Enter the administrator first name.",
             fill("#first-name", "Fixture"),
-            text("Create new user"),
+            textSignal("Create new user"),
         ],
         [
             "fill-last-name",
             "Enter the administrator last name.",
             fill("#last-name", "Administrator"),
-            text("Create new user"),
+            textSignal("Create new user"),
         ],
         [
             "fill-employee-number",
             "Enter the administrator employee number.",
             fill("#employeenumber", "EMP-001"),
-            text("Create new user"),
+            textSignal("Create new user"),
         ],
         [
             "fill-birth-date",
             "Enter the synthetic birth date.",
             fill("#dob", "1980-01-01"),
-            text("Create new user"),
+            textSignal("Create new user"),
         ],
         [
             "fill-tax-id",
             "Enter the synthetic tax identifier.",
             fill("#ssn", "000-00-0000"),
-            text("Create new user"),
+            textSignal("Create new user"),
         ],
         [
             "open-salutation",
             "Open the salutation list.",
             activate(roleTarget("listbox", "Salutation")),
-            role("option", "Mr."),
+            roleSignal("option", "Mr."),
         ],
         [
             "choose-salutation",
             "Choose the salutation.",
             activate(roleTarget("option", "Mr.")),
-            role("listbox", "Salutation"),
+            roleSignal("listbox", "Salutation"),
         ],
         [
             "open-country",
             "Open the administrator country list.",
             activate(roleTarget("listbox", "Country")),
-            role("option", "United States"),
+            roleSignal("option", "United States"),
         ],
         [
             "choose-country",
             "Choose the administrator country.",
             activate(roleTarget("option", "United States")),
-            role("listbox", "Country"),
+            roleSignal("listbox", "Country"),
         ],
         [
             "open-permissions",
             "Open the permission profile list.",
             activate(roleTarget("listbox", "Assign Permissions")),
-            role("option", "Full Permissions"),
+            roleSignal("option", "Full Permissions"),
         ],
         [
             "choose-permissions",
             "Choose full fixture permissions.",
             activate(roleTarget("option", "Full Permissions")),
-            role("button", "Create User"),
+            roleSignal("button", "Create User"),
         ],
         [
             "create-user",
             "Create the first administrator.",
             activate(roleTarget("button", "Create User")),
-            text("Database Operation Complete"),
+            textSignal("Database Operation Complete"),
         ],
         [
             "open-login",
             "Open the LedgerSMB login page.",
             { type: "navigate", url: "{{input.baseUrl}}/login.pl" },
-            role("button", "Login"),
+            roleSignal("button", "Login"),
         ],
         [
             "fill-login-user",
             "Enter the administrator username for verification.",
             fill("#username", "{{input.username}}"),
-            role("button", "Login"),
+            roleSignal("button", "Login"),
         ],
         [
             "fill-login-password",
             "Enter the administrator password for verification.",
             fill("#password", "{{input.password}}"),
-            role("button", "Login"),
+            roleSignal("button", "Login"),
         ],
         [
             "fill-login-company",
             "Enter the initialized company for verification.",
             fill("#company", "{{input.company}}"),
-            role("button", "Login"),
+            roleSignal("button", "Login"),
         ],
         [
             "authenticate",
             "Authenticate the new administrator.",
             activate(roleTarget("button", "Login")),
-            role("button", "OK"),
+            roleSignal("button", "OK"),
         ],
         [
             "dismiss-expiry",
             "Dismiss the disposable-password expiry notice.",
             activate(roleTarget("button", "OK")),
-            text("Welcome to LedgerSMB"),
+            textSignal("Welcome to LedgerSMB"),
         ],
     ];
 
     return specs.map(([id, description, action, signal], index) => {
-        const detector = detectorFor(id, signal);
-        const destination: StageDestination =
-            index === specs.length - 1
-                ? { type: "terminal", outcome: { type: "success" } }
-                : {
-                      type: "stage",
-                      stageId: specs[index + 1]?.[0] ?? "missing-stage",
-                  };
+        const detector = completionDetector(id, signal);
+        const next = specs[index + 1];
         return {
             id,
             description,
             risk: "reversible",
             action,
             detectors: [detector],
-            transitions: [{ detectorId: detector.id, destination }],
-            otherwise: {
-                type: "terminal",
-                outcome: { type: "failure", code: "unexpected-screen" },
-            },
+            transitions: [
+                transition(
+                    detector.id,
+                    next === undefined ? success() : stage(next[0]),
+                ),
+            ],
+            otherwise: failure("unexpected-screen"),
             extractions: [],
         };
     });
-}
-
-function detectorFor(stageId: string, signal: DetectorSignal): StateDetector {
-    return {
-        id: `${stageId}-complete`,
-        description: `Expected state after ${stageId}`,
-        scope: "capability",
-        signals: [signal],
-    };
 }
 
 function fill(selector: string, value: string): SurfaceAction {
@@ -311,21 +291,53 @@ function activate(target: TargetDescriptor): SurfaceAction {
     return { type: "activate", target };
 }
 
-function cssTarget(selector: string): TargetDescriptor {
-    return { candidates: [{ kind: "css", selector }], require: "exactly-one" };
-}
-
-function roleTarget(roleName: string, name: string): TargetDescriptor {
+function roleTarget(role: string, name: string): TargetDescriptor {
     return {
-        candidates: [{ kind: "role", role: roleName, name }],
+        candidates: [{ kind: "role", role, name }],
         require: "exactly-one",
     };
 }
 
-function role(roleName: string, name: string): DetectorSignal {
-    return { kind: "role", role: roleName, name };
+function cssTarget(selector: string): TargetDescriptor {
+    return { candidates: [{ kind: "css", selector }], require: "exactly-one" };
 }
 
-function text(value: string): DetectorSignal {
+function roleSignal(role: string, name: string): DetectorSignal {
+    return { kind: "role", role, name };
+}
+
+function textSignal(value: string): DetectorSignal {
     return { kind: "text", value, exact: false };
+}
+
+/** The detector that proves `stageId` reached its expected state. */
+function completionDetector(
+    stageId: string,
+    signal: DetectorSignal,
+): StateDetector {
+    return {
+        id: `${stageId}-complete`,
+        description: `Expected state after ${stageId}`,
+        scope: "capability",
+        signals: [signal],
+    };
+}
+
+function transition(
+    detectorId: string,
+    destination: StageDestination,
+): StageTransition {
+    return { detectorId, destination };
+}
+
+function stage(stageId: string): StageDestination {
+    return { type: "stage", stageId };
+}
+
+function success(): StageDestination {
+    return { type: "terminal", outcome: { type: "success" } };
+}
+
+function failure(code: string): StageDestination {
+    return { type: "terminal", outcome: { type: "failure", code } };
 }
