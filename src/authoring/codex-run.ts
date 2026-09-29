@@ -20,6 +20,8 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 
+import { isRecord } from "../common/records.js";
+
 export interface CodexRunOptions {
     prompt: string;
     workingDirectory: string;
@@ -208,9 +210,7 @@ function buildCodexArgs(options: CodexRunOptions, isJson: boolean): string[] {
 }
 
 function readRecord(value: unknown): Record<string, unknown> | null {
-    return value !== null && typeof value === "object" && !Array.isArray(value)
-        ? (value as Record<string, unknown>)
-        : null;
+    return isRecord(value) ? value : null;
 }
 
 /** A non-empty string, or `null` for anything else. */

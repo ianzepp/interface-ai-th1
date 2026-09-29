@@ -28,6 +28,7 @@ import { dirname, join } from "node:path";
 import process from "node:process";
 
 import { print, runMain } from "../common/cli.js";
+import { isRecord } from "../common/records.js";
 import type {
     ActionRisk,
     SurfaceAction,
@@ -404,9 +405,7 @@ function describeRejection(value: Record<string, unknown>): string {
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
-    return value !== null && typeof value === "object" && !Array.isArray(value)
-        ? (value as Record<string, unknown>)
-        : {};
+    return isRecord(value) ? value : {};
 }
 
 /**

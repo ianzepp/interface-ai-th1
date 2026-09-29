@@ -19,6 +19,7 @@ import { cp, lstat, mkdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 
 import { isNodeError } from "../common/errors.js";
+import { isRecord } from "../common/records.js";
 import { validateRunAttestation } from "./run-recorder.js";
 
 const RUN_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
@@ -142,10 +143,6 @@ function parseManifest(source: string): Record<string, unknown> {
         throw new Error("Run manifest must be a JSON object");
     }
     return value;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 function isSensitiveEvidenceOutcome(value: unknown): boolean {

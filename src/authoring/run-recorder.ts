@@ -38,6 +38,7 @@ import {
 } from "node:fs/promises";
 import { join } from "node:path";
 
+import { isRecord } from "../common/records.js";
 import type { ControlLeaseState } from "../intervention/control-lease.js";
 import type { InterventionRequest } from "../intervention/request.js";
 import type { ResumeDecision } from "../intervention/resume.js";
@@ -982,10 +983,6 @@ function isRunEvent(value: unknown): value is RunEvent {
         default:
             return false;
     }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 function isObservation(value: unknown): value is Observation {
