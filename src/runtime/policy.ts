@@ -1,5 +1,3 @@
-import type { ActionRisk, SurfaceAction } from "../surfaces/surface-driver.js";
-
 /**
  * The guardrail decision, applied to every action before it runs.
  *
@@ -24,13 +22,15 @@ import type { ActionRisk, SurfaceAction } from "../surfaces/surface-driver.js";
  *   against a hostile capability, which would need its own review gate.
  */
 
+import type { ActionRisk, SurfaceAction } from "../surfaces/surface-driver.js";
+
 /**
  * The recorded allowlist for one capability.
  *
- * `allowedActionTypes` is what `evaluate` enforces today. `riskyActionMode`
- * decides whether an irreversible action is refused or pauses for a person, and
- * `allowedOrigins` names the application origins the capability is meant to act
- * on.
+ * `evaluate` enforces `allowedActionTypes`, and `riskyActionMode` decides
+ * whether an irreversible action is refused or pauses for a person.
+ * `allowedOrigins` names the application origins the capability may act on;
+ * the engine checks it, not `evaluate`.
  */
 export interface PolicyConfiguration {
     allowedOrigins: readonly string[];
@@ -44,6 +44,7 @@ export type PolicyDecision =
     | { type: "block"; reason: string }
     | { type: "require-confirmation"; reason: string };
 
+/** One capability's recorded allowlist, applied action by action. */
 export class ArtifactPolicy {
     public constructor(public readonly configuration: PolicyConfiguration) {}
 
