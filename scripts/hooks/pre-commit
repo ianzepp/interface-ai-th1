@@ -1,18 +1,15 @@
 #!/bin/sh
-# Refuse a commit whose staged content carries a credential value.
-#
-# The scan reads the index, not the working tree: the commit is the artifact that
-# ships, and the two surfaces disagree in both directions. Content staged and then
-# edited is still what the commit would contain, and content edited without being
-# staged is not.
-#
-# Installed per clone by scripts/install-hooks, which points core.hooksPath at
-# scripts/hooks. Git does not share hooks through history, so a fresh clone has no
-# hook until that command runs. The full audit, its rules, and its limits are in
-# SECURITY.md.
-#
-# Escape hatch, deliberately explicit: git commit --no-verify
 set -eu
+
+# Refuse a commit whose staged content carries a credential value.
+# Installed per clone by scripts/install-hooks; rules and limits are in
+# SECURITY.md. Escape hatch, deliberately explicit: git commit --no-verify
+#
+# INVARIANTS
+# - Scans the index, not the working tree: the commit is what ships. Content
+#   staged and then edited is still in the commit; unstaged edits are not.
+# - Scans the repository being committed even when core.hooksPath is absolute:
+#   Git runs the hook from the work tree root, and that root is passed as --root.
 
 project_dir=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 
@@ -22,7 +19,4 @@ if ! command -v npm >/dev/null 2>&1; then
     exit 1
 fi
 
-# Git runs a pre-commit hook with the working tree root as the current directory.
-# Passing it explicitly means the scan covers the repository being committed even
-# when the hook directory is configured as an absolute path.
 exec "$project_dir/scripts/audit-secrets" --root "$(pwd)" --staged
