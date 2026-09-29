@@ -1,17 +1,12 @@
 /**
- * The secret scan, as a rule set instead of a judgment call.
+ * The secret scan: curated rules that report where a credential value reached a
+ * file it must not reach.
  *
- * The delivery spec for VS-11 already carries a hand-written grep for the fixture
- * credential literals and for credential-bearing URL userinfo. That check is
- * correct, and it is the kind that rots: it lives inside a document, it covers one
- * pattern class, and nothing runs it. This module is that check generalised into
- * rules a program can run on every commit.
- *
- * A rule answers one question: did a value reach a file it must not reach. The
- * patterns are curated and specific rather than entropy-based, because a heuristic
- * that fires on every long string is one people learn to ignore. A rule that
- * expects its pattern to appear somewhere names that path here, so every curated
- * exception is visible in one place instead of implicit at each call site.
+ * Each rule answers one question — did a value reach a file it must not reach —
+ * and runs on every commit. Patterns are curated and specific rather than
+ * entropy-based, because a heuristic that fires on every long string is one
+ * people learn to ignore. Every path where a pattern is expected is named in
+ * `DEFAULT_RULES`, so the exception ledger is visible in one place.
  *
  * INVARIANTS
  * - A finding never carries a usable value. Excerpts are redacted to a short
@@ -19,12 +14,14 @@
  * - A finding reports a location, not a verdict about whether the value still
  *   works. Reporting a credential is not using it.
  * - Paths are repository-relative with forward slashes on every platform.
+ * - This file quotes every pattern, so it is excluded from its own scan.
  *
- * WHAT THIS DOES NOT COVER
- * - Binary artifacts. Their bytes are counted and reported, never scanned, so a
- *   clean result never means the trace archives were inspected.
- * - Screenshot pixels. Nothing here reads an image.
- * - Git history. Reachability over committed objects is a separate pass.
+ * LIMITS
+ * - Binary artifacts are counted, never scanned, so a clean result never means
+ *   the trace archives were inspected.
+ * - Screenshot pixels are not read.
+ * - Git history is not read. Reachability over committed objects is a separate
+ *   pass.
  */
 
 export type SecretSeverity = "blocking" | "warning" | "note";
@@ -61,6 +58,21 @@ export interface ScanRules {
     /** Where a personal identifier is already a recorded finding rather than news. */
     personalIdentifierPaths: readonly string[];
 }
+
+/** One recorded exception, and whether its path still carries the pattern. */
+interface LedgerRow {
+    filePath: string;
+    reason: "fixture-value" | "personal-identifier";
+    present: boolean;
+}
+
+/** Record one finding for the line being scanned. */
+type ReportFinding = (
+    rule: string,
+    severity: SecretSeverity,
+    value: string,
+    detail: string,
+) => void;
 
 /** A run directory's readable artifacts: the files the recorder writes and Git may carry. */
 const RUN_ARTIFACT_PATH = /^(?:runs|evidence\/runs)\//u;
@@ -201,22 +213,14 @@ export function scanSecrets(
 export function ledgerPresence(
     candidates: readonly ScanCandidate[],
     rules: ScanRules = DEFAULT_RULES,
-): readonly {
-    filePath: string;
-    reason: "fixture-value" | "personal-identifier";
-    present: boolean;
-}[] {
-    const byPath = new Map(
-        candidates.map((item) => [item.filePath, item.text]),
+): readonly LedgerRow[] {
+    const textByPath = new Map(
+        candidates.map((candidate) => [candidate.filePath, candidate.text]),
     );
-    const rows: {
-        filePath: string;
-        reason: "fixture-value" | "personal-identifier";
-        present: boolean;
-    }[] = [];
+    const rows: LedgerRow[] = [];
 
     for (const filePath of rules.fixtureValuePaths) {
-        const text = byPath.get(filePath) ?? "";
+        const text = textByPath.get(filePath) ?? "";
         rows.push({
             filePath,
             reason: "fixture-value",
@@ -224,7 +228,7 @@ export function ledgerPresence(
         });
     }
     for (const filePath of rules.personalIdentifierPaths) {
-        const text = byPath.get(filePath) ?? "";
+        const text = textByPath.get(filePath) ?? "";
         rows.push({
             filePath,
             reason: "personal-identifier",
@@ -237,11 +241,12 @@ export function ledgerPresence(
     return rows;
 }
 
-/** Redact a value to a prefix and its length, so a finding is never usable. */
-export function redactValue(value: string): string {
-    return `${value.slice(0, 4)}…(len ${String(value.length)})`;
-}
-
+/**
+ * Every finding on one line.
+ *
+ * Rules run in a fixed order — fixture values, credential shapes, credential
+ * assignments, home paths — so findings keep a stable order for deduplication.
+ */
 function scanLine(
     candidate: ScanCandidate,
     line: string,
@@ -249,27 +254,46 @@ function scanLine(
     rules: ScanRules,
 ): readonly SecretFinding[] {
     const findings: SecretFinding[] = [];
-    const add = (
-        rule: string,
-        severity: SecretSeverity,
-        value: string,
-        detail: string,
-    ): void => {
+    const report: ReportFinding = (rule, severity, value, detail) => {
         findings.push({
             rule,
             severity,
             scope: candidate.scope,
             filePath: candidate.filePath,
             line: lineNumber,
-            excerpt: excerptFor(line, value),
+            excerpt: redactLine(line, value),
             detail,
         });
     };
 
+    scanFixtureValues(candidate, line, rules, report);
+    scanCredentialShapes(line, report);
+    scanCredentialAssignments(line, rules, report);
+    scanHomePath(candidate, line, rules, report);
+    return findings;
+}
+
+/** The line with the value redacted, trimmed and capped for display. */
+function redactLine(line: string, value: string): string {
+    const redacted = line.replace(value, redactValue(value)).trim();
+    return redacted.length > 160 ? `${redacted.slice(0, 157)}...` : redacted;
+}
+
+/** Redact a value to a prefix and its length, so a finding is never usable. */
+function redactValue(value: string): string {
+    return `${value.slice(0, 4)}…(len ${String(value.length)})`;
+}
+
+function scanFixtureValues(
+    candidate: ScanCandidate,
+    line: string,
+    rules: ScanRules,
+    report: ReportFinding,
+): void {
     for (const value of rules.fixtureValues) {
         if (!line.includes(value)) continue;
         if (RUN_ARTIFACT_PATH.test(candidate.filePath)) {
-            add(
+            report(
                 "fixture-value-in-run-artifact",
                 "blocking",
                 value,
@@ -278,7 +302,7 @@ function scanLine(
             continue;
         }
         if (rules.fixtureValuePaths.includes(candidate.filePath)) continue;
-        add(
+        report(
             "fixture-value-outside-fixture-config",
             // A local note discussing the literal is not news; a committable file
             // carrying it is.
@@ -287,15 +311,27 @@ function scanLine(
             "A fixture credential belongs in the fixture configuration and the documents that name it, nowhere else.",
         );
     }
+}
 
+function scanCredentialShapes(line: string, report: ReportFinding): void {
     for (const shape of CREDENTIAL_SHAPES) {
         for (const match of line.matchAll(shape.pattern)) {
             const value = match[1] ?? match[0];
             if (isPlaceholder(value)) continue;
-            add(shape.rule, "blocking", value, shape.detail);
+            report(shape.rule, "blocking", value, shape.detail);
         }
     }
+}
 
+function isPlaceholder(value: string): boolean {
+    return PLACEHOLDER_VALUE.test(value);
+}
+
+function scanCredentialAssignments(
+    line: string,
+    rules: ScanRules,
+    report: ReportFinding,
+): void {
     for (const assignment of line.matchAll(CREDENTIAL_ASSIGNMENT)) {
         const quoted = assignment[1] ?? assignment[2];
         const bare = assignment[3];
@@ -305,30 +341,13 @@ function scanLine(
         if (rules.fixtureValues.includes(value)) continue;
         // A bare value that is a call or a member access is a reference, not a literal.
         if (bare !== undefined && isReference(line, assignment, bare)) continue;
-        add(
+        report(
             "credential-assignment",
             "blocking",
             value,
             "A literal value under a credential-named key is a persisted secret.",
         );
     }
-
-    if (
-        !rules.personalIdentifierPaths.includes(candidate.filePath) &&
-        candidate.scope === "committable"
-    ) {
-        const home = HOME_PATH.exec(line);
-        if (home !== null) {
-            add(
-                "personal-identifier",
-                "warning",
-                home[0],
-                "An absolute home path identifies the operator's machine and account.",
-            );
-        }
-    }
-
-    return findings;
 }
 
 /**
@@ -349,15 +368,27 @@ function isReference(
     return value.includes(".") && !/[/!@#$%^&*+=-]/u.test(value);
 }
 
-function isPlaceholder(value: string): boolean {
-    return PLACEHOLDER_VALUE.test(value);
+/** A home path in a committable file outside the personal-identifier ledger. */
+function scanHomePath(
+    candidate: ScanCandidate,
+    line: string,
+    rules: ScanRules,
+    report: ReportFinding,
+): void {
+    if (candidate.scope !== "committable") return;
+    if (rules.personalIdentifierPaths.includes(candidate.filePath)) return;
+
+    const home = HOME_PATH.exec(line);
+    if (home === null) return;
+    report(
+        "personal-identifier",
+        "warning",
+        home[0],
+        "An absolute home path identifies the operator's machine and account.",
+    );
 }
 
-function excerptFor(line: string, value: string): string {
-    const redacted = line.replace(value, redactValue(value)).trim();
-    return redacted.length > 160 ? `${redacted.slice(0, 157)}...` : redacted;
-}
-
+/** One finding per rule per line, however many values on it match. */
 function dedupe(findings: readonly SecretFinding[]): readonly SecretFinding[] {
     const seen = new Set<string>();
     return findings.filter((finding) => {
