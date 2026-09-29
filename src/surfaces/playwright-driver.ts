@@ -31,7 +31,7 @@
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 
-import type { BrowserContext, Locator, Page } from "playwright";
+import type { Locator, Page } from "playwright";
 
 import type {
     ActionResult,
@@ -63,7 +63,6 @@ const POLL_INTERVAL_MS = 100;
 /** A browser page: one `SurfaceDriver` over one Playwright `Page`. */
 export class PlaywrightBrowserDriver implements SurfaceDriver {
     public constructor(
-        public readonly context: BrowserContext,
         public readonly page: Page,
         public readonly evidenceDirectory?: string,
     ) {}

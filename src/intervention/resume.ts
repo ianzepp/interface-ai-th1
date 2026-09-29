@@ -1,9 +1,9 @@
 /**
  * Whether a run may continue after a person has intervened.
  *
- * Resume is a decision, not an assumption. Automation verifies a fresh
- * observation against a reviewed checkpoint before it can take the session
- * back from the person.
+ * Resume is a decision, not an assumption. Automation checks the live page
+ * against a reviewed checkpoint's detectors before it can take the session back
+ * from the person.
  */
 
 import {
@@ -11,12 +11,10 @@ import {
     type CapabilityStage,
     type StageDestination,
 } from "../runtime/state-machine.js";
-import type { Observation } from "../surfaces/surface-driver.js";
 
 /** A reviewed artifact stage admitted as a state from which a run can resume. */
 export interface ResumeCheckpoint {
     stage: CapabilityStage;
-    observation: Observation;
     detectorId: string | null;
 }
 
@@ -33,26 +31,22 @@ export type ResumeDecision =
  * artifact routing rule shared with deterministic replay and refuses an
  * unrecognized state rather than selecting a stage by assertion.
  */
-export function evaluateResume(
-    checkpoint: ResumeCheckpoint,
-): Promise<ResumeDecision> {
+export function evaluateResume(checkpoint: ResumeCheckpoint): ResumeDecision {
     if (
         checkpoint.detectorId === null ||
         !checkpoint.stage.detectors.some(
             (detector) => detector.id === checkpoint.detectorId,
         )
     ) {
-        return Promise.resolve({
+        return {
             type: "reject",
             reason: `No admitted detector matched resume checkpoint ${checkpoint.stage.id}.`,
-        });
+        };
     }
 
-    return Promise.resolve(
-        buildResumeDecision(
-            checkpoint.stage.id,
-            selectDestination(checkpoint.stage, checkpoint.detectorId),
-        ),
+    return buildResumeDecision(
+        checkpoint.stage.id,
+        selectDestination(checkpoint.stage, checkpoint.detectorId),
     );
 }
 

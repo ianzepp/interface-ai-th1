@@ -220,7 +220,6 @@ export async function createInteractiveSession(
             options.sensitiveInputValues,
         );
         const driver = new PlaywrightBrowserDriver(
-            context,
             page,
             join(recorder.directory, "screenshots"),
         );
@@ -421,9 +420,8 @@ async function handleResume(
             includeAccessibility: true,
             includeScreenshot: true,
         });
-        const decision = await evaluateResume({
+        const decision = evaluateResume({
             stage,
-            observation,
             detectorId: match.detectorId,
         } satisfies ResumeCheckpoint);
         if (decision.type === "reject") continue;

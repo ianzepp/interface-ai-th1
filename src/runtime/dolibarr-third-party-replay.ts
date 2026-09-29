@@ -67,7 +67,6 @@ async function main(): Promise<void> {
         });
 
         const driver = new PlaywrightBrowserDriver(
-            context,
             page,
             join(recorder.directory, "screenshots"),
         );

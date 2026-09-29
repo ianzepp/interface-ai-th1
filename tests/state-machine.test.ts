@@ -25,11 +25,6 @@ const stage: CapabilityStage = {
     },
 };
 
-const observation = {
-    url: "http://127.0.0.1:8080/customers",
-    title: "Customers",
-};
-
 const resumeStage: CapabilityStage = {
     ...stage,
     id: "recovered-search",
@@ -63,18 +58,17 @@ test("routes an unknown state to the declared fallback", () => {
     );
 });
 
-test("resumes only through a detector admitted by the reviewed checkpoint", async () => {
+test("resumes only through a detector admitted by the reviewed checkpoint", () => {
     assert.deepEqual(
-        await evaluateResume({
+        evaluateResume({
             stage: resumeStage,
-            observation,
             detectorId: "search-ready",
         }),
         { type: "resume", stageId: "fill-name" },
     );
 });
 
-test("completes when an admitted checkpoint reaches the approved success outcome", async () => {
+test("completes when an admitted checkpoint reaches the approved success outcome", () => {
     const completedStage: CapabilityStage = {
         ...resumeStage,
         id: "completed-search",
@@ -87,20 +81,18 @@ test("completes when an admitted checkpoint reaches the approved success outcome
     };
 
     assert.deepEqual(
-        await evaluateResume({
+        evaluateResume({
             stage: completedStage,
-            observation,
             detectorId: "search-ready",
         }),
         { type: "complete", checkpoint: "completed-search" },
     );
 });
 
-test("rejects an observation that matches no admitted resume detector", async () => {
+test("rejects an observation that matches no admitted resume detector", () => {
     assert.deepEqual(
-        await evaluateResume({
+        evaluateResume({
             stage: resumeStage,
-            observation,
             detectorId: null,
         }),
         {
