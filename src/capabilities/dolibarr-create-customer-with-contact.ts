@@ -2,22 +2,30 @@
  * Reviewed capability: create a Dolibarr customer and one linked contact.
  *
  * The two discovery captures agreed on the nine-stage happy path below. The
- * first capture also contained exploratory detours while identifying the real
- * submit control; those detours are deliberately excluded from the artifact.
- * No exception or recovery branch was captured under this lane's two-run cap,
- * so every unrecognized state fails closed.
+ * first capture's exploratory detours, made while identifying the real submit
+ * control, are excluded from the artifact.
  *
- * The contact form accepts a third-party database ID rather than a name. The
- * current runtime has no dynamic URL-to-input binding, so `thirdPartyId` is a
- * typed invocation input. The reset fixture proved the value `63`; a caller
- * using another fixture must supply that fixture's party ID.
+ * DESIGN NOTES
+ * - The contact form links a third party by database ID, not by name, and the
+ *   runtime has no URL-to-input binding, so `thirdPartyId` is a typed
+ *   invocation input. The reset fixture yields `63`; a caller on another
+ *   fixture must supply that fixture's party ID.
+ *
+ * LIMITS
+ * - No exception or recovery branch was captured within the lane's two-run
+ *   cap, so every unrecognized state fails closed.
+ * - A lost session is not routed to intervention, as it is in the lookup; it
+ *   fails closed like any other unrecognized state.
  */
 
 import type {
     CapabilityArtifact,
     CapabilityStage,
+    StageDestination,
+    StageTransition,
 } from "../runtime/state-machine.js";
 import type {
+    ExtractionSpec,
     StateDetector,
     TargetDescriptor,
 } from "../surfaces/surface-driver.js";
@@ -227,12 +235,7 @@ function buildStages(): CapabilityStage[] {
             risk: "reversible",
             action: { type: "activate", target: createSubmit },
             detectors: [contactCardReady],
-            transitions: [
-                transition(contactCardReady.id, {
-                    type: "terminal",
-                    outcome: { type: "success" },
-                }),
-            ],
+            transitions: [transition(contactCardReady.id, success())],
             otherwise: failure("contact-creation-not-confirmed"),
             extractions: [
                 extraction("contactName", "div.refid > span.valignmiddle"),
@@ -250,10 +253,7 @@ function roleTarget(role: string, name: string): TargetDescriptor {
 }
 
 function cssTarget(selector: string): TargetDescriptor {
-    return {
-        candidates: [{ kind: "css", selector }],
-        require: "exactly-one",
-    };
+    return { candidates: [{ kind: "css", selector }], require: "exactly-one" };
 }
 
 function urlDetector(
@@ -269,25 +269,25 @@ function urlDetector(
     };
 }
 
-function extraction(name: string, selector: string) {
-    return {
-        name,
-        type: "string" as const,
-        target: cssTarget(selector),
-    };
-}
-
 function transition(
     detectorId: string,
-    destination: CapabilityStage["otherwise"],
-) {
+    destination: StageDestination,
+): StageTransition {
     return { detectorId, destination };
 }
 
-function stage(stageId: string): CapabilityStage["otherwise"] {
+function stage(stageId: string): StageDestination {
     return { type: "stage", stageId };
 }
 
-function failure(code: string): CapabilityStage["otherwise"] {
+function success(): StageDestination {
+    return { type: "terminal", outcome: { type: "success" } };
+}
+
+function failure(code: string): StageDestination {
     return { type: "terminal", outcome: { type: "failure", code } };
+}
+
+function extraction(name: string, selector: string): ExtractionSpec {
+    return { name, type: "string", target: cssTarget(selector) };
 }
