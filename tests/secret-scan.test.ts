@@ -185,6 +185,15 @@ test("flags an unquoted token whose value contains punctuation", () => {
     assert.deepEqual(rulesOf(findings), ["csrf-token"]);
 });
 
+test("treats a redacted query token followed by a URL fragment as a placeholder", () => {
+    const findings = rulesFor(
+        "evidence/runs/x/events.jsonl",
+        `"url":"http://127.0.0.1:5762/setup.pl?action=create_db&csrf_token=[REDACTED]#/"`,
+    );
+
+    assert.deepEqual(rulesOf(findings), []);
+});
+
 test("flags a literal under a credential key, including a suffixed key", () => {
     assert.deepEqual(
         rulesOf(rulesFor("a.txt", `password: "${"p".repeat(12)}"`)),

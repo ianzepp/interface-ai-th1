@@ -8,6 +8,8 @@
  *
  * LIMITS
  * - Exact-value matching only protects values declared by the session launcher.
+ * - Query-parameter matching covers the parameter names above, not tokens an
+ *   application embeds elsewhere in page text.
  * - Trace archives and screenshots need their separate capture boundary.
  * - Not a substitute for not collecting secrets, and not a substitute for
  *   reviewing a run before its evidence is committed.
@@ -32,13 +34,25 @@ export function containsSensitiveValue(
     return contains(value, new WeakSet(), new Set(sensitiveInputValues));
 }
 
+/**
+ * A token or session identifier carried as a URL query parameter.
+ *
+ * Applications put these in GET URLs (LedgerSMB's setup flow carries
+ * `csrf_token`), and a recorded observation copies the URL verbatim, so a
+ * key-name rule never sees them. Only the parameter value is replaced.
+ */
+const SENSITIVE_QUERY_PARAMETER =
+    /([?&](?:csrf[-_]?token|token|password|api[-_]?key|[a-z]*sess(?:ion)?id[a-z0-9_]*)=)[^&#\s"']+/giu;
+
 function visit(
     value: unknown,
     seen: WeakSet<object>,
     sensitiveValues: ReadonlySet<string>,
 ): unknown {
-    if (typeof value === "string" && sensitiveValues.has(value)) {
-        return "[REDACTED]";
+    if (typeof value === "string") {
+        return sensitiveValues.has(value)
+            ? "[REDACTED]"
+            : value.replace(SENSITIVE_QUERY_PARAMETER, "$1[REDACTED]");
     }
     if (value === null || typeof value !== "object") {
         return value;

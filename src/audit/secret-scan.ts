@@ -117,8 +117,10 @@ const CREDENTIAL_SHAPES: readonly CredentialShape[] = [
         // punctuation that a tidy character class excludes, and an under-matching
         // rule silently reports a clean file. Placeholders are filtered after the
         // match instead, where `{{input.password}}` and `[REDACTED]` are cheap to
-        // recognise.
-        pattern: /\bcsrf[-_]?token\s*[:=]\s*["']?([^\s"'<>]{8,})/giu,
+        // recognise. `&` and `#` end a value because a token carried in a URL
+        // query stops there; counting the fragment would make `[REDACTED]#/`
+        // look like a live token.
+        pattern: /\bcsrf[-_]?token\s*[:=]\s*["']?([^\s"'<>&#]{8,})/giu,
         detail: "A csrf token in a persisted artifact is a token, which the assignment names explicitly.",
     },
 ];
