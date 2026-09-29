@@ -1,32 +1,31 @@
 /**
  * The first `SurfaceDriver`: a browser page driven through Playwright.
  *
- * Playwright supplies locating, waiting, extraction, and tracing, and this
- * adapter translates in both directions between that API and the surface-neutral
- * vocabulary. Nothing in the artifact schema names Playwright, so adding a second
- * surface changes no recorded flow.
+ * This adapter translates in both directions between Playwright's locating,
+ * waiting, extraction, and screenshots and the surface-neutral vocabulary.
+ * Nothing in the artifact schema names Playwright, so adding a second surface
+ * changes no recorded flow.
  *
- * This adapter is where the seam's promises are kept or broken, so the decisions
- * behind them are recorded here:
- *
- * - `locate` walks the candidate list in order and accepts only a single match.
- *   More than one match throws immediately rather than falling through to a
- *   looser candidate, because a later candidate that happened to be unique would
- *   hide the ambiguity the first one exposed.
+ * INVARIANTS
+ * - `locate` walks candidates in order and throws on the first candidate that
+ *   matches more than once, rather than falling through to a looser candidate
+ *   whose uniqueness would hide the ambiguity.
  * - `waitFor` polls every detector until one matches or the budget runs out. On
- *   expiry it returns whichever detector carried a `timeout` signal, and `null`
- *   when the stage declared none. The engine routes `null` to the stage's
- *   `otherwise`, so "nothing recognized" stays a state a stage can name.
- * - `captureEvidence` refuses to run without an evidence directory. A silently
- *   skipped screenshot would leave a failure with no diagnostic material, which
- *   is the one thing a failure must carry.
+ *   expiry it returns the detector carrying a `timeout` signal, or `null` when
+ *   none does; the engine routes `null` to the stage's `otherwise`.
+ * - `captureEvidence` throws without an evidence directory: a silently skipped
+ *   screenshot would leave a failure with no diagnostic material.
+ * - `evidenceDirectory` is the run's `screenshots/` directory; evidence paths
+ *   are returned relative to the run as `screenshots/<file>`.
  *
  * LIMITS
- * - Only `role`, `label`, `text`, and `css` candidates resolve. `relative` is
- *   declared in the vocabulary but unimplemented, so its failure is a loud throw
- *   rather than a quiet approximation.
- * - A `count` signal is measured against the first candidate of its target only.
- *   Count signals name one way of finding the elements being counted.
+ * - `accessibility` is the page's visible body text, cut to 4,000 characters,
+ *   not an accessibility tree.
+ * - `observe` skips a requested screenshot when no evidence directory is set.
+ * - Only `role`, `label`, `text`, and `css` candidates resolve. `relative`
+ *   throws rather than approximating.
+ * - A `count` signal is measured against the first candidate of its target.
+ * - A `response-status` signal never matches.
  */
 
 import { mkdir } from "node:fs/promises";
@@ -36,8 +35,10 @@ import type { BrowserContext, Locator, Page } from "playwright";
 
 import type {
     ActionResult,
+    DetectorSignal,
     EvidenceReference,
     ExtractionSpec,
+    LocatorCandidate,
     Observation,
     ObservationRequest,
     StateDetector,
@@ -56,6 +57,9 @@ import type {
  */
 type AriaRole = Parameters<Page["getByRole"]>[0];
 
+const OBSERVATION_TEXT_LIMIT = 4_000;
+const POLL_INTERVAL_MS = 100;
+
 /** A browser page: one `SurfaceDriver` over one Playwright `Page`. */
 export class PlaywrightBrowserDriver implements SurfaceDriver {
     public constructor(
@@ -70,11 +74,9 @@ export class PlaywrightBrowserDriver implements SurfaceDriver {
             title: await this.page.title(),
         };
         if (request.includeAccessibility) {
+            const text = await this.page.locator("body").innerText();
             observation.accessibility = {
-                text: (await this.page.locator("body").innerText()).slice(
-                    0,
-                    4_000,
-                ),
+                text: text.slice(0, OBSERVATION_TEXT_LIMIT),
             };
         }
         if (request.includeScreenshot && this.evidenceDirectory !== undefined) {
@@ -147,7 +149,7 @@ export class PlaywrightBrowserDriver implements SurfaceDriver {
                     };
                 }
             }
-            await this.page.waitForTimeout(100);
+            await this.page.waitForTimeout(POLL_INTERVAL_MS);
         }
         const timeout = detectors.find((detector) =>
             detector.signals.some((signal) => signal.kind === "timeout"),
@@ -180,7 +182,8 @@ export class PlaywrightBrowserDriver implements SurfaceDriver {
             );
         }
         await mkdir(this.evidenceDirectory, { recursive: true });
-        const filename = `${String(Date.now())}-${reason.replaceAll(/[^a-z0-9]+/gi, "-").toLowerCase()}.png`;
+        const slug = reason.replaceAll(/[^a-z0-9]+/gi, "-").toLowerCase();
+        const filename = `${String(Date.now())}-${slug}.png`;
         const path = join(this.evidenceDirectory, filename);
         await this.page.screenshot({ path, fullPage: true });
         return {
@@ -190,17 +193,7 @@ export class PlaywrightBrowserDriver implements SurfaceDriver {
         };
     }
 
-    private async resolve(target: TargetDescriptor): Promise<Locator> {
-        const resolution = await this.locate(target);
-        const candidate = target.candidates[resolution.candidateIndex];
-        if (candidate === undefined)
-            throw new Error("Resolved target candidate is missing");
-        return this.locatorFor(candidate);
-    }
-
-    private locatorFor(
-        candidate: TargetDescriptor["candidates"][number],
-    ): Locator {
+    private locatorFor(candidate: LocatorCandidate): Locator {
         switch (candidate.kind) {
             case "role":
                 return this.page.getByRole(candidate.role as AriaRole, {
@@ -222,57 +215,59 @@ export class PlaywrightBrowserDriver implements SurfaceDriver {
         }
     }
 
+    private async resolve(target: TargetDescriptor): Promise<Locator> {
+        const resolution = await this.locate(target);
+        const candidate = target.candidates[resolution.candidateIndex];
+        if (candidate === undefined)
+            throw new Error("Resolved target candidate is missing");
+        return this.locatorFor(candidate);
+    }
+
+    /** Whether any one of the detector's signals holds right now. */
     private async matches(detector: StateDetector): Promise<boolean> {
         for (const signal of detector.signals) {
-            switch (signal.kind) {
-                case "url":
-                    if (new RegExp(signal.pattern).test(this.page.url()))
-                        return true;
-                    break;
-                case "text":
-                    if (
-                        await this.page
-                            .getByText(signal.value, { exact: signal.exact })
-                            .first()
-                            .isVisible()
-                            .catch(() => false)
-                    )
-                        return true;
-                    break;
-                case "role":
-                    if (
-                        await this.page
-                            .getByRole(signal.role as AriaRole, {
-                                name: signal.name,
-                                exact: true,
-                            })
-                            .first()
-                            .isVisible()
-                            .catch(() => false)
-                    )
-                        return true;
-                    break;
-                case "count": {
-                    const count = await this.locatorFor(
-                        signal.target.candidates[0] ?? {
-                            kind: "css",
-                            selector: ":not(*)",
-                        },
-                    ).count();
-                    if (
-                        (signal.operator === "equal" &&
-                            count === signal.value) ||
-                        (signal.operator === "greater-than" &&
-                            count > signal.value)
-                    )
-                        return true;
-                    break;
-                }
-                case "response-status":
-                case "timeout":
-                    break;
-            }
+            if (await this.matchesSignal(signal)) return true;
         }
         return false;
     }
+
+    private async matchesSignal(signal: DetectorSignal): Promise<boolean> {
+        switch (signal.kind) {
+            case "url":
+                return new RegExp(signal.pattern).test(this.page.url());
+            case "text":
+                return isVisible(
+                    this.page.getByText(signal.value, { exact: signal.exact }),
+                );
+            case "role":
+                return isVisible(
+                    this.page.getByRole(signal.role as AriaRole, {
+                        name: signal.name,
+                        exact: true,
+                    }),
+                );
+            case "count": {
+                const count = await this.locatorFor(
+                    signal.target.candidates[0] ?? {
+                        kind: "css",
+                        selector: ":not(*)",
+                    },
+                ).count();
+                return signal.operator === "equal"
+                    ? count === signal.value
+                    : count > signal.value;
+            }
+            case "response-status":
+            case "timeout":
+                return false;
+        }
+    }
+}
+
+/** Whether the first match is visible; a failed visibility check reads as not. */
+async function isVisible(locator: Locator): Promise<boolean> {
+    return locator
+        .first()
+        .isVisible()
+        .catch(() => false);
 }
