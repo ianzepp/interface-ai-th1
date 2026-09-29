@@ -2,21 +2,20 @@
  * The mechanical half of artifact authoring: one successful run in, one
  * inspectable provisional graph out.
  *
- * Artifact authoring splits into a mechanical step and a judgment step. This
- * file is the mechanical step. It reads a finalized satisfied run and emits a
- * linear stage-per-action draft so that review starts from a concrete,
- * evidence-linked proposal rather than a blank file. Deciding which states are
- * real, which transitions are recoverable, and which failure branches the
- * application actually has remains a human/LLM review decision made over the
- * whole run corpus; nothing here infers exception semantics.
+ * This module reads a finalized satisfied run and emits a linear
+ * stage-per-action draft, so review starts from a concrete, evidence-linked
+ * proposal rather than a blank file. Deciding which states are real, which
+ * transitions are recoverable, and which failure branches the application has
+ * remains a review decision made over the whole run corpus; nothing here infers
+ * exception semantics.
  *
  * The semantic source is `events.jsonl`. The Playwright trace is read as
- * corroborating metadata — its action count and version — and its disagreement
- * with the ledger becomes a warning rather than a silent preference for either
- * one, because a disagreement means one of the two is misrepresenting the run.
+ * corroborating metadata — its action count and version — and a disagreement
+ * with the ledger becomes a warning rather than a silent preference for either,
+ * because it means one of the two misrepresents the run.
  *
  * INVARIANTS
- * - The run is never modified. Draft extraction reads and writes elsewhere.
+ * - The run is never modified; this module only reads it.
  * - Only a `satisfied` run is admissible. An error run describes a flow that did
  *   not complete, and a draft built from one would encode a failure as a path.
  * - Every stage gets an `otherwise`, so even a draft cannot fall through on an
@@ -29,8 +28,8 @@
  *   outcomes, and recoveries are absent by construction, not by oversight.
  * - No typed output extraction is inferred, so a draft returns no outputs.
  * - Inferred input names come from a fixed heuristic table (see
- *   `inferInputName`), which encodes this repository's fixture vocabulary. It is
- *   a starting proposal for review, not a general inference.
+ *   `inferInputName`) over this repository's fixture vocabulary. It is a
+ *   starting proposal for review, not a general inference.
  * - Stages are ordered by observed action, so a draft is a transcript until a
  *   reviewer turns it into a graph.
  */
@@ -40,8 +39,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
-import type { RunEvent } from "./event-recorder.js";
-import type { RunManifest } from "./run-recorder.js";
+import { describeError } from "../common/errors.js";
 import type {
     CapabilityArtifact,
     CapabilityStage,
@@ -54,10 +52,40 @@ import type {
     SurfaceAction,
     TargetDescriptor,
 } from "../surfaces/surface-driver.js";
-import { describeError } from "../common/errors.js";
+import type { RunEvent } from "./event-recorder.js";
+import type { RunManifest } from "./run-recorder.js";
 
 const execFileAsync = promisify(execFile);
 const TRACE_MAX_BUFFER = 64 * 1024 * 1024;
+
+/** Playwright frame methods that count as browser actions in a trace. */
+const TRACE_ACTION_METHODS = new Set([
+    "click",
+    "fill",
+    "goto",
+    "press",
+    "selectOption",
+    "type",
+]);
+
+/** Stage fields compared by `compareArtifacts`, in report order. */
+const COMPARED_STAGE_FIELDS = [
+    "action",
+    "detectors",
+    "risk",
+    "otherwise",
+] as const;
+
+type ActionEvent = Extract<RunEvent, { type: "action" }>;
+type TargetCandidate = TargetDescriptor["candidates"][number];
+
+/** The fields of a Playwright trace entry the summary reads. */
+interface TraceEntry {
+    type?: unknown;
+    class?: unknown;
+    method?: unknown;
+    playwrightVersion?: unknown;
+}
 
 /** Summary of the browser evidence used to ground a draft. */
 export interface TraceSummary {
@@ -105,6 +133,7 @@ export interface StageComparison {
     differentFields: readonly string[];
 }
 
+/** How far a draft is from an existing artifact, stage by stage. */
 export interface ArtifactComparison {
     draftId: string;
     currentId: string;
@@ -118,31 +147,31 @@ export interface ArtifactComparison {
 }
 
 /** Read a finalized successful run and summarize its Playwright trace. */
-export async function readSuccessfulRun(runDirectory: string): Promise<{
-    manifest: RunManifest;
-    events: readonly RunEvent[];
-    trace: TraceSummary;
-}> {
-    const manifest = parseManifest(
+export async function readSuccessfulRun(
+    runDirectory: string,
+): Promise<Omit<DraftArtifactInput, "capabilityId">> {
+    // The recorder wrote both files, so their shape is trusted once parsed.
+    const manifest = parseJsonObject(
         await readFile(join(runDirectory, "run.json"), "utf8"),
-    );
+        "Run manifest",
+    ) as RunManifest;
     if (manifest.status !== "satisfied") {
         throw new Error(
             `Run ${manifest.runId} is ${manifest.status}; draft extraction requires a satisfied run`,
         );
     }
 
-    const eventSource = await readFile(
-        join(runDirectory, manifest.files.events),
-        "utf8",
-    );
+    const eventLines = (
+        await readFile(join(runDirectory, manifest.files.events), "utf8")
+    ).trimEnd();
     const events =
-        eventSource.trimEnd() === ""
+        eventLines === ""
             ? []
-            : eventSource
-                  .trimEnd()
+            : eventLines
                   .split("\n")
-                  .map((line) => parseDiscoveryEvent(line));
+                  .map(
+                      (line) => parseJsonObject(line, "Run event") as RunEvent,
+                  );
     if (!events.some((event) => event.type === "action")) {
         throw new Error(`Run ${manifest.runId} contains no action events`);
     }
@@ -154,84 +183,24 @@ export async function readSuccessfulRun(runDirectory: string): Promise<{
     };
 }
 
-/** Extract a compact summary from Playwright's trace JSONL inside trace.zip. */
-export async function summarizeTrace(tracePath: string): Promise<TraceSummary> {
-    let traceSource: string;
-    try {
-        const result = await execFileAsync(
-            "unzip",
-            ["-p", tracePath, "trace.trace"],
-            { encoding: "utf8", maxBuffer: TRACE_MAX_BUFFER },
-        );
-        traceSource = result.stdout;
-    } catch (error) {
-        throw new Error(
-            `Could not read trace.trace from ${tracePath}: ${describeError(error)}`,
-            { cause: error },
-        );
-    }
-
-    const actionMethods: Record<string, number> = {};
-    let playwrightVersion: string | null = null;
-    let entryCount = 0;
-    let actionCount = 0;
-    let snapshotCount = 0;
-    let screenshotCount = 0;
-
-    for (const line of traceSource.split("\n")) {
-        if (line.trim() === "") continue;
-        const entry = parseTraceEntry(line);
-        entryCount += 1;
-        if (entry.type === "context-options") {
-            playwrightVersion =
-                typeof entry.playwrightVersion === "string"
-                    ? entry.playwrightVersion
-                    : playwrightVersion;
-        }
-        if (entry.type === "frame-snapshot") snapshotCount += 1;
-        if (entry.type === "screencast-frame") screenshotCount += 1;
-        if (
-            entry.type === "before" &&
-            typeof entry.class === "string" &&
-            entry.class === "Frame" &&
-            typeof entry.method === "string" &&
-            TRACE_ACTION_METHODS.has(entry.method)
-        ) {
-            actionCount += 1;
-            actionMethods[entry.method] =
-                (actionMethods[entry.method] ?? 0) + 1;
-        }
-    }
-
-    return {
-        playwrightVersion,
-        entryCount,
-        actionCount,
-        actionMethods,
-        snapshotCount,
-        screenshotCount,
-    };
-}
-
 /** Build a conservative, inspectable draft from one successful run. */
 export function buildDraftArtifact(
     input: DraftArtifactInput,
 ): DraftArtifactDocument {
     const actionEvents = input.events.filter(isActionEvent);
     const origins = collectOrigins(actionEvents);
-    const firstOrigin = origins[0];
     const inputs: Record<string, string> = {};
-    if (firstOrigin !== undefined) inputs.baseUrl = "string";
+    if (origins.length > 0) inputs.baseUrl = "string";
 
     const warnings = new Set<string>();
     const stages = actionEvents.map((event, index) => {
         const action = draftAction(event.action, inputs, warnings);
-        const detectorResult = detectorForStage(actionEvents, index, event);
+        const detectorResult = inferStageDetector(actionEvents, index, event);
         if (detectorResult.warning !== undefined)
             warnings.add(detectorResult.warning);
 
         return {
-            id: `stage-${String(index + 1).padStart(3, "0")}`,
+            id: buildStageId(index + 1),
             description: event.rationale,
             risk: draftRisk(action),
             action,
@@ -239,14 +208,14 @@ export function buildDraftArtifact(
             transitions: [
                 {
                     detectorId: detectorResult.detector.id,
-                    destination: destinationForStage(
+                    destination: buildStageDestination(
                         index,
                         actionEvents.length,
                         detectorResult.detector,
                     ),
                 },
             ],
-            otherwise: terminalFailure("unexpected-state"),
+            otherwise: buildFailureDestination("unexpected-state"),
             extractions: [],
         } satisfies CapabilityStage;
     });
@@ -264,15 +233,14 @@ export function buildDraftArtifact(
         capabilityVersion: "0.0.0-draft",
         id: input.capabilityId,
         title: input.manifest.goal,
-        // The profile id alone. Composing '<id>-<version>' here produced a value no
-        // registry could resolve, and the version is already recorded separately in
-        // the source block below.
+        // The profile id alone: '<id>-<version>' resolves in no registry, and
+        // the version is recorded separately in the source block below.
         targetProfile: input.manifest.targetProfile,
         contract: {
             goal: input.manifest.goal,
             inputs,
             outputs: {},
-            successCondition: successCondition(input.manifest),
+            successCondition: describeSuccessCondition(input.manifest),
         },
         entryStageId: stages[0]?.id ?? "missing-stage",
         stages,
@@ -294,13 +262,10 @@ export function buildDraftArtifact(
             `Trace action count ${String(input.trace.actionCount)} differs from ledger action count ${String(actionEvents.length)}.`,
         );
     }
-    for (const event of actionEvents) {
-        if (hasCssTarget(event.action)) {
-            warnings.add(
-                "The draft contains CSS target candidates that require selector review.",
-            );
-            break;
-        }
+    if (actionEvents.some((event) => hasCssTarget(event.action))) {
+        warnings.add(
+            "The draft contains CSS target candidates that require selector review.",
+        );
     }
 
     return {
@@ -341,38 +306,13 @@ export function compareArtifacts(
         if (draftStage === undefined || currentStage === undefined) {
             differentFields.push("stage");
         } else {
-            compareField(
-                "action",
-                draftStage.action,
-                currentStage.action,
-                equalFields,
-                differentFields,
-            );
-            compareField(
-                "detectors",
-                draftStage.detectors,
-                currentStage.detectors,
-                equalFields,
-                differentFields,
-            );
-            compareField(
-                "risk",
-                draftStage.risk,
-                currentStage.risk,
-                equalFields,
-                differentFields,
-            );
-            compareField(
-                "otherwise",
-                draftStage.otherwise,
-                currentStage.otherwise,
-                equalFields,
-                differentFields,
-            );
-            if (deepEqual(draftStage.action, currentStage.action))
-                exactActionMatches += 1;
-            if (deepEqual(draftStage.detectors, currentStage.detectors))
-                exactDetectorMatches += 1;
+            for (const field of COMPARED_STAGE_FIELDS) {
+                if (deepEqual(draftStage[field], currentStage[field]))
+                    equalFields.push(field);
+                else differentFields.push(field);
+            }
+            if (equalFields.includes("action")) exactActionMatches += 1;
+            if (equalFields.includes("detectors")) exactDetectorMatches += 1;
             if (
                 deepEqual(
                     draftStage.detectors.map((detector) => detector.signals),
@@ -390,35 +330,12 @@ export function compareArtifacts(
         });
     }
 
-    const differentTopLevelFields: string[] = [];
-    compareField(
-        "targetProfile",
-        draft.targetProfile,
-        current.targetProfile,
-        [],
-        differentTopLevelFields,
-    );
-    compareField(
-        "contract.inputs",
-        draft.contract.inputs,
-        current.contract.inputs,
-        [],
-        differentTopLevelFields,
-    );
-    compareField(
-        "contract.outputs",
-        draft.contract.outputs,
-        current.contract.outputs,
-        [],
-        differentTopLevelFields,
-    );
-    compareField(
-        "policy",
-        draft.policy,
-        current.policy,
-        [],
-        differentTopLevelFields,
-    );
+    const topLevelFields: readonly (readonly [string, unknown, unknown])[] = [
+        ["targetProfile", draft.targetProfile, current.targetProfile],
+        ["contract.inputs", draft.contract.inputs, current.contract.inputs],
+        ["contract.outputs", draft.contract.outputs, current.contract.outputs],
+        ["policy", draft.policy, current.policy],
+    ];
 
     return {
         draftId: draft.id,
@@ -429,37 +346,82 @@ export function compareArtifacts(
         exactDetectorMatches,
         exactDetectorSignalMatches,
         stageComparisons,
-        differentTopLevelFields,
+        differentTopLevelFields: topLevelFields
+            .filter(([, draftValue, currentValue]) => {
+                return !deepEqual(draftValue, currentValue);
+            })
+            .map(([name]) => name),
     };
 }
 
-const TRACE_ACTION_METHODS = new Set([
-    "click",
-    "fill",
-    "goto",
-    "press",
-    "selectOption",
-    "type",
-]);
-
-function parseManifest(source: string): RunManifest {
+/** Parse one JSON document that must be a non-array object. */
+function parseJsonObject(source: string, label: string): object {
     const value: unknown = JSON.parse(source);
     if (value === null || typeof value !== "object" || Array.isArray(value))
-        throw new Error("Run manifest must be a JSON object");
-    return value as RunManifest;
+        throw new Error(`${label} must be a JSON object`);
+    return value;
 }
 
-function parseDiscoveryEvent(source: string): RunEvent {
-    const value: unknown = JSON.parse(source);
-    if (value === null || typeof value !== "object" || Array.isArray(value))
-        throw new Error("Discovery event must be a JSON object");
-    return value as RunEvent;
+/** Extract a compact summary from Playwright's trace JSONL inside trace.zip. */
+async function summarizeTrace(tracePath: string): Promise<TraceSummary> {
+    let traceSource: string;
+    try {
+        const result = await execFileAsync(
+            "unzip",
+            ["-p", tracePath, "trace.trace"],
+            { encoding: "utf8", maxBuffer: TRACE_MAX_BUFFER },
+        );
+        traceSource = result.stdout;
+    } catch (error) {
+        throw new Error(
+            `Could not read trace.trace from ${tracePath}: ${describeError(error)}`,
+            { cause: error },
+        );
+    }
+
+    const actionMethods: Record<string, number> = {};
+    let playwrightVersion: string | null = null;
+    let entryCount = 0;
+    let actionCount = 0;
+    let snapshotCount = 0;
+    let screenshotCount = 0;
+
+    for (const line of traceSource.split("\n")) {
+        if (line.trim() === "") continue;
+        const entry = parseTraceEntry(line);
+        entryCount += 1;
+        if (
+            entry.type === "context-options" &&
+            typeof entry.playwrightVersion === "string"
+        ) {
+            playwrightVersion = entry.playwrightVersion;
+        }
+        if (entry.type === "frame-snapshot") snapshotCount += 1;
+        if (entry.type === "screencast-frame") screenshotCount += 1;
+        if (
+            entry.type === "before" &&
+            entry.class === "Frame" &&
+            typeof entry.method === "string" &&
+            TRACE_ACTION_METHODS.has(entry.method)
+        ) {
+            actionCount += 1;
+            actionMethods[entry.method] =
+                (actionMethods[entry.method] ?? 0) + 1;
+        }
+    }
+
+    return {
+        playwrightVersion,
+        entryCount,
+        actionCount,
+        actionMethods,
+        snapshotCount,
+        screenshotCount,
+    };
 }
 
 function parseTraceEntry(source: string): TraceEntry {
-    const value: unknown = JSON.parse(source);
-    if (value === null || typeof value !== "object" || Array.isArray(value))
-        throw new Error("Trace entry must be a JSON object");
+    const value = parseJsonObject(source, "Trace entry");
     return {
         type: "type" in value ? value.type : undefined,
         class: "class" in value ? value.class : undefined,
@@ -469,10 +431,29 @@ function parseTraceEntry(source: string): TraceEntry {
     };
 }
 
-function isActionEvent(
-    event: RunEvent,
-): event is Extract<RunEvent, { type: "action" }> {
+function isActionEvent(event: RunEvent): event is ActionEvent {
     return event.type === "action";
+}
+
+function collectOrigins(events: readonly ActionEvent[]): string[] {
+    const origins = new Set<string>();
+    for (const event of events) {
+        if (event.action.type === "navigate") {
+            addHttpOrigin(origins, event.action.url);
+        }
+        addHttpOrigin(origins, event.result.observation.url);
+    }
+    return [...origins];
+}
+
+function addHttpOrigin(origins: Set<string>, url: string): void {
+    try {
+        const parsed = new URL(url);
+        if (parsed.protocol === "http:" || parsed.protocol === "https:")
+            origins.add(parsed.origin);
+    } catch {
+        // Malformed or non-network observations are not allowed origins.
+    }
 }
 
 /**
@@ -534,9 +515,7 @@ function draftAction(
  * the binding is a proposal a reviewer has to confirm against the artifact's
  * declared contract.
  */
-function inferInputName(
-    candidate: TargetDescriptor["candidates"][number] | undefined,
-): string | null {
+function inferInputName(candidate: TargetCandidate | undefined): string | null {
     if (candidate === undefined) return null;
     const value =
         candidate.kind === "css"
@@ -558,9 +537,7 @@ function inferInputName(
     return null;
 }
 
-function looksSensitive(
-    candidate: TargetDescriptor["candidates"][number] | undefined,
-): boolean {
+function looksSensitive(candidate: TargetCandidate | undefined): boolean {
     if (candidate === undefined) return false;
     const value = JSON.stringify(candidate).toLowerCase();
     return /password|secret|token|cookie|authorization|ssn/.test(value);
@@ -576,57 +553,51 @@ function looksSensitive(
  * if even that is empty the stage is left with a `timeout` signal and an explicit
  * warning, because a stage with no grounded detector cannot be reviewed.
  */
-function detectorForStage(
-    actionEvents: readonly Extract<RunEvent, { type: "action" }>[],
+function inferStageDetector(
+    actionEvents: readonly ActionEvent[],
     index: number,
-    event: Extract<RunEvent, { type: "action" }>,
+    event: ActionEvent,
 ): { detector: StateDetector; warning?: string } {
-    for (
-        let nextIndex = index + 1;
-        nextIndex < actionEvents.length;
-        nextIndex += 1
-    ) {
-        const nextAction = actionEvents[nextIndex]?.action;
-        const signal = signalFromAction(nextAction);
+    const stageId = buildStageId(index + 1);
+    const ready = (
+        description: string,
+        signal: DetectorSignal,
+    ): { detector: StateDetector } => ({
+        detector: {
+            id: `${stageId}-ready`,
+            description,
+            scope: "capability",
+            signals: [signal],
+        },
+    });
+
+    for (const { action: nextAction } of actionEvents.slice(index + 1)) {
+        const signal = readActionSignal(nextAction);
         if (signal !== null) {
-            return {
-                detector: {
-                    id: `stage-${String(index + 1).padStart(3, "0")}-ready`,
-                    description:
-                        "First-pass state inferred from a later observed target.",
-                    scope: "capability",
-                    signals: [signal],
-                },
-            };
+            return ready(
+                "First-pass state inferred from a later observed target.",
+                signal,
+            );
         }
-        if (nextAction?.type === "navigate") {
-            return {
-                detector: {
-                    id: `stage-${String(index + 1).padStart(3, "0")}-ready`,
-                    description:
-                        "First-pass state inferred from a later observed URL.",
-                    scope: "capability",
-                    signals: [urlSignal(nextAction.url)],
-                },
-            };
+        if (nextAction.type === "navigate") {
+            return ready(
+                "First-pass state inferred from a later observed URL.",
+                buildUrlSignal(nextAction.url),
+            );
         }
     }
 
     const observedUrl = event.result.observation.url;
     if (observedUrl !== "") {
-        return {
-            detector: {
-                id: `stage-${String(index + 1).padStart(3, "0")}-ready`,
-                description: "First-pass state inferred from the observed URL.",
-                scope: "capability",
-                signals: [urlSignal(observedUrl)],
-            },
-        };
+        return ready(
+            "First-pass state inferred from the observed URL.",
+            buildUrlSignal(observedUrl),
+        );
     }
 
     return {
         detector: {
-            id: `stage-${String(index + 1).padStart(3, "0")}-unresolved`,
+            id: `${stageId}-unresolved`,
             description: "No grounded post-action detector was found.",
             scope: "capability",
             signals: [{ kind: "timeout" }],
@@ -635,10 +606,15 @@ function detectorForStage(
     };
 }
 
-function signalFromTarget(
-    target: TargetDescriptor | undefined,
-): DetectorSignal | null {
-    const candidate = target?.candidates[0];
+/** `stage-001`, `stage-002`, … by one-based position. */
+function buildStageId(position: number): string {
+    return `stage-${String(position).padStart(3, "0")}`;
+}
+
+/** A detector signal from an action's target, or `null` when none applies. */
+function readActionSignal(action: SurfaceAction): DetectorSignal | null {
+    if (action.type === "navigate" || action.type === "press") return null;
+    const candidate = action.target.candidates[0];
     if (candidate === undefined) return null;
     switch (candidate.kind) {
         case "role":
@@ -657,18 +633,6 @@ function signalFromTarget(
     }
 }
 
-function signalFromAction(
-    action: SurfaceAction | undefined,
-): DetectorSignal | null {
-    if (
-        action === undefined ||
-        action.type === "navigate" ||
-        action.type === "press"
-    )
-        return null;
-    return signalFromTarget(action.target);
-}
-
 /**
  * Reduce a URL to its final path segment as a regular expression.
  *
@@ -677,7 +641,7 @@ function signalFromAction(
  * the screen; the identifier in front of it is what varies. A single-segment path
  * is already the screen name, so it is kept whole.
  */
-function urlSignal(url: string): DetectorSignal {
+function buildUrlSignal(url: string): DetectorSignal {
     const parsed = new URL(url);
     const segments = parsed.pathname
         .split("/")
@@ -692,23 +656,8 @@ function urlSignal(url: string): DetectorSignal {
     return { kind: "url", pattern: escapeRegExp(path) };
 }
 
-function destinationForStage(
-    index: number,
-    stageCount: number,
-    detector: StateDetector,
-): StageDestination {
-    if (detector.signals.some((signal) => signal.kind === "timeout"))
-        return terminalFailure("unresolved-draft-detector");
-    if (index === stageCount - 1)
-        return { type: "terminal", outcome: { type: "success" } };
-    return {
-        type: "stage",
-        stageId: `stage-${String(index + 2).padStart(3, "0")}`,
-    };
-}
-
-function terminalFailure(code: string): StageDestination {
-    return { type: "terminal", outcome: { type: "failure", code } };
+function escapeRegExp(value: string): string {
+    return value.replaceAll(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 /**
@@ -723,33 +672,30 @@ function draftRisk(action: SurfaceAction): ActionRisk {
     return action.type === "activate" ? "reversible" : "safe";
 }
 
-function successCondition(manifest: RunManifest): string {
+function buildStageDestination(
+    index: number,
+    stageCount: number,
+    detector: StateDetector,
+): StageDestination {
+    if (detector.signals.some((signal) => signal.kind === "timeout"))
+        return buildFailureDestination("unresolved-draft-detector");
+    if (index === stageCount - 1)
+        return { type: "terminal", outcome: { type: "success" } };
+    return { type: "stage", stageId: buildStageId(index + 2) };
+}
+
+function buildFailureDestination(code: string): StageDestination {
+    return { type: "terminal", outcome: { type: "failure", code } };
+}
+
+function describeSuccessCondition(manifest: RunManifest): string {
     if (manifest.outcome?.status === "satisfied")
         return `Observed checkpoint: ${manifest.outcome.checkpoint}`;
     return "The recorded run reaches its declared success checkpoint.";
 }
 
-function collectOrigins(
-    events: readonly Extract<RunEvent, { type: "action" }>[],
-): string[] {
-    const origins = new Set<string>();
-    for (const event of events) {
-        if (event.action.type === "navigate") {
-            addHttpOrigin(origins, event.action.url);
-        }
-        addHttpOrigin(origins, event.result.observation.url);
-    }
-    return [...origins];
-}
-
-function addHttpOrigin(origins: Set<string>, url: string): void {
-    try {
-        const parsed = new URL(url);
-        if (parsed.protocol === "http:" || parsed.protocol === "https:")
-            origins.add(parsed.origin);
-    } catch {
-        // Malformed or non-network observations are not allowed origins.
-    }
+function unique<T>(values: readonly T[]): T[] {
+    return [...new Set(values)];
 }
 
 function hasCssTarget(action: SurfaceAction): boolean {
@@ -759,32 +705,6 @@ function hasCssTarget(action: SurfaceAction): boolean {
     );
 }
 
-function compareField(
-    name: string,
-    left: unknown,
-    right: unknown,
-    equalFields: string[],
-    differentFields: string[],
-): void {
-    if (deepEqual(left, right)) equalFields.push(name);
-    else differentFields.push(name);
-}
-
 function deepEqual(left: unknown, right: unknown): boolean {
     return JSON.stringify(left) === JSON.stringify(right);
-}
-
-function unique<T>(values: readonly T[]): T[] {
-    return [...new Set(values)];
-}
-
-function escapeRegExp(value: string): string {
-    return value.replaceAll(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-interface TraceEntry {
-    type?: unknown;
-    class?: unknown;
-    method?: unknown;
-    playwrightVersion?: unknown;
 }
