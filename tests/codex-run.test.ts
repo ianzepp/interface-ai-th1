@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
+import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { delimiter, join } from "node:path";
 import test from "node:test";
+import { setTimeout as sleep } from "node:timers/promises";
 
 import {
+    runCodexSessionWithCapture,
     scanHostIdentityLine,
     type HostStreamIdentity,
 } from "../src/authoring/codex-run.js";
@@ -32,4 +37,34 @@ test("keeps the first reported identity and ignores non-JSON output", () => {
         identity,
     );
     assert.equal(identity.sessionId, "first");
+});
+
+test("survives host output that arrives after the timeout sealed the digest", async () => {
+    // A stand-in `codex` that answers SIGTERM with one more line of output.
+    const binDirectory = await mkdtemp(join(tmpdir(), "codex-run-"));
+    const fakeCodex = join(binDirectory, "codex");
+    await writeFile(
+        fakeCodex,
+        "#!/bin/sh\ntrap 'echo late; exit 0' TERM\nwhile :; do sleep 0.05; done\n",
+    );
+    await chmod(fakeCodex, 0o755);
+    try {
+        const result = await runCodexSessionWithCapture({
+            prompt: "unused",
+            workingDirectory: binDirectory,
+            outputPath: join(binDirectory, "last-message.md"),
+            sandbox: "read-only",
+            timeoutMs: 200,
+            extraEnv: {
+                PATH: `${binDirectory}${delimiter}${process.env.PATH ?? ""}`,
+            },
+        });
+        assert.equal(result.status, "timeout");
+        assert.match(result.capture.streamDigest, /^[0-9a-f]{64}$/);
+        // Let the late line arrive. Hashing it into the finalized digest would
+        // throw from the stream handler as an uncaught exception.
+        await sleep(300);
+    } finally {
+        await rm(binDirectory, { recursive: true, force: true });
+    }
 });
