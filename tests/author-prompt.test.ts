@@ -16,19 +16,23 @@ const prompt = buildAuthorPrompt({
     maxActionsPerRun: 45,
 });
 
-/** Assert an instruction survived the prompt's line wrapping. */
-function mentions(fragment: string): void {
-    // Escape first, then open up the whitespace runs. Doing it the other way
-    // round escapes the `\s+` this inserts and matches nothing.
-    const pattern = fragment
-        .replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
-        .replace(/\s+/g, "\\s+");
-    assert.match(
-        prompt,
-        new RegExp(pattern),
-        `the prompt no longer says: ${fragment}`,
-    );
+/** An assertion that an instruction survived a prompt's line wrapping. */
+function mentionsIn(text: string, label: string): (fragment: string) => void {
+    return (fragment) => {
+        // Escape first, then open up the whitespace runs. Doing it the other way
+        // round escapes the `\s+` this inserts and matches nothing.
+        const pattern = fragment
+            .replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+            .replace(/\s+/g, "\\s+");
+        assert.match(
+            text,
+            new RegExp(pattern),
+            `${label} no longer says: ${fragment}`,
+        );
+    };
 }
+
+const mentions = mentionsIn(prompt, "the prompt");
 
 test("names the skill by path instead of restating the procedure", () => {
     assert.match(prompt, /skills\/capability-author\/SKILL\.md/);
@@ -96,15 +100,15 @@ test("hands the model the fixture operations the method needs", () => {
 test("states the rule the target script enforces rather than a stricter one", () => {
     mentions("No fixture operation while a session is live");
     assert.match(prompt, /will refuse; finish or stop the session first/);
-    // The old prompt forbade snapshot outright, which denied the model a tool the
-    // skill's method depends on.
+    // Forbidding snapshot outright would deny the model a tool the skill's
+    // method depends on.
     assert.doesNotMatch(
         prompt,
         /Do not run `scripts\/target fresh`, `snapshot`, or `destroy`/,
     );
 });
 
-test("restores the failure-discovery phase the first prompt omitted", () => {
+test("includes the failure-discovery phase", () => {
     mentions("Build a small failure matrix");
     mentions("This phase is not optional and is not deferred");
     // The candidate classes the skill names.
@@ -167,17 +171,7 @@ const runPrompt = buildDiscoveryRunPrompt({
     maxActionsPerRun: 25,
 });
 
-/** Assert a single-run instruction survived line wrapping. */
-function runMentions(fragment: string): void {
-    const pattern = fragment
-        .replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
-        .replace(/\s+/g, "\\s+");
-    assert.match(
-        runPrompt,
-        new RegExp(pattern),
-        `the single-run prompt no longer says: ${fragment}`,
-    );
-}
+const runMentions = mentionsIn(runPrompt, "the single-run prompt");
 
 test("a single discovery run starts one fully specified session", () => {
     runMentions("Look up the Dolibarr third party named exactly aaa.");

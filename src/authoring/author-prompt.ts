@@ -1,39 +1,26 @@
 /**
- * The instructions that turn one goal into one self-contained authoring session.
+ * The instructions that turn one goal into one self-contained Codex session.
  *
- * The launcher's whole job is this string. Codex owns the loop — its own fixture
- * resets, its own runs, its own draft, its own artifact, its own replay
- * validation — so the prompt is the only place the harness can state what it
- * expects, and the only place it can bound what it permits. That makes it the
- * load-bearing part of scripted discovery rather than a nicety.
- *
- * It is data, not prose for a human, for three reasons:
- *
- * - **It is testable.** A prompt assembled in code can be asserted on, so
- *   "the session CLI is the only permitted way to touch the browser" stays true
- *   across edits instead of quietly eroding.
- * - **It is inspectable.** Every session writes its prompt beside its runs, so a
- *   reviewer can see exactly what the model was asked to do.
- * - **It is bounded.** Caps arrive as parameters and are restated in the prompt,
- *   so a model that ignores them is still held by them.
+ * Codex owns the loop — fixture resets, runs, the draft, the artifact, and
+ * replay validation — so the prompt is the only place the harness can state
+ * what it expects and bound what it permits. It is assembled in code so tests
+ * can assert on it, each session writes it beside its runs for review, and caps
+ * arrive as parameters that the prompt restates.
  *
  * The method sections mirror `skills/capability-author/SKILL.md` phase by phase
- * rather than summarizing it, because the first version of this prompt compressed
- * a twelve-step loop into six happy-path steps. It omitted failure discovery and
- * recovery authoring entirely — the phases the skill says are *not* deferred — and
- * the artifacts that came out had no exception branches at all. A prompt that
- * tells a model to stop after two successes gets a happy-path-only artifact every
- * time, which is exactly what happened.
+ * rather than summarizing it: a summarized loop dropped the failure-discovery
+ * and recovery phases and produced artifacts with no exception branches.
  *
  * INVARIANTS
- * - The skill is named by path and read by the model, never paraphrased here. This
- *   prompt adds the harness facts the skill leaves to the environment; where the
- *   two overlap, the skill wins.
- * - Fixture permissions are stated as they actually are. The repository rule is
- *   "no fixture operation during an active capture", not "never touch the
- *   fixture", and `scripts/target` enforces it.
+ * - The skill is named by path and read by the model, never paraphrased here.
+ *   The prompt adds only the harness facts the skill leaves to the environment;
+ *   where the two overlap, the skill wins.
+ * - Fixture permissions are stated as they are: the repository rule is "no
+ *   fixture operation during an active capture", not "never touch the fixture",
+ *   and `scripts/target` enforces it.
  */
 
+/** Inputs to the whole-corpus authoring prompt. */
 export interface AuthorPromptOptions {
     goal: string;
     target: string;
@@ -226,9 +213,11 @@ export function buildAuthorPrompt(options: AuthorPromptOptions): string {
     ].join("\n");
 }
 
+/** Inputs to the single recorded-run prompt. */
 export interface DiscoveryRunPromptOptions {
     goal: string;
     target: string;
+    /** `<target>/<snapshot>`; the snapshot part is what the scripts take. */
     fixtureId: string;
     lane: string;
     origin: string;
@@ -248,8 +237,8 @@ export interface DiscoveryRunPromptOptions {
 export function buildDiscoveryRunPrompt(
     options: DiscoveryRunPromptOptions,
 ): string {
-    const fixture = options.fixtureId.slice(options.target.length + 1);
-    const lane = `--lane ${options.lane}`;
+    const snapshot = options.fixtureId.slice(options.target.length + 1);
+    const laneFlag = `--lane ${options.lane}`;
     return [
         "You are the decision maker in one recorded computer-use run. Work",
         "autonomously toward the goal; do not stop to ask for confirmation.",
@@ -271,15 +260,15 @@ export function buildDiscoveryRunPrompt(
         "Reset the fixture once, then start the session. The session",
         "authenticates before recording, so you begin signed in:",
         "",
-        `    scripts/target reset ${options.target} ${fixture}`,
-        `    scripts/session start ${lane} --target ${options.target} --fixture ${fixture} --origin ${options.origin} --goal "<the goal above>"`,
+        `    scripts/target reset ${options.target} ${snapshot}`,
+        `    scripts/session start ${laneFlag} --target ${options.target} --fixture ${snapshot} --origin ${options.origin} --goal "<the goal above>"`,
         "",
         "`scripts/session` is the only permitted way to touch the browser. Run",
         "`scripts/session --help` for the grammar. Do not use any browser or",
         "computer-use tooling of your own: it would bypass the recorder, the",
         "policy gate, and the trace.",
         "",
-        `Pass \`${lane}\` to every session command. Observe before every`,
+        `Pass \`${laneFlag}\` to every session command. Observe before every`,
         "decision and act once per observation; the session refuses an action that",
         "is not bound to the latest observation. Declare each action's risk",
         "honestly with `--risk`. Record a checkpoint with a screenshot",
@@ -296,8 +285,8 @@ export function buildDiscoveryRunPrompt(
         "guess. Escalate with a reason an operator can act on — what you see and",
         "why you stopped:",
         "",
-        `    scripts/session escalate ${lane} --reason "<what you see and why you stopped>"`,
-        `    scripts/session wait-for-control ${lane}`,
+        `    scripts/session escalate ${laneFlag} --reason "<what you see and why you stopped>"`,
+        `    scripts/session wait-for-control ${laneFlag}`,
         "",
         "Escalation hands this same live browser to a human operator. If",
         "`wait-for-control` is cut short by your shell, run it again. When control",
