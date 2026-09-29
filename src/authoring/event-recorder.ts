@@ -113,6 +113,7 @@ export type DiscoveryEvent =
               | "human-observe"
               | "human-act"
               | "resume"
+              | "escalate"
               | "finish";
           reason: string;
       }

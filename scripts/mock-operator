@@ -1,0 +1,63 @@
+#!/bin/sh
+set -eu
+
+# A scripted stand-in for the operator console the assignment lets us mock.
+#
+# It waits until the session on a lane hands control to a human, looks at the
+# live page, performs one recorded human action in that same browser, and asks
+# automation to validate the state and take control back. Everything it does
+# goes through `scripts/session`, so the ledger records it as human activity
+# under the human's lease epoch, exactly as a person at a console would be.
+#
+# Usage:
+#   scripts/mock-operator --lane <lane> --rationale <text> [--timeout <seconds>] \
+#       -- <human-act action flags>
+#
+# Example:
+#   scripts/mock-operator --lane demo --rationale "Open the caller's account" \
+#       -- --type navigate --url 'http://127.0.0.1:8080/societe/card.php?socid=58'
+
+project_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+cd "$project_dir"
+
+lane=""
+rationale=""
+timeout=600
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --lane) lane=$2; shift 2 ;;
+        --rationale) rationale=$2; shift 2 ;;
+        --timeout) timeout=$2; shift 2 ;;
+        --) shift; break ;;
+        *) echo "mock-operator: unknown flag $1" >&2; exit 2 ;;
+    esac
+done
+if [ -z "$lane" ] || [ -z "$rationale" ] || [ $# -eq 0 ]; then
+    echo "usage: scripts/mock-operator --lane <lane> --rationale <text> [--timeout <seconds>] -- <human-act action flags>" >&2
+    exit 2
+fi
+
+say() { printf '[operator] %s\n' "$*"; }
+
+say "waiting for lane $lane to hand control to a human"
+waited=0
+until scripts/session status --lane "$lane" 2>/dev/null | grep -q '^controller: human$'; do
+    if [ "$waited" -ge "$timeout" ]; then
+        say "no handoff within ${timeout}s"
+        exit 1
+    fi
+    sleep 1
+    waited=$((waited + 1))
+done
+
+say "control received; the intervention request is on the run's ledger"
+scripts/session status --lane "$lane"
+
+say "looking at the live page"
+scripts/session human-observe --lane "$lane" --screenshot | sed -n '1,4p'
+
+say "acting: $rationale"
+scripts/session human-act --lane "$lane" --rationale "$rationale" "$@"
+
+say "asking automation to validate the state and resume"
+scripts/session resume --lane "$lane"

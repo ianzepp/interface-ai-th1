@@ -853,6 +853,7 @@ function isDiscoveryEvent(value: unknown): value is DiscoveryEvent {
                     value.command === "human-observe" ||
                     value.command === "human-act" ||
                     value.command === "resume" ||
+                    value.command === "escalate" ||
                     value.command === "finish") &&
                 typeof value.reason === "string"
             );

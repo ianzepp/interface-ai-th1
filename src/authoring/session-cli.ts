@@ -75,6 +75,15 @@ async function run(): Promise<void> {
                 rationale: requireFlag(flags, "rationale"),
             });
             return;
+        case "escalate":
+            await sendWithCurrentEpoch({
+                type: "escalate",
+                reason: requireFlag(flags, "reason"),
+            });
+            return;
+        case "wait-for-control":
+            await waitForControl();
+            return;
         case "take-control":
             await sendWithCurrentEpoch({ type: "take-control" });
             return;
@@ -257,12 +266,15 @@ async function stop(): Promise<void> {
                 "The controller stopped this run without declaring an outcome.",
         },
     });
-    if (response.ok) {
+    // The session answers a finish on a closed run with a command-error record
+    // rather than a transport error, so only a `finished` record means this
+    // stop is what finalized the run.
+    const answer = response.ok ? asRecord(response.record) : {};
+    const refusal = response.ok ? String(answer.error) : response.error;
+    if (answer.type === "finished") {
         print("run finalized: controller-disconnected");
-    } else if (!response.error.includes("already finalized")) {
-        print(
-            `note: the session did not accept the final outcome: ${response.error}`,
-        );
+    } else if (!refusal.includes("already finalized")) {
+        print(`note: the session did not accept the final outcome: ${refusal}`);
     }
 
     try {
@@ -283,6 +295,42 @@ async function stop(): Promise<void> {
     print(`session stopped: run ${state.runId}`);
 }
 
+/**
+ * Block until automation holds the lease again, or the session is gone.
+ *
+ * After an escalation the controller has nothing to do but wait, and polling the
+ * state file is the one place that knows who holds control. Exit status tells
+ * the controller what happened without parsing: zero when control came back, one
+ * when the session ended or the wait ran out.
+ */
+async function waitForControl(): Promise<void> {
+    const statePath = resolveSessionStatePath(flags.get("lane"));
+    const timeoutMs = Number(flags.get("timeout") ?? 600_000);
+    const state = await waitForValue(async () => {
+        const current = await readSessionState(statePath);
+        if (current === null) return { gone: true as const };
+        return current.controller === "automation"
+            ? { gone: false as const, current }
+            : null;
+    }, timeoutMs);
+    if (state === null) {
+        print(
+            `error: automation did not regain control within ${String(timeoutMs)}ms`,
+        );
+        process.exitCode = 1;
+        return;
+    }
+    if (state.gone) {
+        print("error: the session ended while waiting for control");
+        process.exitCode = 1;
+        return;
+    }
+    print(
+        `control returned: automation epoch ${String(state.current.controlEpoch)}`,
+    );
+    print("observe before the next action");
+}
+
 /** Send a command using the current lease and observation state. */
 async function sendWithCurrentEpoch(
     command:
@@ -294,6 +342,7 @@ async function sendWithCurrentEpoch(
               Extract<SessionCommand, { type: "take-control" }>,
               "controlEpoch"
           >
+        | Omit<Extract<SessionCommand, { type: "escalate" }>, "controlEpoch">
         | Omit<
               Extract<SessionCommand, { type: "human-observe" }>,
               "controlEpoch"
@@ -414,6 +463,26 @@ function render(record: unknown): void {
             );
             return;
         }
+        case "intervention-required": {
+            const request = asRecord(value.request);
+            print(`intervention requested: ${String(request.id)}`);
+            print(`reason: ${String(request.reason)}`);
+            print(
+                "control is now with a human operator; run `scripts/session wait-for-control` and observe again once it returns",
+            );
+            return;
+        }
+        case "resume-validated": {
+            const decision = asRecord(value.decision);
+            const control = asRecord(value.control);
+            print(
+                `resume validated: stage ${String(decision.stageId)}; automation epoch ${String(control.epoch)}`,
+            );
+            return;
+        }
+        case "resume-rejected":
+            print(`resume rejected: ${String(value.reason)}`);
+            return;
         case "resume-requested":
             print("resume requested");
             return;
@@ -599,6 +668,8 @@ function printUsage(): void {
   scripts/session start --target <ledgersmb|dolibarr> --fixture <name> --goal <text> [--lane <name>]
   scripts/session observe [--screenshot]
   scripts/session act --type <navigate|activate|fill|select|press> [target flags] --rationale <text>
+  scripts/session escalate --reason <text>
+  scripts/session wait-for-control [--timeout <ms>]
   scripts/session take-control
   scripts/session human-observe [--screenshot]
   scripts/session human-act --type <navigate|activate|fill|select|press> [target flags] --rationale <text>

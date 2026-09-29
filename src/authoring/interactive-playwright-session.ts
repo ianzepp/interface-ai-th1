@@ -15,7 +15,10 @@ import {
     evaluateResume,
     type ResumeCheckpoint,
 } from "../intervention/resume.js";
-import { createInterventionRequest } from "../intervention/request.js";
+import {
+    createInterventionRequest,
+    type InterventionRequest,
+} from "../intervention/request.js";
 import { PlaywrightBrowserDriver } from "../surfaces/playwright-driver.js";
 import type {
     ActionRisk,
@@ -78,6 +81,7 @@ export type SessionCommand =
           controlEpoch: number;
       }
     | { type: "resume"; controlEpoch: number }
+    | { type: "escalate"; reason: string; controlEpoch: number }
     | {
           type: "act";
           action: SurfaceAction;
@@ -89,6 +93,10 @@ export type SessionCommand =
       }
     | { type: "checkpoint"; name: string; satisfied: boolean }
     | { type: "finish"; outcome: TestRunOutcome };
+
+/** Commands whose lease refusal is recorded as a `control-rejected` event. */
+type ControlCommand =
+    "take-control" | "human-observe" | "human-act" | "resume" | "escalate";
 
 /** One command's answer, and whether the run is now over. */
 export interface SessionCommandOutcome {
@@ -276,6 +284,26 @@ async function handleCommand(
             "human",
             "control-taken",
         );
+    }
+
+    if (command.type === "escalate") {
+        const failure = automationControlFailure(run, command.controlEpoch);
+        if (failure !== null) {
+            return rejectControl(run, "escalate", failure);
+        }
+        // Escalation is a decision about the screen the controller last saw,
+        // so the request names that observation rather than an artifact stage
+        // that discovery has not authored yet.
+        const identity = run.currentObservationIdentity;
+        const stageId =
+            identity === null
+                ? "discovery"
+                : `observation:${String(identity.sequence)}`;
+        const request = await raiseIntervention(run, stageId, command.reason);
+        return {
+            record: { type: "intervention-required", request },
+            terminal: false,
+        };
     }
 
     if (command.type === "resume") {
@@ -570,13 +598,36 @@ async function requireIntervention(
     receipt: DecisionReceipt,
     reason: string,
 ): Promise<SessionCommandOutcome> {
+    const request = await raiseIntervention(
+        run,
+        `action:${command.action.type}`,
+        reason,
+    );
+    return {
+        record: { type: "intervention-required", request, receipt },
+        terminal: false,
+    };
+}
+
+/**
+ * Record an intervention request and hand the lease to a human.
+ *
+ * Evidence is captured and the request is on the ledger before the lease moves,
+ * so the person who takes over can see why they were called and what automation
+ * saw at that moment.
+ */
+async function raiseIntervention(
+    run: SessionRun,
+    stageId: string,
+    reason: string,
+): Promise<InterventionRequest> {
     const evidence = await run.driver.captureEvidence("intervention");
     const before = run.lease.current();
     const request = createInterventionRequest({
         id: `intervention:${run.recorder.directory}:${String(before.epoch)}`,
         capabilityId: run.options.targetProfile,
         goal: run.options.goal,
-        stageId: `action:${command.action.type}`,
+        stageId,
         reason,
         controlEpoch: before.epoch,
         session: {
@@ -602,10 +653,7 @@ async function requireIntervention(
         to: after,
         requestId: request.id,
     });
-    return {
-        record: { type: "intervention-required", request, receipt },
-        terminal: false,
-    };
+    return request;
 }
 
 async function validateResume(
@@ -711,7 +759,7 @@ async function transferControl(
 
 async function rejectControl(
     run: SessionRun,
-    command: "take-control" | "human-observe" | "human-act" | "resume",
+    command: ControlCommand,
     reason: string,
 ): Promise<SessionCommandOutcome> {
     await recordControlRejection(run, command, reason);
@@ -720,8 +768,7 @@ async function rejectControl(
 
 function recordControlRejection(
     run: SessionRun,
-    command:
-        "take-control" | "human-observe" | "human-act" | "resume" | "finish",
+    command: ControlCommand | "finish",
     reason: string,
 ): ReturnType<FileTestRunRecorder["append"]> {
     return run.recorder.append({
@@ -897,6 +944,7 @@ export function parseSessionCommand(source: string): SessionCommand {
         command.type !== "human-observe" &&
         command.type !== "human-act" &&
         command.type !== "resume" &&
+        command.type !== "escalate" &&
         command.type !== "act" &&
         command.type !== "checkpoint" &&
         command.type !== "finish"
@@ -908,11 +956,18 @@ export function parseSessionCommand(source: string): SessionCommand {
             command.type === "take-control" ||
             command.type === "human-observe" ||
             command.type === "human-act" ||
-            command.type === "resume") &&
+            command.type === "resume" ||
+            command.type === "escalate") &&
         typeof command.controlEpoch !== "number"
     ) {
         const label = command.type === "act" ? "Act" : command.type;
         throw new Error(`${label} requires the current control lease epoch`);
+    }
+    if (
+        command.type === "escalate" &&
+        (typeof command.reason !== "string" || command.reason.trim() === "")
+    ) {
+        throw new Error("escalate requires a reason");
     }
     return value as SessionCommand;
 }

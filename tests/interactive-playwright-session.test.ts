@@ -500,3 +500,96 @@ test("parses human-control commands only with a current lease epoch", () => {
         );
     }
 });
+
+test("an automation escalation raises a request and hands the session to a human", async (context) => {
+    const directory = await mkdtemp(join(tmpdir(), "interface-ai-escalate-"));
+    const session = await createInteractiveSession({
+        rootDirectory: directory,
+        goal: "Escalate a judgment the controller may not make.",
+        situation: "Two records match the requested name.",
+        targetProfile: "handoff-test",
+        targetVersion: "1",
+        fixtureId: "handoff-test/fresh",
+        policy: {
+            allowedOrigins: ["http://127.0.0.1:1"],
+            allowedActionTypes: ["navigate"],
+            riskyActionMode: "block",
+        },
+        prepare: () => Promise.resolve(),
+    });
+    context.after(async () => {
+        await session.close();
+        await rm(directory, { recursive: true, force: true });
+    });
+
+    const escalated = await session.handle({
+        type: "escalate",
+        reason: "Two records match exactly; choosing one is not mine to decide.",
+        controlEpoch: 0,
+    });
+    const record = escalated.record as {
+        type: string;
+        request: { reason: string; controlEpoch: number; stageId: string };
+    };
+    assert.equal(record.type, "intervention-required");
+    assert.equal(
+        record.request.reason,
+        "Two records match exactly; choosing one is not mine to decide.",
+    );
+    assert.equal(record.request.controlEpoch, 0);
+    assert.equal(record.request.stageId, "observation:0");
+
+    // The lease moved: automation holding the old epoch can neither act nor
+    // escalate again, and the human holds epoch 1.
+    const repeated = await session.handle({
+        type: "escalate",
+        reason: "Again.",
+        controlEpoch: 0,
+    });
+    assert.equal(
+        (repeated.record as { type: string }).type,
+        "control-rejected",
+    );
+    const human = await session.handle({
+        type: "human-observe",
+        controlEpoch: 1,
+    });
+    assert.equal((human.record as { type: string }).type, "observation");
+
+    const events = (
+        await readFile(join(session.runDirectory, "events.jsonl"), "utf8")
+    )
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as { type: string; command?: string });
+    assert.deepEqual(
+        events.map((event) => event.type),
+        [
+            "observation",
+            "intervention-request",
+            "control-transfer",
+            "control-rejected",
+            "observation",
+        ],
+    );
+    assert.equal(events[3]?.command, "escalate");
+});
+
+test("an escalation command requires a reason and the control epoch", () => {
+    assert.throws(
+        () => parseSessionCommand('{"type":"escalate","controlEpoch":0}'),
+        /escalate requires a reason/,
+    );
+    assert.throws(
+        () => parseSessionCommand('{"type":"escalate","reason":"Stuck."}'),
+        /escalate requires the current control lease epoch/,
+    );
+    const command = parseSessionCommand(
+        '{"type":"escalate","reason":"Stuck.","controlEpoch":2}',
+    );
+    assert.deepEqual(command, {
+        type: "escalate",
+        reason: "Stuck.",
+        controlEpoch: 2,
+    });
+});
