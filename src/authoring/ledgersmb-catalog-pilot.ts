@@ -17,79 +17,38 @@
  *   with a screenshot when any step throws. It creates no snapshot.
  */
 
-import { mkdir } from "node:fs/promises";
-import { join } from "node:path";
-
-import { chromium, type Locator, type Page } from "playwright";
-
-import { print, runMain } from "../common/cli.js";
-import { requireEnv } from "../common/env.js";
-import { describeError } from "../common/errors.js";
-import { ArtifactPolicy } from "../runtime/policy.js";
-import type {
-    ActionResult,
-    Observation,
-    SurfaceAction,
-    TargetDescriptor,
-} from "../surfaces/surface-driver.js";
+import { runMain } from "../common/cli.js";
 import {
-    executePolicyBoundAction,
-    PlaywrightRunCapture,
-} from "./playwright-run-capture.js";
-import { FileRunRecorder } from "./run-recorder.js";
-
-const BASE_URL = "http://127.0.0.1:5762";
-const policy = new ArtifactPolicy({
-    allowedOrigins: [BASE_URL],
-    allowedActionTypes: ["navigate", "activate", "fill", "select", "press"],
-    riskyActionMode: "block",
-});
+    LEDGERSMB_ORIGIN,
+    type LedgerSmbPilot,
+    roleTarget,
+    runLedgerSmbPilot,
+} from "./ledgersmb-pilot.js";
 
 async function main(): Promise<void> {
-    const password = requireEnv("LEDGERSMB_FIXTURE_PASSWORD");
-    const recorder = await FileRunRecorder.start({
-        rootDirectory: join(process.cwd(), "runs"),
+    await runLedgerSmbPilot({
         goal: "Create the Main Warehouse and TRAIL-PACK-40 inventory catalog record.",
         situation:
             "LedgerSMB initialized with customer CUST-1001 and vendor VEND-2001, but no warehouse or parts.",
-        targetProfile: "ledgersmb",
-        targetVersion: "1.13.7",
         fixtureId: "ledgersmb/partners-ready",
-        sensitiveInputValues: [password],
+        errorCode: "create-inventory-catalog-failed",
+        async steps(pilot, password) {
+            await logIn(pilot, password);
+            await createWarehouse(pilot);
+            await createPart(pilot);
+            await pilot.saveScreenshot("catalog-ready.png");
+            await pilot.finishSatisfied(
+                "warehouse-and-part-visible",
+                "Created Main Warehouse and visibly verified TRAIL-PACK-40 with its pricing and account mappings.",
+            );
+        },
     });
-    const browser = await chromium.launch({ headless: true });
-    const context = await browser.newContext({ locale: "en-US" });
-    const page = await context.newPage();
-    const capture = await PlaywrightRunCapture.start(
-        context.tracing,
-        recorder,
-        [password],
-    );
-    const pilot = new Pilot(page, recorder, capture);
-
-    try {
-        await logIn(pilot, password);
-        await createWarehouse(pilot);
-        await createPart(pilot);
-        await pilot.saveScreenshot("catalog-ready.png");
-        await pilot.finishSatisfied(
-            "warehouse-and-part-visible",
-            "Created Main Warehouse and visibly verified TRAIL-PACK-40 with its pricing and account mappings.",
-        );
-    } catch (error) {
-        await pilot.finishWithError("create-inventory-catalog-failed", error);
-        throw error;
-    } finally {
-        await context.close();
-        await browser.close();
-        print(`Run directory: ${recorder.directory}`);
-    }
 }
 
-async function logIn(pilot: Pilot, password: string): Promise<void> {
+async function logIn(pilot: LedgerSmbPilot, password: string): Promise<void> {
     const { page } = pilot;
     await pilot.navigate(
-        `${BASE_URL}/login.pl`,
+        `${LEDGERSMB_ORIGIN}/login.pl`,
         "Open the LedgerSMB login surface.",
     );
     await pilot.fill("#username", "admin", "Enter the fixture administrator.");
@@ -107,7 +66,7 @@ async function logIn(pilot: Pilot, password: string): Promise<void> {
     await page.getByText("Welcome to LedgerSMB", { exact: true }).waitFor();
 }
 
-async function createWarehouse(pilot: Pilot): Promise<void> {
+async function createWarehouse(pilot: LedgerSmbPilot): Promise<void> {
     const { page } = pilot;
     await pilot.click(
         roleTarget("treeitem", "Goods & Services"),
@@ -135,7 +94,7 @@ async function createWarehouse(pilot: Pilot): Promise<void> {
     await page.locator("input[value='Main Warehouse']").waitFor();
 }
 
-async function createPart(pilot: Pilot): Promise<void> {
+async function createPart(pilot: LedgerSmbPilot): Promise<void> {
     const { page } = pilot;
     await pilot.click(
         roleTarget("treeitem", "Add Part"),
@@ -179,126 +138,5 @@ async function createPart(pilot: Pilot): Promise<void> {
  * Every step passes the artifact policy before the browser acts, then appends
  * an action event carrying the rationale and the observation it left behind.
  */
-class Pilot {
-    constructor(
-        readonly page: Page,
-        private readonly recorder: FileRunRecorder,
-        private readonly capture: PlaywrightRunCapture,
-    ) {}
-
-    async navigate(url: string, rationale: string): Promise<void> {
-        await this.recordAction({ type: "navigate", url }, rationale, () =>
-            this.page.goto(url).then(() => undefined),
-        );
-    }
-
-    async fill(
-        selector: string,
-        value: string,
-        rationale: string,
-    ): Promise<void> {
-        await this.recordAction(
-            { type: "fill", target: cssTarget(selector), value },
-            rationale,
-            () => this.page.locator(selector).fill(value),
-        );
-    }
-
-    async click(
-        target: TargetDescriptor,
-        rationale: string,
-        locator: Locator,
-    ): Promise<void> {
-        await this.recordAction({ type: "activate", target }, rationale, () =>
-            locator.click(),
-        );
-    }
-
-    /** Save a full-page screenshot under the run's `screenshots/` directory. */
-    async saveScreenshot(fileName: string): Promise<void> {
-        const directory = join(this.recorder.directory, "screenshots");
-        await mkdir(directory, { recursive: true });
-        await this.page.screenshot({
-            path: join(directory, fileName),
-            fullPage: true,
-        });
-    }
-
-    /** Append the satisfied checkpoint and finalize the run on it. */
-    async finishSatisfied(checkpoint: string, summary: string): Promise<void> {
-        await this.recorder.append({
-            type: "checkpoint",
-            recordedAt: new Date().toISOString(),
-            name: checkpoint,
-            satisfied: true,
-        });
-        await this.capture.finish({ status: "satisfied", summary, checkpoint });
-    }
-
-    /** Screenshot the failure where possible, then finalize the run as `error`. */
-    async finishWithError(code: string, error: unknown): Promise<void> {
-        const directory = join(this.recorder.directory, "screenshots");
-        await mkdir(directory, { recursive: true });
-        await this.page
-            .screenshot({ path: join(directory, "error.png"), fullPage: true })
-            .catch(() => undefined);
-        await this.capture.finish({
-            status: "error",
-            code,
-            summary: describeFailure(error),
-        });
-    }
-
-    private async recordAction(
-        action: SurfaceAction,
-        rationale: string,
-        execute: () => Promise<void>,
-    ): Promise<void> {
-        await executePolicyBoundAction(policy, action, () =>
-            this.capture.execute(action, execute),
-        );
-        const result: ActionResult = {
-            completed: true,
-            observation: await this.observe(),
-        };
-        await this.recorder.append({
-            type: "action",
-            recordedAt: new Date().toISOString(),
-            action,
-            result,
-            rationale,
-        });
-    }
-
-    private async observe(): Promise<Observation> {
-        return {
-            url: this.page.url(),
-            title: await this.page.title(),
-            accessibility: {
-                text: (await this.page.locator("body").innerText()).slice(
-                    0,
-                    2_000,
-                ),
-            },
-        };
-    }
-}
-
-function roleTarget(role: string, name: string): TargetDescriptor {
-    return {
-        candidates: [{ kind: "role", role, name }],
-        require: "exactly-one",
-    };
-}
-
-function cssTarget(selector: string): TargetDescriptor {
-    return { candidates: [{ kind: "css", selector }], require: "exactly-one" };
-}
-
-/** The first line of a thrown value's message, as a one-line run summary. */
-function describeFailure(error: unknown): string {
-    const [firstLine = ""] = describeError(error).split("\n", 1);
-    return firstLine;
-}
 
 await runMain(main);
