@@ -1,34 +1,15 @@
-import { mkdir, writeFile } from "node:fs/promises";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
-import process from "node:process";
-
-import { runCodexSession } from "../authoring/codex-run.js";
-import { parseFlags } from "../authoring/flag-args.js";
-import {
-    loadCapabilityArtifacts,
-    loadCapabilitySource,
-    type CapabilityEntry,
-} from "./artifact-catalog.js";
-import { auditArtifact, type AuditFinding } from "./artifact-rubric.js";
-import { buildAuditPrompt } from "./audit-prompt.js";
-import { print } from "../common/cli.js";
-import { describeError } from "../common/errors.js";
-
 /**
- * Review a capability artifact, on demand.
+ * Review capability artifacts on demand, as a report and as a gate.
  *
- * The mechanical pass always runs: it is free, fast, and deterministic. The model
- * pass is opt-in, because it costs money and time and because a mechanical finding
- * needs no model to confirm.
+ * The mechanical pass always runs: it is free, fast, and deterministic. The
+ * model pass is opt-in, because it costs money and time and because a
+ * mechanical finding needs no model to confirm. The two stay separate in the
+ * output: findings a program decided are facts, findings a model decided are
+ * opinions, and a reader should be able to tell which is which.
  *
- * The two passes are kept separate in the output on purpose. Findings a program
- * decided are facts about the artifact; findings a model decided are opinions about
- * it, and a reader should be able to tell which is which. The reviewer is told what
- * the mechanical pass already found so it does not spend effort rediscovering it.
- *
- * Exit status is non-zero when an artifact carries a blocking finding, so this
- * works as a gate as well as a report.
+ * EXIT CODES
+ * - 0: no audited artifact carries a blocking finding.
+ * - 1: an audited artifact carries a blocking finding, or the audit failed.
  *
  * INVARIANTS
  * - The reviewer is fixed by default to one model and effort level, because
@@ -38,24 +19,48 @@ import { describeError } from "../common/errors.js";
  *   exactly as the author wrote it.
  */
 
-const flags = parseFlags(process.argv.slice(2));
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import process from "node:process";
 
-if (flags.has("help")) {
-    printUsage();
-} else {
-    try {
-        await audit();
-    } catch (error) {
-        process.stderr.write(`error: ${describeError(error)}\n`);
-        process.exitCode = 1;
-    }
+import { runCodexSession } from "../authoring/codex-run.js";
+import { parseFlags } from "../authoring/flag-args.js";
+import { print, runMain } from "../common/cli.js";
+import {
+    loadCapabilityArtifacts,
+    loadCapabilitySource,
+    type CapabilityEntry,
+} from "./artifact-catalog.js";
+import { auditArtifact, type AuditFinding } from "./artifact-rubric.js";
+import { buildAuditPrompt } from "./audit-prompt.js";
+
+interface ReviewOptions {
+    model: string;
+    reasoningEffort: string;
+    sandbox: string;
+    timeoutMs: number;
 }
 
-async function audit(): Promise<void> {
+async function main(): Promise<void> {
+    const flags = parseFlags(process.argv.slice(2));
+    if (flags.has("help")) {
+        printUsage();
+        return;
+    }
+
     const source = flags.get("source");
+    const reviewOptions: ReviewOptions = {
+        model: flags.get("model") ?? "gpt-5.6-sol",
+        reasoningEffort: flags.get("reasoning-effort") ?? "medium",
+        sandbox: flags.get("codex-sandbox") ?? "danger-full-access",
+        timeoutMs: Number(flags.get("timeout") ?? 1_800_000),
+    };
     const entries =
         source === undefined
-            ? selectEntries(await loadCapabilityArtifacts(process.cwd()))
+            ? selectEntries(
+                  await loadCapabilityArtifacts(process.cwd()),
+                  flags.get("capability"),
+              )
             : await loadCapabilitySource(process.cwd(), source);
     if (entries.length === 0) {
         // Silence here would read as "audited and clean", which is the opposite of
@@ -70,23 +75,49 @@ async function audit(): Promise<void> {
 
     for (const entry of entries) {
         const findings = auditArtifact(entry.artifact);
-        reportFindings(entry, findings);
+        printFindings(entry, findings);
         if (findings.some((finding) => finding.severity === "blocking")) {
             blocked = true;
         }
         if (flags.has("model-review")) {
-            await review(entry, findings);
+            await runModelReview(entry, findings, reviewOptions);
         }
     }
 
     if (blocked) process.exitCode = 1;
 }
 
-/** Choose the artifact to audit, or all of them. */
+await runMain(main);
+
+function printUsage(): void {
+    print(`Usage:
+  scripts/audit-artifact [--capability <id>] [options]
+
+Audits one capability artifact, or every artifact when no id is given. The
+mechanical rubric always runs; the model review is opt-in.
+
+Options:
+  --capability <id>        Audit one artifact instead of all of them.
+  --source <path>          Audit the artifact in one source file, whether or not
+                           it is registered. Useful for a file a lane just wrote.
+  --model-review           Also run the model review pass.
+  --model <model>          Model for the review. Defaults to gpt-5.6-sol.
+  --reasoning-effort <level>  Defaults to medium. Keeping the reviewer fixed is
+                           what makes reviews of different artifacts comparable.
+  --codex-sandbox <mode>   read-only, workspace-write, or danger-full-access.
+  --timeout <ms>           Review budget. Defaults to 1800000.
+
+Exit status is 1 when an audited artifact carries a blocking finding.
+
+Reviewer output lands in tmp/audit/, one report per capability.
+`);
+}
+
+/** The requested artifact, or all of them when none is requested. */
 function selectEntries(
     entries: readonly CapabilityEntry[],
+    requested: string | undefined,
 ): readonly CapabilityEntry[] {
-    const requested = flags.get("capability");
     if (requested === undefined) return entries;
 
     const selected = entries.filter((entry) => entry.artifact.id === requested);
@@ -100,7 +131,7 @@ function selectEntries(
     return selected;
 }
 
-function reportFindings(
+function printFindings(
     entry: CapabilityEntry,
     findings: readonly AuditFinding[],
 ): void {
@@ -126,15 +157,11 @@ function reportFindings(
     }
 }
 
-/**
- * Run the model pass for one artifact and report where its review landed.
- *
- * The reviewer is asked to judge the artifact rather than repair it: a reviewer
- * that edits produces a file neither it nor the author has reviewed.
- */
-async function review(
+/** Run the model pass for one artifact and print the review it wrote. */
+async function runModelReview(
     entry: CapabilityEntry,
     findings: readonly AuditFinding[],
+    options: ReviewOptions,
 ): Promise<void> {
     const directory = join(process.cwd(), "tmp", "audit");
     await mkdir(directory, { recursive: true });
@@ -155,59 +182,35 @@ async function review(
     });
     await writeFile(promptPath, `${prompt}\n`, "utf8");
 
-    const model = flags.get("model") ?? "gpt-5.6-sol";
-    const reasoningEffort = flags.get("reasoning-effort") ?? "medium";
     print("");
     print(
-        `  model review: ${model} at ${reasoningEffort}, prompt ${promptPath}`,
+        `  model review: ${options.model} at ${options.reasoningEffort}, prompt ${promptPath}`,
     );
 
     const status = await runCodexSession({
         prompt,
         workingDirectory: process.cwd(),
         outputPath: lastMessagePath,
-        sandbox: flags.get("codex-sandbox") ?? "danger-full-access",
-        model,
-        reasoningEffort,
-        timeoutMs: Number(flags.get("timeout") ?? 1_800_000),
+        sandbox: options.sandbox,
+        model: options.model,
+        reasoningEffort: options.reasoningEffort,
+        timeoutMs: options.timeoutMs,
     });
 
     print(`  model review: ${status}`);
-    const body = readIfPresent(reportPath) ?? readIfPresent(lastMessagePath);
+    const body =
+        (await readTextOrNull(reportPath)) ??
+        (await readTextOrNull(lastMessagePath));
     if (body !== null) {
         print("");
         print(body.trimEnd());
     }
 }
 
-function readIfPresent(path: string): string | null {
+async function readTextOrNull(path: string): Promise<string | null> {
     try {
-        return readFileSync(path, "utf8");
+        return await readFile(path, "utf8");
     } catch {
         return null;
     }
-}
-
-function printUsage(): void {
-    print(`Usage:
-  scripts/audit-artifact [--capability <id>] [options]
-
-Audits one capability artifact, or every artifact when no id is given. The
-mechanical rubric always runs; the model review is opt-in.
-
-Options:
-  --capability <id>        Audit one artifact instead of all of them.
-  --source <path>          Audit the artifact in one source file, whether or not
-                           it is registered. Useful for a file a lane just wrote.
-  --model-review           Also run the model review pass.
-  --model <model>          Model for the review. Defaults to gpt-5.6-sol.
-  --reasoning-effort <level>  Defaults to medium. Keeping the reviewer fixed is
-                           what makes reviews of different artifacts comparable.
-  --codex-sandbox <mode>   read-only, workspace-write, or danger-full-access.
-  --timeout <ms>           Review budget. Defaults to 1800000.
-
-Exit status is 1 when an audited artifact carries a blocking finding.
-
-Reviewer output lands in tmp/audit/, one report per capability.
-`);
 }
