@@ -1,7 +1,3 @@
-import process from "node:process";
-
-import { promoteRuns } from "./evidence-promotion.js";
-
 /**
  * Operator entry point for promoting reviewed runs into `evidence/`:
  *
@@ -9,23 +5,35 @@ import { promoteRuns } from "./evidence-promotion.js";
  *
  * The wrapper script builds first and then calls this file, so the documented
  * command and the compiled entry point cannot drift apart.
+ *
+ * EXIT CODES
+ * - 1 when a requested run cannot be promoted.
+ * - 2 when no run ID is given.
  */
 
-const runIds = process.argv.slice(2);
+import process from "node:process";
 
-try {
+import { print, runMain } from "../common/cli.js";
+import { promoteRuns } from "./evidence-promotion.js";
+
+await runMain(main);
+
+async function main(): Promise<void> {
+    const runIds = process.argv.slice(2);
+    if (runIds.length === 0) {
+        print("Usage: scripts/promote-run <run-id> [<run-id> ...]");
+        process.exitCode = 2;
+        return;
+    }
+
     const promoted = await promoteRuns({
         runsDirectory: "runs",
         evidenceDirectory: "evidence",
         runIds,
     });
     for (const run of promoted) {
-        process.stdout.write(
-            `Promoted ${run.runId} (${run.status}) to ${run.evidenceDirectory}\n`,
+        print(
+            `Promoted ${run.runId} (${run.status}) to ${run.evidenceDirectory}`,
         );
     }
-} catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    process.stderr.write(`${message}\n`);
-    process.exitCode = 1;
 }
