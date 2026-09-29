@@ -1,13 +1,3 @@
-import assert from "node:assert/strict";
-import { join } from "node:path";
-import test from "node:test";
-
-import { loadCapabilityArtifacts } from "../src/audit/artifact-catalog.js";
-import {
-    auditArtifact,
-    type AuditFinding,
-} from "../src/audit/artifact-rubric.js";
-
 /**
  * The artifact audit, as a gate.
  *
@@ -26,6 +16,16 @@ import {
  * stale entry cannot quietly survive. Adding a capability with a blocking finding
  * fails until someone records it here or fixes it.
  */
+
+import assert from "node:assert/strict";
+import { join } from "node:path";
+import test from "node:test";
+
+import { loadCapabilityArtifacts } from "../src/audit/artifact-catalog.js";
+import {
+    auditArtifact,
+    type AuditFinding,
+} from "../src/audit/artifact-rubric.js";
 
 const BLOCKING_BASELINE: Readonly<
     Record<string, Readonly<Record<string, number>>>

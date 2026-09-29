@@ -1,37 +1,35 @@
+/**
+ * The mechanical half of artifact review.
+ *
+ * This layer decides what a program can decide: structural integrity, contract
+ * consistency, and the selector and detector properties the authoring skill
+ * states as rules. Judgment — whether a detector is meaningful, whether a branch
+ * is real, whether the graph is minimal — belongs to the model review in
+ * `audit-prompt.ts`. A lint cannot be talked out of a finding and cannot
+ * hallucinate one, so anything it can decide is never delegated to a model.
+ *
+ * Severity is graded: `blocking` means the artifact is wrong or cannot work;
+ * `warning` means it is weaker than the skill asks for; `note` records a fact a
+ * reviewer should weigh. Every finding names its subject, so a reader can go
+ * straight to the offending stage or field.
+ *
+ * INVARIANTS
+ * - Every rule is decidable from the artifact alone, with no run evidence and no
+ *   network, so the audit runs inside the test suite on a fresh clone.
+ *
+ * LIMITS
+ * - Nothing here reads `runs/`. Cross-checking provenance against run evidence
+ *   is a separate, non-hermetic pass.
+ * - A rule sees structure, not intent. It can prove that a fill is not verified
+ *   by its own detector; it cannot prove the detector is the right one.
+ */
+
 import type {
     CapabilityArtifact,
     CapabilityStage,
 } from "../runtime/state-machine.js";
 import type { LocatorCandidate } from "../surfaces/surface-driver.js";
 import { targetProfiles } from "../targets/index.js";
-
-/**
- * The mechanical half of artifact review.
- *
- * Artifact review has two layers and they should not be confused. This layer
- * decides what a program can decide: structural integrity, contract consistency,
- * and the selector and detector properties that the authoring skill states as
- * rules. The other layer is judgment — whether a detector is *meaningful*,
- * whether a branch is real, whether the graph is minimal — and that needs a
- * model reading the corpus.
- *
- * The split matters because a lint and a model fail differently. A lint cannot be
- * talked out of a finding and cannot hallucinate one, so anything it can decide
- * should never be delegated to a model: that spends money to get a less reliable
- * answer. Every rule here is decidable from the artifact alone, with no run
- * evidence and no network, which is what lets it run inside `npm run verify`.
- *
- * Rules are graded rather than binary. `blocking` means the artifact is wrong or
- * cannot work; `warning` means it is weaker than the skill asks for; `note`
- * records a fact a reviewer should weigh. A finding always names its subject so a
- * reader can go straight to the offending stage or field.
- *
- * LIMITS
- * - Nothing here reads `runs/`. Cross-checking provenance against the run evidence
- *   on disk is a separate, non-hermetic pass, so this stays usable on a fresh clone.
- * - A rule sees structure, not intent. It can prove that a fill is not verified by
- *   its own detector; it cannot prove the detector is the right one.
- */
 
 export type AuditSeverity = "blocking" | "warning" | "note";
 
@@ -58,6 +56,9 @@ const POSITIONAL_SELECTOR =
 /** Signal kinds that can observe the page's content rather than its address. */
 const CONTENT_SIGNALS = new Set(["text", "role", "count"]);
 
+type CssCandidate = Extract<LocatorCandidate, { kind: "css" }>;
+
+/** Every mechanical finding for one artifact, in rule order. */
 export function auditArtifact(
     artifact: CapabilityArtifact,
 ): readonly AuditFinding[] {
@@ -82,10 +83,8 @@ export function auditArtifact(
 /**
  * The declared target profile must resolve.
  *
- * This is the rule that caught all three committed artifacts at once: they declare
- * `<profile>-<version>` while the registry resolves a bare id, so anything that
- * ever resolved this field would throw. Nothing reads it yet, which is precisely
- * why the drift survived review.
+ * The registry resolves a bare id, so a `<profile>-<version>` declaration would
+ * throw in anything that resolved this field.
  */
 function auditTargetProfile(
     artifact: CapabilityArtifact,
@@ -196,7 +195,11 @@ function auditGraph(
             }
         }
         for (const transition of stage.transitions) {
-            if (!stage.detectors.some((d) => d.id === transition.detectorId)) {
+            if (
+                !stage.detectors.some(
+                    (detector) => detector.id === transition.detectorId,
+                )
+            ) {
                 findings.push({
                     rule: "transition-detector-undeclared",
                     severity: "blocking",
@@ -234,12 +237,11 @@ function auditTargets(stage: CapabilityStage): readonly AuditFinding[] {
 
     const findings: AuditFinding[] = [];
     const positional = action.target.candidates.filter(
-        (candidate) =>
+        (candidate): candidate is CssCandidate =>
             candidate.kind === "css" &&
             POSITIONAL_SELECTOR.test(candidate.selector),
     );
     for (const candidate of positional) {
-        if (candidate.kind !== "css") continue;
         findings.push({
             rule: "positional-selector-on-mutating-stage",
             severity: "blocking",
@@ -291,7 +293,7 @@ function auditDetectors(stage: CapabilityStage): readonly AuditFinding[] {
 /** Contract consistency: declared inputs are used and declared outputs are produced. */
 function auditContract(artifact: CapabilityArtifact): readonly AuditFinding[] {
     const findings: AuditFinding[] = [];
-    const templates = artifact.stages.flatMap((stage) => templatesOf(stage));
+    const boundInputs = artifact.stages.flatMap(inputNamesBoundBy);
     const extracted = new Set(
         artifact.stages.flatMap((stage) =>
             stage.extractions.map((extraction) => extraction.name),
@@ -299,7 +301,7 @@ function auditContract(artifact: CapabilityArtifact): readonly AuditFinding[] {
     );
 
     for (const name of Object.keys(artifact.contract.inputs)) {
-        if (!templates.some((template) => template === name)) {
+        if (!boundInputs.includes(name)) {
             findings.push({
                 rule: "declared-input-never-used",
                 severity: "warning",
@@ -361,41 +363,46 @@ function reachableStages(
 }
 
 /** Input names bound anywhere in a stage's actions, targets, or extractions. */
-function templatesOf(stage: CapabilityStage): readonly string[] {
+function inputNamesBoundBy(stage: CapabilityStage): readonly string[] {
     const names: string[] = [];
     const action = stage.action;
     if (action !== undefined) {
-        if ("url" in action) names.push(...boundNames(action.url));
-        if ("value" in action) names.push(...boundNames(action.value));
+        if ("url" in action) names.push(...inputNamesIn(action.url));
+        if ("value" in action) names.push(...inputNamesIn(action.value));
         if ("target" in action) {
             names.push(
-                ...candidateText(action.target.candidates).flatMap(boundNames),
+                ...action.target.candidates
+                    .map(candidateText)
+                    .flatMap(inputNamesIn),
             );
         }
     }
     for (const extraction of stage.extractions) {
         names.push(
-            ...candidateText(extraction.target.candidates).flatMap(boundNames),
+            ...extraction.target.candidates
+                .map(candidateText)
+                .flatMap(inputNamesIn),
         );
     }
     return names;
 }
 
-function candidateText(
-    candidates: readonly LocatorCandidate[],
-): readonly string[] {
-    return candidates.map((candidate) =>
-        "selector" in candidate
-            ? candidate.selector
-            : "name" in candidate
-              ? `${candidate.role} ${candidate.name}`
-              : "text" in candidate
-                ? candidate.text
-                : "",
-    );
+/** The text of a candidate that can carry an input template. */
+function candidateText(candidate: LocatorCandidate): string {
+    switch (candidate.kind) {
+        case "css":
+            return candidate.selector;
+        case "role":
+            return `${candidate.role} ${candidate.name}`;
+        case "label":
+        case "text":
+            return candidate.text;
+        case "relative":
+            return "";
+    }
 }
 
-function boundNames(source: string): readonly string[] {
+function inputNamesIn(source: string): readonly string[] {
     return [...source.matchAll(/\{\{input\.([A-Za-z0-9_]+)\}\}/g)].map(
         (match) => match[1] ?? "",
     );
