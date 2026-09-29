@@ -1,15 +1,3 @@
-import { createHash } from "node:crypto";
-
-import type {
-    ActionRisk,
-    ActionResult,
-    Observation,
-    SurfaceAction,
-} from "../surfaces/surface-driver.js";
-import type { PolicyDecision } from "../runtime/policy.js";
-import type { ControlLeaseState } from "../intervention/control-lease.js";
-import type { InterventionRequest } from "../intervention/request.js";
-
 /**
  * The event ledger: the only account of what actually happened.
  *
@@ -28,6 +16,20 @@ import type { InterventionRequest } from "../intervention/request.js";
  * observation event, the command it received, and the launcher-sealed session
  * nonce — so a controller cannot author its own attestation.
  */
+
+import { createHash } from "node:crypto";
+
+import type { ControlLeaseState } from "../intervention/control-lease.js";
+import type { InterventionRequest } from "../intervention/request.js";
+import type { ResumeDecision } from "../intervention/resume.js";
+import type { PolicyDecision } from "../runtime/policy.js";
+import type {
+    ActionRisk,
+    ActionResult,
+    Observation,
+    SurfaceAction,
+} from "../surfaces/surface-driver.js";
+import type { RunOutcome } from "./run-recorder.js";
 
 /**
  * Harness-computed binding of one model decision to the observation it followed.
@@ -121,10 +123,7 @@ export type RunEvent =
           type: "resume-validated";
           recordedAt: string;
           observation: Observation;
-          decision: Exclude<
-              import("../intervention/resume.js").ResumeDecision,
-              { type: "reject" }
-          >;
+          decision: Exclude<ResumeDecision, { type: "reject" }>;
       }
     | {
           type: "resume-rejected";
@@ -141,7 +140,7 @@ export type RunEvent =
     | {
           type: "terminal";
           recordedAt: string;
-          outcome: import("./run-recorder.js").RunOutcome;
+          outcome: RunOutcome;
       };
 
 /**
