@@ -1,9 +1,3 @@
-import { cp, lstat, mkdir, readFile, stat } from "node:fs/promises";
-import { join } from "node:path";
-
-import { validateRunAttestation } from "./run-recorder.js";
-import { isNodeError } from "../common/errors.js";
-
 /**
  * Promoting scratch runs into the committed evidence set.
  *
@@ -13,9 +7,28 @@ import { isNodeError } from "../common/errors.js";
  * is overwritten, so what is committed stays a deliberate selection rather than
  * a directory dump of whatever happened to run.
  *
- * Validation covers every requested run before the first copy begins, so a bad
- * request fails without leaving evidence half-promoted.
+ * INVARIANTS
+ * - Every requested run is validated before the first copy begins, so a bad
+ *   request fails without leaving evidence half-promoted.
+ * - A run finalized as `sensitive-evidence-detected` is never promoted.
+ * - A run's producer seal and receipt chain must replay through
+ *   `validateRunAttestation`.
  */
+
+import { cp, lstat, mkdir, readFile, stat } from "node:fs/promises";
+import { join } from "node:path";
+
+import { isNodeError } from "../common/errors.js";
+import { validateRunAttestation } from "./run-recorder.js";
+
+const RUN_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
+
+const REQUIRED_RUN_FILES = [
+    "README.md",
+    "run.json",
+    "events.jsonl",
+    "trace.zip",
+] as const;
 
 export interface PromoteRunsOptions {
     runsDirectory: string;
@@ -30,14 +43,6 @@ export interface PromotedRun {
     sourceDirectory: string;
     evidenceDirectory: string;
 }
-
-const RUN_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
-const REQUIRED_RUN_FILES = [
-    "README.md",
-    "run.json",
-    "events.jsonl",
-    "trace.zip",
-] as const;
 
 /**
  * Copy finalized runs into the evidence directory.
@@ -59,7 +64,9 @@ export async function promoteRuns(
     const candidates: PromotedRun[] = [];
     const seen = new Set<string>();
     for (const runId of options.runIds) {
-        validateRunId(runId);
+        if (!RUN_ID_PATTERN.test(runId)) {
+            throw new Error(`Invalid run ID: ${runId}`);
+        }
         if (seen.has(runId)) {
             throw new Error(`Run ${runId} was requested more than once`);
         }
@@ -67,7 +74,7 @@ export async function promoteRuns(
 
         const sourceDirectory = join(options.runsDirectory, runId);
         const destinationDirectory = join(evidenceRunsDirectory, runId);
-        const status = await validateCompletedRun(sourceDirectory, runId);
+        const status = await requirePromotableStatus(sourceDirectory, runId);
 
         if (await pathExists(destinationDirectory)) {
             throw new Error(`Evidence run ${runId} already exists`);
@@ -90,7 +97,8 @@ export async function promoteRuns(
     return candidates;
 }
 
-async function validateCompletedRun(
+/** The finalized status of a run that may be promoted, or a thrown refusal. */
+async function requirePromotableStatus(
     sourceDirectory: string,
     expectedRunId: string,
 ): Promise<"satisfied" | "error"> {
@@ -104,9 +112,10 @@ async function validateCompletedRun(
     if (manifest.status !== "satisfied" && manifest.status !== "error") {
         throw new Error(`Run ${expectedRunId} is not finalized`);
     }
-
-    const outcome = manifest.outcome;
-    if (manifest.status === "error" && isSensitiveEvidenceOutcome(outcome)) {
+    if (
+        manifest.status === "error" &&
+        isSensitiveEvidenceOutcome(manifest.outcome)
+    ) {
         throw new Error(
             `Run ${expectedRunId} has terminal outcome sensitive-evidence-detected and cannot be promoted`,
         );
@@ -127,28 +136,20 @@ async function validateCompletedRun(
     return manifest.status;
 }
 
-function isSensitiveEvidenceOutcome(value: unknown): boolean {
-    if (value === null || typeof value !== "object" || Array.isArray(value)) {
-        return false;
-    }
-    return (
-        (value as Record<string, unknown>).code ===
-        "sensitive-evidence-detected"
-    );
-}
-
 function parseManifest(source: string): Record<string, unknown> {
     const value: unknown = JSON.parse(source);
-    if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    if (!isRecord(value)) {
         throw new Error("Run manifest must be a JSON object");
     }
-    return value as Record<string, unknown>;
+    return value;
 }
 
-function validateRunId(runId: string): void {
-    if (!RUN_ID_PATTERN.test(runId)) {
-        throw new Error(`Invalid run ID: ${runId}`);
-    }
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function isSensitiveEvidenceOutcome(value: unknown): boolean {
+    return isRecord(value) && value.code === "sensitive-evidence-detected";
 }
 
 async function pathExists(path: string): Promise<boolean> {
