@@ -1,6 +1,13 @@
 #!/bin/sh
 set -eu
 
+# Capture the LedgerSMB pilot runs end to end from a fresh install.
+# Usage: scripts/capture-ledgersmb-end-to-end
+#
+# Rebuilds, replaces the default LedgerSMB instance with a clean one, then runs
+# the initialize, partners, catalog, and lifecycle pilots in that order. Each
+# pilot depends on the state the previous one left behind.
+
 project_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$project_dir"
 
