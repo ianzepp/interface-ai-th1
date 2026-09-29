@@ -40,7 +40,7 @@ import {
     runCodexSessionWithCapture,
     type CodexRunStatus,
 } from "./codex-run.js";
-import { parseFlags, requireFlag, requireNumberFlag } from "./flag-args.js";
+import { parseFlags, requireFlag, readNumberFlag } from "./flag-args.js";
 import {
     attestDiscoveryRuns,
     type HostProducerAttestation,
@@ -78,9 +78,9 @@ async function main(): Promise<void> {
     const target = requireFlag(flags, "target");
     const fixtureName = requireFlag(flags, "fixture");
     const lane = flags.get("lane") ?? `author-${String(Date.now())}`;
-    const maxRuns = requireNumberFlag(flags, "max-runs", 12);
-    const maxActions = requireNumberFlag(flags, "max-actions", 60);
-    const timeoutMs = requireNumberFlag(flags, "timeout", 3_600_000);
+    const maxRuns = readNumberFlag(flags, "max-runs", 12);
+    const maxActions = readNumberFlag(flags, "max-actions", 60);
+    const timeoutMs = readNumberFlag(flags, "timeout", 3_600_000);
     const fixtureId = `${target}/${fixtureName}`;
     const repoRoot = process.cwd();
 

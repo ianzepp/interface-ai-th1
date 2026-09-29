@@ -34,7 +34,7 @@ import type {
     SurfaceAction,
     TargetDescriptor,
 } from "../surfaces/surface-driver.js";
-import { parseFlags, requireFlag, requireNumberFlag } from "./flag-args.js";
+import { parseFlags, requireFlag, readNumberFlag } from "./flag-args.js";
 import type { SessionCommand } from "./interactive-playwright-session.js";
 import { requestSessionControl } from "./session-control.js";
 import {
@@ -187,7 +187,7 @@ async function start(flags: Map<string, string>): Promise<void> {
     child.unref();
     await log.close();
 
-    const timeoutMs = requireNumberFlag(flags, "timeout", 240_000);
+    const timeoutMs = readNumberFlag(flags, "timeout", 240_000);
     const state = await waitForValue(
         () => readSessionState(statePath),
         timeoutMs,
@@ -475,7 +475,7 @@ function parseRisk(flags: Map<string, string>): ActionRisk {
  */
 async function waitForControl(flags: Map<string, string>): Promise<void> {
     const statePath = resolveSessionStatePath(flags.get("lane"));
-    const timeoutMs = requireNumberFlag(flags, "timeout", 600_000);
+    const timeoutMs = readNumberFlag(flags, "timeout", 600_000);
     const state = await waitForValue(async () => {
         const current = await readSessionState(statePath);
         if (current === null) return { gone: true as const };

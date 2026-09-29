@@ -2,10 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-    hasFlag,
     parseFlags,
     requireFlag,
-    requireNumberFlag,
+    readNumberFlag,
 } from "../src/authoring/flag-args.js";
 
 test("keys are bare, without the dashes the caller typed", () => {
@@ -22,7 +21,7 @@ test("keys are bare, without the dashes the caller typed", () => {
 test("a flag with no value is a switch", () => {
     const flags = parseFlags(["--screenshot", "--lane", "a"]);
 
-    assert.equal(hasFlag(flags, "screenshot"), true);
+    assert.equal(flags.has("screenshot"), true);
     assert.equal(flags.get("screenshot"), "true");
     assert.equal(flags.get("lane"), "a");
 });
@@ -45,24 +44,16 @@ test("reports which required flag is missing", () => {
     assert.throws(() => requireFlag(flags, "target"), /--target is required/);
 });
 
-test("reads a required flag from a different map when asked", () => {
-    const flags = parseFlags(["--goal", "g"]);
-    const target = parseFlags(["--role", "button", "--name", "Create"]);
-
-    assert.equal(requireFlag(flags, "role", target), "button");
-    assert.throws(() => requireFlag(flags, "role"), /--role is required/);
-});
-
 test("rejects a numeric flag that is not a number", () => {
     const flags = parseFlags(["--max-runs", "lots"]);
 
-    assert.equal(requireNumberFlag(flags, "missing", 4), 4);
+    assert.equal(readNumberFlag(flags, "missing", 4), 4);
     assert.equal(
-        requireNumberFlag(parseFlags(["--max-runs", "3"]), "max-runs", 4),
+        readNumberFlag(parseFlags(["--max-runs", "3"]), "max-runs", 4),
         3,
     );
     assert.throws(
-        () => requireNumberFlag(flags, "max-runs", 4),
+        () => readNumberFlag(flags, "max-runs", 4),
         /must be a number/,
     );
 });

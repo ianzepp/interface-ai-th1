@@ -40,35 +40,15 @@ export function parseFlags(argv: readonly string[]): Map<string, string> {
     return parsed;
 }
 
-/** The value of a flag, or `undefined` when it was not given. */
-export function flagValue(
-    flags: Map<string, string>,
-    name: string,
-): string | undefined {
-    return flags.get(name);
-}
-
-/** Whether a flag or switch was given. */
-export function hasFlag(flags: Map<string, string>, name: string): boolean {
-    return flags.has(name);
-}
-
-/**
- * Read a required flag, or explain which one is missing. When `options` is
- * given, the flag is read from it instead of `flags`.
- */
-export function requireFlag(
-    flags: Map<string, string>,
-    name: string,
-    options: Map<string, string> = flags,
-): string {
-    const value = options.get(name);
+/** Read a required flag, or explain which one is missing. */
+export function requireFlag(flags: Map<string, string>, name: string): string {
+    const value = flags.get(name);
     if (value === undefined) throw new Error(`--${name} is required`);
     return value;
 }
 
 /** Read an optional numeric flag with a fallback, rejecting a non-number. */
-export function requireNumberFlag(
+export function readNumberFlag(
     flags: Map<string, string>,
     name: string,
     fallback: number,
