@@ -1,13 +1,24 @@
+/**
+ * The published schemas, as the authority the code must satisfy.
+ *
+ * The direction is schema-first. A schema derived from the types would be a
+ * mirror: it could never say the types are wrong, and it would inherit
+ * weaknesses such as a stage definition that constrains field names but not
+ * the vocabulary inside them. Artifacts and promoted replay results are
+ * checked as they exist in the repository, and the invocation fixture mirrors
+ * the real replay's typed input, so the engine and schema boundary are checked
+ * together.
+ */
+
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
-import { readdir } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { join } from "node:path";
 import test from "node:test";
 
-import { createRequire } from "node:module";
-
 import { Ajv2020 } from "ajv/dist/2020.js";
 
+import { loadCapabilityArtifacts } from "../src/audit/artifact-catalog.js";
 import { dolibarrThirdPartyLookupArtifact } from "../src/capabilities/dolibarr-third-party-lookup.js";
 import {
     DeterministicEngine,
@@ -16,29 +27,6 @@ import {
 import { ArtifactPolicy } from "../src/runtime/policy.js";
 import type { RunResult } from "../src/runtime/result.js";
 import type { SurfaceDriver } from "../src/surfaces/surface-driver.js";
-import { loadCapabilityArtifacts } from "../src/audit/artifact-catalog.js";
-
-/**
- * The published schemas, as the authority the code must satisfy.
- *
- * These schemas were written first and then drifted, because nothing checked
- * anything against them: the only test touching them asserted that `$schema` and
- * `$id` existed. Meanwhile the real contract lived in the TypeScript types, which
- * the compiler enforces, and in the audit rubric, which the test suite enforces.
- * So the artifact contract had three written forms and the published one was the
- * only one nothing obeyed.
- *
- * The direction is deliberately schema-first. Deriving the schema from the types
- * would make it a mirror: it could never say the types are wrong, and it would
- * inherit weaknesses such as a stage definition that constrains field names but
- * not the vocabulary inside them. Authoring the schema means the contract is
- * designed rather than inherited, and the types are then the compiler's
- * expression of it.
- *
- * Artifacts and promoted replay results are checked as they exist in the
- * repository. The invocation fixture below mirrors the real replay's typed
- * input, so the engine and schema boundary are checked together.
- */
 
 const repositoryRoot = join(import.meta.dirname, "..", "..");
 
@@ -54,7 +42,7 @@ const schemaFiles = [
     "result.schema.json",
 ];
 
-function compiler(): Ajv2020 {
+function createCompiler(): Ajv2020 {
     const ajv = new Ajv2020({ allErrors: true });
     addFormats(ajv);
     return ajv;
@@ -90,7 +78,7 @@ for (const schemaFile of schemaFiles) {
 }
 
 test("every committed artifact satisfies the published capability schema", async () => {
-    const ajv = compiler();
+    const ajv = createCompiler();
     const validate = ajv.compile(await loadSchema("capability.schema.json"));
     const entries = await loadCapabilityArtifacts(repositoryRoot);
 
@@ -112,7 +100,7 @@ test("every committed artifact satisfies the published capability schema", async
 });
 
 test("the intervention invocation fixture satisfies the published invocation schema", async () => {
-    const ajv = compiler();
+    const ajv = createCompiler();
     const validate = ajv.compile(await loadSchema("invocation.schema.json"));
 
     assert.equal(
@@ -123,7 +111,7 @@ test("the intervention invocation fixture satisfies the published invocation sch
 });
 
 test("every promoted replay result satisfies the published result schema", async () => {
-    const ajv = compiler();
+    const ajv = createCompiler();
     const validate = ajv.compile(await loadSchema("result.schema.json"));
     const runsDirectory = join(repositoryRoot, "evidence", "runs");
 
@@ -157,7 +145,7 @@ test("every promoted replay result satisfies the published result schema", async
 });
 
 test("the engine intervention result remains typed and schema-valid", async () => {
-    const ajv = compiler();
+    const ajv = createCompiler();
     const validate = ajv.compile(await loadSchema("result.schema.json"));
     const result: RunResult = await new DeterministicEngine(
         authenticationRequiredDriver(),
@@ -210,16 +198,12 @@ function authenticationRequiredDriver(): SurfaceDriver {
 }
 
 test("the published schemas admit declared recovery evidence without requiring it historically", async () => {
-    const ajv = compiler();
+    const ajv = createCompiler();
     const capabilitySchema = ajv.compile(
         await loadSchema("capability.schema.json"),
     );
     const resultSchema = ajv.compile(await loadSchema("result.schema.json"));
-    const artifact = JSON.parse(
-        JSON.stringify(dolibarrThirdPartyLookupArtifact),
-    ) as {
-        stages: { transitions: Record<string, unknown>[] }[];
-    };
+    const artifact = structuredClone(dolibarrThirdPartyLookupArtifact);
     const transition = artifact.stages[0]?.transitions[0];
     assert.ok(transition);
     transition.recovery = {

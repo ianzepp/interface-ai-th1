@@ -1,64 +1,53 @@
 /**
  * Reviewed capability: look up a Dolibarr third party by exact name.
  *
- * This is the second vertical slice, and its job is to prove the architecture is
- * not secretly LedgerSMB-shaped. The interesting difference is that this
- * capability has real business outcomes and a real intervention branch, so it is
- * the artifact that shows runtime conditions being detected and routed rather
- * than reported as crashes.
- *
- * The corpus behind it, named in `provenance`, contains repeated successful
- * lookups, a no-match run, a duplicate-match run, a run redirected to login, and
- * one useful failed replay. Review over that corpus is what produced the four
- * branches below, not any automatic synthesis.
+ * Unlike the LedgerSMB initialization, this graph has business outcomes and an
+ * intervention branch, so runtime conditions are detected and routed rather
+ * than reported as crashes. Its branches came from reviewing the runs named in
+ * `provenance`: successful lookups, a no-match, a duplicate match, a redirect
+ * to login, and one failed replay.
  *
  * DESIGN NOTES
  * - Exact name is the whole contract. Two exact matches amid several substring
  *   results is genuinely ambiguous, so `third-party-ambiguous` is a business
- *   outcome rather than a first-match win. The discovery corpus contains that
- *   case precisely to prove first-match selection would be unsafe.
- * - Cardinality is decided by counting the name element, so `uniqueMatch` and
- *   `ambiguousMatch` are two readings of one observation rather than two
- *   independent checks that could disagree. `noMatch` stays a separate detector
- *   because it is recognized from the application's own empty-list message, which
- *   is a different kind of evidence than a count.
- * - `dolibarrAuthenticationRequired` comes from the target profile, not this
- *   file, because a lost session is a property of the application. Every stage
- *   that touches a protected route lists it.
- * - The extraction selectors are structural and therefore the weakest locators in
- *   the repository. They are the reviewed result for a card whose fields have no
- *   test identifiers, and they are the first thing to re-verify on a version bump.
+ *   outcome rather than a first-match win.
+ * - `uniqueMatch` and `ambiguousMatch` count the same name target, so they are
+ *   two readings of one observation and cannot disagree. `noMatch` stays a
+ *   separate detector because it reads the application's own empty-list
+ *   message, which is different evidence than a count.
+ * - `dolibarrAuthenticationRequired` comes from the target profile because a
+ *   lost session is a property of the application. Every stage that touches a
+ *   protected route lists it.
+ * - The extraction selectors are structural, the weakest locators in this
+ *   artifact. The profile card's fields have no test identifiers; these are the
+ *   first thing to re-verify on a version bump.
  *
  * LIMITS
- * - No pagination branch. The count detectors read the rendered result set, so a
- *   name whose matches span pages is not currently distinguishable from a single
- *   match.
- * - The extraction targets read display text, so a change in how Dolibarr formats
- *   a code or a currency changes the output without changing the outcome.
+ * - No pagination branch. The count detectors read the rendered result set, so
+ *   matches spanning pages are not distinguishable from a single match.
+ * - Extractions read display text, so a change in how Dolibarr formats a code
+ *   or a currency changes the output without changing the outcome.
  */
 
 import type {
     CapabilityArtifact,
     CapabilityStage,
+    StageDestination,
+    StageTransition,
 } from "../runtime/state-machine.js";
-import { dolibarrAuthenticationRequired } from "../targets/dolibarr/detectors.js";
 import type {
+    ExtractionSpec,
     StateDetector,
     TargetDescriptor,
 } from "../surfaces/surface-driver.js";
+import { dolibarrAuthenticationRequired } from "../targets/dolibarr/detectors.js";
 
 const nameTarget: TargetDescriptor = {
     candidates: [{ kind: "text", text: "{{input.name}}", exact: true }],
     require: "exactly-one",
 };
-const searchInput: TargetDescriptor = {
-    candidates: [{ kind: "css", selector: 'input[name="search_nom"]' }],
-    require: "exactly-one",
-};
-const searchButton: TargetDescriptor = {
-    candidates: [{ kind: "css", selector: 'button[name="button_search_x"]' }],
-    require: "exactly-one",
-};
+const searchInput = cssTarget('input[name="search_nom"]');
+const searchButton = cssTarget('button[name="button_search_x"]');
 
 const searchReady = countDetector(
     "dolibarr-third-party-search-ready",
@@ -230,12 +219,7 @@ function buildStages(): CapabilityStage[] {
                 "Extract the requested fields from the recognized profile card.",
             risk: "safe",
             detectors: [profileVisible],
-            transitions: [
-                transition(profileVisible.id, {
-                    type: "terminal",
-                    outcome: { type: "success" },
-                }),
-            ],
+            transitions: [transition(profileVisible.id, success())],
             otherwise: failure("profile-no-longer-visible"),
             extractions: [
                 extraction("name", "div.refid > span.valignmiddle"),
@@ -261,6 +245,10 @@ function buildStages(): CapabilityStage[] {
     ];
 }
 
+function cssTarget(selector: string): TargetDescriptor {
+    return { candidates: [{ kind: "css", selector }], require: "exactly-one" };
+}
+
 function countDetector(
     id: string,
     target: TargetDescriptor,
@@ -275,39 +263,36 @@ function countDetector(
     };
 }
 
-function extraction(name: string, selector: string) {
-    return {
-        name,
-        type: "string" as const,
-        target: {
-            candidates: [{ kind: "css" as const, selector }],
-            require: "exactly-one" as const,
-        },
-    };
-}
-
 function transition(
     detectorId: string,
-    destination: CapabilityStage["otherwise"],
-) {
+    destination: StageDestination,
+): StageTransition {
     return { detectorId, destination };
 }
 
-function stage(stageId: string): CapabilityStage["otherwise"] {
+function stage(stageId: string): StageDestination {
     return { type: "stage", stageId };
 }
 
-function business(code: string): CapabilityStage["otherwise"] {
+function success(): StageDestination {
+    return { type: "terminal", outcome: { type: "success" } };
+}
+
+function business(code: string): StageDestination {
     return { type: "terminal", outcome: { type: "business-outcome", code } };
 }
 
-function intervention(code: string): CapabilityStage["otherwise"] {
+function intervention(code: string): StageDestination {
     return {
         type: "terminal",
         outcome: { type: "intervention-required", code },
     };
 }
 
-function failure(code: string): CapabilityStage["otherwise"] {
+function failure(code: string): StageDestination {
     return { type: "terminal", outcome: { type: "failure", code } };
+}
+
+function extraction(name: string, selector: string): ExtractionSpec {
+    return { name, type: "string", target: cssTarget(selector) };
 }
