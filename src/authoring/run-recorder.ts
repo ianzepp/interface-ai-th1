@@ -1,40 +1,14 @@
-import { createHash, randomUUID } from "node:crypto";
-import {
-    appendFile,
-    mkdir,
-    readFile,
-    readdir,
-    writeFile,
-} from "node:fs/promises";
-import { join } from "node:path";
-
-import type {
-    ActionRisk,
-    EvidenceReference,
-    Observation,
-    SurfaceAction,
-} from "../surfaces/surface-driver.js";
-import type { ControlLeaseState } from "../intervention/control-lease.js";
-import type { InterventionRequest } from "../intervention/request.js";
-import type {
-    DecisionReceipt,
-    RunEvent,
-    EventIdentity,
-    EventRecorder,
-} from "./event-recorder.js";
-import { redactKnownSecrets } from "./redaction.js";
-import type { CodexRunStatus } from "./codex-run.js";
-
 /**
- * The on-disk unit of discovery evidence: one directory per test run.
+ * The on-disk unit of discovery evidence: one directory per run.
  *
  * A run directory has to be reviewable without the process that produced it, so
- * it carries the run in four files:
+ * it carries the run in these files:
  *
- * - `run.json` — goal, situation, target, fixture, and outcome
+ * - `run.json` — goal, situation, target, fixture, producer, and outcome
  * - `events.jsonl` — the sanitized ledger, one event per line
  * - `README.md` — those facts rendered for a person
  * - `trace.zip` — the Playwright trace, when capture completed
+ * - `screenshots/` — checkpoint or terminal screenshots, when captured
  *
  * INVARIANTS
  * - Events are redacted on the way in. The ledger is append-only, so redacting
@@ -48,7 +22,43 @@ import type { CodexRunStatus } from "./codex-run.js";
  *   receipt-bearing event is refused without a sealed producer record, so
  *   controller-supplied producer metadata can never reach the ledger or the
  *   manifest.
+ * - The recorder and `validateRunAttestation` build the event chain, the
+ *   receipt chain, and their genesis values through the same helpers, and the
+ *   manifest, ledger, and README bytes are an on-disk contract that committed
+ *   evidence depends on.
  */
+
+import { createHash, randomUUID } from "node:crypto";
+import {
+    appendFile,
+    mkdir,
+    readFile,
+    readdir,
+    writeFile,
+} from "node:fs/promises";
+import { join } from "node:path";
+
+import type { ControlLeaseState } from "../intervention/control-lease.js";
+import type { InterventionRequest } from "../intervention/request.js";
+import type { ResumeDecision } from "../intervention/resume.js";
+import type {
+    ActionRisk,
+    EvidenceReference,
+    Observation,
+    SurfaceAction,
+} from "../surfaces/surface-driver.js";
+import type { CodexRunStatus } from "./codex-run.js";
+import type {
+    DecisionReceipt,
+    EventIdentity,
+    EventRecorder,
+    RunEvent,
+} from "./event-recorder.js";
+import { redactKnownSecrets } from "./redaction.js";
+
+const RUN_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
+
+const SHA256_HEX_PATTERN = /^[0-9a-f]{64}$/;
 
 /** What a run needs to identify itself before it starts. */
 export interface RunStart {
@@ -102,6 +112,7 @@ export interface ProducerRecord {
     hostExitCode?: number | null;
 }
 
+/** What an external host reported once its captured event stream closed. */
 export interface HostProducerAttestation {
     sessionNonce: string;
     sessionId: string | null;
@@ -156,43 +167,55 @@ export interface RunManifest {
     };
 }
 
-const RUN_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
+type DecisionEvent = Extract<
+    RunEvent,
+    { type: "proposal" } | { type: "decision-rejected" }
+>;
 
+// --- Recorder ---------------------------------------------------------------
+
+/** The durable event ledger: one run directory, written as the run happens. */
 export class FileRunRecorder implements EventRecorder {
+    public readonly manifestPath: string;
+    public readonly eventsPath: string;
+    public readonly readmePath: string;
+    public readonly tracePath: string;
+    readonly #manifest: RunManifest;
+    readonly #producer: ProducerRecord | undefined;
     readonly #now: () => string;
+    readonly #sensitiveInputValues: readonly string[];
     #finalized = false;
     #writeQueue: Promise<void> = Promise.resolve();
-    readonly #producer: ProducerRecord | undefined;
-    readonly #sensitiveInputValues: readonly string[];
     #eventChainHash: string;
     #receiptChainHash: string;
     #eventSequence = 0;
     #receiptCount = 0;
     #lastObservation: EventIdentity | null = null;
-    #pendingDecision: {
-        action: SurfaceAction;
-        rationale: string;
-        receipt: DecisionReceipt;
-    } | null = null;
+    /** The sealed receipt of the proposal an executed action must match. */
+    #pendingReceipt: DecisionReceipt | null = null;
 
     private constructor(
         public readonly directory: string,
-        public readonly manifestPath: string,
-        public readonly eventsPath: string,
-        public readonly readmePath: string,
-        public readonly tracePath: string,
-        private readonly manifest: RunManifest,
-        producer: ProducerRecord | undefined,
-        eventChainGenesis: string,
-        receiptChainGenesis: string,
+        manifest: RunManifest,
         now: () => string,
         sensitiveInputValues: readonly string[],
     ) {
+        this.manifestPath = join(directory, "run.json");
+        this.eventsPath = join(directory, manifest.files.events);
+        this.readmePath = join(directory, manifest.files.readme);
+        this.tracePath = join(directory, manifest.files.trace);
+        this.#manifest = manifest;
+        this.#producer = manifest.producer;
         this.#now = now;
         this.#sensitiveInputValues = sensitiveInputValues;
-        this.#producer = producer;
-        this.#eventChainHash = eventChainGenesis;
-        this.#receiptChainHash = receiptChainGenesis;
+        this.#eventChainHash = eventChainGenesis(
+            manifest.runId,
+            manifest.startedAt,
+        );
+        this.#receiptChainHash = receiptChainGenesis(
+            manifest.runId,
+            manifest.producer?.sessionNonce ?? "unsealed",
+        );
     }
 
     /**
@@ -236,26 +259,13 @@ export class FileRunRecorder implements EventRecorder {
         };
         const recorder = new FileRunRecorder(
             directory,
-            join(directory, "run.json"),
-            join(directory, manifest.files.events),
-            join(directory, manifest.files.readme),
-            join(directory, manifest.files.trace),
             manifest,
-            options.producer,
-            createHash("sha256")
-                .update(`events:${runId}:${startedAt}`)
-                .digest("hex"),
-            createHash("sha256")
-                .update(
-                    `decision-receipts:${runId}:${options.producer?.sessionNonce ?? "unsealed"}`,
-                )
-                .digest("hex"),
             now,
             options.sensitiveInputValues ?? [],
         );
 
         await writeFile(recorder.eventsPath, "", { flag: "wx" });
-        await recorder.writeSummaryFiles();
+        await recorder.#writeSummaryFiles();
         return recorder;
     }
 
@@ -270,19 +280,17 @@ export class FileRunRecorder implements EventRecorder {
     public append(event: RunEvent): Promise<EventIdentity> {
         if (this.#finalized) {
             return Promise.reject(
-                new Error(`Run ${this.manifest.runId} is already finalized`),
+                new Error(`Run ${this.#manifest.runId} is already finalized`),
             );
         }
 
-        const appended = this.#writeQueue.then(() => {
-            const identity = this.#appendSerialized(event);
-            return appendFile(
+        const appended = this.#writeQueue.then(async () => {
+            const sealed = this.#sealEvent(event);
+            await appendFile(
                 this.eventsPath,
-                `${JSON.stringify(identity.event)}\n`,
-            ).then(() => ({
-                sequence: identity.sequence,
-                hash: identity.hash,
-            }));
+                `${JSON.stringify(sealed.event)}\n`,
+            );
+            return { sequence: sealed.sequence, hash: sealed.hash };
         });
         // The caller sees the rejection; the queue itself proceeds, so one
         // refused event cannot poison the appends behind it or sit unhandled.
@@ -309,7 +317,7 @@ export class FileRunRecorder implements EventRecorder {
     }): DecisionReceipt {
         if (this.#producer === undefined) {
             throw new Error(
-                `Run ${this.manifest.runId} has no sealed producer record; decisions cannot be attested`,
+                `Run ${this.#manifest.runId} has no sealed producer record; decisions cannot be attested`,
             );
         }
         const prior = this.#lastObservation;
@@ -317,15 +325,7 @@ export class FileRunRecorder implements EventRecorder {
             sessionNonce: this.#producer.sessionNonce,
             priorObservationSequence: prior?.sequence ?? null,
             priorObservationHash: prior?.hash ?? null,
-            commandHash: createHash("sha256")
-                .update(
-                    JSON.stringify({
-                        action: command.action,
-                        risk: command.risk,
-                        rationale: command.rationale,
-                    }),
-                )
-                .digest("hex"),
+            commandHash: hashDecisionCommand(command),
             sequence: -1,
             receiptHash: "",
         };
@@ -333,11 +333,7 @@ export class FileRunRecorder implements EventRecorder {
 
     public async readAll(): Promise<readonly RunEvent[]> {
         await this.#writeQueue;
-        const source = await readFile(this.eventsPath, "utf8");
-        if (source.trim() === "") {
-            return [];
-        }
-        return source.trimEnd().split("\n").map(parseRunEventLine);
+        return parseEventLedger(await readFile(this.eventsPath, "utf8"));
     }
 
     /**
@@ -348,25 +344,29 @@ export class FileRunRecorder implements EventRecorder {
      */
     public async finalize(outcome: RunOutcome): Promise<void> {
         if (this.#finalized) {
-            throw new Error(`Run ${this.manifest.runId} is already finalized`);
+            throw new Error(`Run ${this.#manifest.runId} is already finalized`);
         }
         this.#finalized = true;
         await this.#writeQueue;
 
-        this.manifest.status = outcome.status;
-        this.manifest.finishedAt = this.#now();
-        this.manifest.outcome = outcome;
+        this.#manifest.status = outcome.status;
+        this.#manifest.finishedAt = this.#now();
+        this.#manifest.outcome = outcome;
         if (this.#producer !== undefined) {
-            this.manifest.decisionReceipts = {
+            this.#manifest.decisionReceipts = {
                 count: this.#receiptCount,
                 digest: this.#receiptChainHash,
             };
         }
-        await this.writeSummaryFiles();
+        await this.#writeSummaryFiles();
     }
 
-    /** Runs inside the write queue, so chain state advances in arrival order. */
-    #appendSerialized(event: RunEvent): {
+    /**
+     * Redact an event and advance the chains over it.
+     *
+     * Runs inside the write queue, so chain state advances in arrival order.
+     */
+    #sealEvent(event: RunEvent): {
         sequence: number;
         hash: string;
         event: RunEvent;
@@ -375,39 +375,9 @@ export class FileRunRecorder implements EventRecorder {
             event,
             this.#sensitiveInputValues,
         ) as RunEvent;
-        if (clean.type === "proposal") {
-            const receipt = this.#sealReceipt(clean.receipt);
-            clean.receipt = receipt;
-            this.#pendingDecision = {
-                action: clean.action,
-                rationale: clean.rationale,
-                receipt,
-            };
-            this.#receiptCount += 1;
-        } else if (clean.type === "decision-rejected") {
-            clean.receipt = this.#sealReceipt(clean.receipt);
-            this.#pendingDecision = null;
-            this.#receiptCount += 1;
-        } else if (clean.type === "action") {
-            if (clean.receipt !== undefined) {
-                const pending = this.#pendingDecision;
-                if (
-                    pending?.receipt.commandHash !== clean.receipt.commandHash
-                ) {
-                    throw new Error(
-                        `Run ${this.manifest.runId} action receipt has no matching proposal`,
-                    );
-                }
-                clean.receipt = pending.receipt;
-            }
-            this.#pendingDecision = null;
-        }
+        this.#bindReceipt(clean);
         const sequence = this.#eventSequence;
-        const hash = createHash("sha256")
-            .update(
-                `${this.#eventChainHash}|${String(sequence)}|${JSON.stringify(clean)}`,
-            )
-            .digest("hex");
+        const hash = hashEvent(this.#eventChainHash, sequence, clean);
         this.#eventChainHash = hash;
         this.#eventSequence = sequence + 1;
         if (clean.type === "observation") {
@@ -416,56 +386,82 @@ export class FileRunRecorder implements EventRecorder {
         return { sequence, hash, event: clean };
     }
 
+    /**
+     * Seal a decision's receipt, or check an executed action's receipt against
+     * the proposal it claims. Rewrites `event.receipt` in place.
+     */
+    #bindReceipt(event: RunEvent): void {
+        switch (event.type) {
+            case "proposal":
+                event.receipt = this.#sealReceipt(event.receipt);
+                this.#pendingReceipt = event.receipt;
+                return;
+            case "decision-rejected":
+                event.receipt = this.#sealReceipt(event.receipt);
+                this.#pendingReceipt = null;
+                return;
+            case "action":
+                if (event.receipt !== undefined) {
+                    // A refused action leaves the proposal pending, so the
+                    // matching action can still follow it.
+                    const pending = this.#pendingReceipt;
+                    if (pending?.commandHash !== event.receipt.commandHash) {
+                        throw new Error(
+                            `Run ${this.#manifest.runId} action receipt has no matching proposal`,
+                        );
+                    }
+                    event.receipt = pending;
+                }
+                this.#pendingReceipt = null;
+                return;
+            default:
+                return;
+        }
+    }
+
     #sealReceipt(receipt: DecisionReceipt): DecisionReceipt {
         if (this.#producer === undefined) {
             throw new Error(
-                `Run ${this.manifest.runId} has no sealed producer record; receipt-bearing events are refused`,
+                `Run ${this.#manifest.runId} has no sealed producer record; receipt-bearing events are refused`,
             );
         }
-        const sequence = this.#receiptCount;
         const core = {
             sessionNonce: this.#producer.sessionNonce,
             priorObservationSequence: receipt.priorObservationSequence,
             priorObservationHash: receipt.priorObservationHash,
             commandHash: receipt.commandHash,
-            sequence,
+            sequence: this.#receiptCount,
         };
-        const receiptHash = createHash("sha256")
-            .update(`${this.#receiptChainHash}|${JSON.stringify(core)}`)
-            .digest("hex");
-        this.#receiptChainHash = createHash("sha256")
-            .update(`${this.#receiptChainHash}|${receiptHash}`)
-            .digest("hex");
+        const receiptHash = hashReceipt(this.#receiptChainHash, core);
+        this.#receiptChainHash = advanceReceiptChain(
+            this.#receiptChainHash,
+            receiptHash,
+        );
+        this.#receiptCount += 1;
         return { ...core, receiptHash };
     }
 
-    private async writeSummaryFiles(): Promise<void> {
+    async #writeSummaryFiles(): Promise<void> {
+        const redacted = redactKnownSecrets(
+            this.#manifest,
+            this.#sensitiveInputValues,
+        ) as RunManifest;
         await writeFile(
             this.manifestPath,
-            `${JSON.stringify(redactKnownSecrets(this.manifest, this.#sensitiveInputValues), null, 2)}\n`,
+            `${JSON.stringify(redacted, null, 2)}\n`,
             "utf8",
         );
-        await writeFile(
-            this.readmePath,
-            renderReadme(
-                redactKnownSecrets(
-                    this.manifest,
-                    this.#sensitiveInputValues,
-                ) as RunManifest,
-            ),
-            "utf8",
-        );
+        await writeFile(this.readmePath, renderReadme(redacted), "utf8");
     }
 }
 
-/**
- * Verify the persisted producer and decision evidence before promotion.
- *
- * The recorder is the authority for the two genesis values and the receipt
- * construction. Replaying those calculations here makes a copied run prove the
- * same event and receipt history that the recorder wrote, rather than merely
- * carrying plausible metadata.
- */
+function createRunId(startedAt: string): string {
+    const timestamp = startedAt.replaceAll(/[^0-9]/g, "").slice(0, 17);
+    return `${timestamp}-${randomUUID().slice(0, 8)}`;
+}
+
+// --- Producer attestation ---------------------------------------------------
+
 /** Refuse a human seal where this process records LLM discovery decisions. */
 export function assertDiscoveryProducer(producer: ProducerRecord): void {
     if (producer.kind !== "external-llm") {
@@ -477,6 +473,7 @@ export function assertDiscoveryProducer(producer: ProducerRecord): void {
 
 /**
  * Fold one host stream attestation into every finalized run bearing its nonce.
+ *
  * The manifest, not a lane-local sidecar that promotion never reads, is the
  * reviewed record of what the host actually reported.
  */
@@ -489,14 +486,8 @@ export async function attestDiscoveryRuns(
     for (const entry of entries) {
         if (!entry.isDirectory() || !RUN_ID_PATTERN.test(entry.name)) continue;
         const manifestPath = join(rootDirectory, entry.name, "run.json");
-        let manifest: Record<string, unknown>;
-        try {
-            const parsed = parseJson(await readFile(manifestPath, "utf8"));
-            if (!isRecord(parsed)) continue;
-            manifest = parsed;
-        } catch {
-            continue;
-        }
+        const manifest = await readManifestRecord(manifestPath);
+        if (manifest === null) continue;
         const producer = manifest.producer;
         if (
             !isLauncherSealedProducer(producer) ||
@@ -524,6 +515,14 @@ export async function attestDiscoveryRuns(
     return attestedRunIds;
 }
 
+/**
+ * Verify the persisted producer and decision evidence before promotion.
+ *
+ * The recorder is the authority for the two genesis values and the receipt
+ * construction. Replaying those calculations here makes a copied run prove the
+ * same event and receipt history that the recorder wrote, rather than merely
+ * carrying plausible metadata.
+ */
 export function validateRunAttestation(
     manifest: Record<string, unknown>,
     eventsSource: string,
@@ -544,7 +543,6 @@ export function validateRunAttestation(
             `Run ${runId} has no valid launcher-sealed producer record`,
         );
     }
-    const unattested = `Run ${runId} has no valid launcher-sealed producer record; only a decision-free replay may omit one`;
     if (
         sealed &&
         producer.kind === "external-llm" &&
@@ -560,88 +558,175 @@ export function validateRunAttestation(
     // once and had its producer removed.
     const decisionReceipts = manifest.decisionReceipts;
     if (!sealed && decisionReceipts !== undefined) {
-        throw new Error(unattested);
+        throw unattestedRunError(runId);
     }
     if (sealed && !isDecisionReceiptSummary(decisionReceipts)) {
         throw new Error(`Run ${runId} has no valid decision receipt summary`);
     }
 
-    const events = parseEventLedger(eventsSource);
-    let eventChainHash = createHash("sha256")
-        .update(`events:${runId}:${startedAt}`)
-        .digest("hex");
-    const receiptNonce = sealed ? producer.sessionNonce : "unsealed";
-    let receiptChainHash = createHash("sha256")
-        .update(`decision-receipts:${runId}:${receiptNonce}`)
-        .digest("hex");
+    const replayed = replayEventLedger(
+        runId,
+        startedAt,
+        sealed ? producer.sessionNonce : null,
+        parseEventLedger(eventsSource),
+    );
 
+    if (!isDecisionReceiptSummary(decisionReceipts)) return;
+    if (replayed.count !== decisionReceipts.count) {
+        throw new Error(
+            `Run ${runId} receipt count does not match its manifest digest`,
+        );
+    }
+    if (replayed.digest !== decisionReceipts.digest) {
+        throw new Error(`Run ${runId} decision receipt digest does not match`);
+    }
+}
+
+/** The run manifest at `path` as a record, or null when unreadable. */
+async function readManifestRecord(
+    path: string,
+): Promise<Record<string, unknown> | null> {
+    try {
+        const parsed = parseJson(await readFile(path, "utf8"));
+        return isRecord(parsed) ? parsed : null;
+    } catch {
+        return null;
+    }
+}
+
+function isLauncherSealedProducer(value: unknown): value is ProducerRecord {
+    return (
+        isRecord(value) &&
+        (value.kind === "external-llm" || value.kind === "human") &&
+        typeof value.provider === "string" &&
+        value.provider !== "" &&
+        (typeof value.model === "string" || value.model === null) &&
+        typeof value.sessionNonce === "string" &&
+        value.sessionNonce !== "" &&
+        typeof value.sealPath === "string" &&
+        value.sealPath !== ""
+    );
+}
+
+function digestHostAttestation(attestation: HostProducerAttestation): string {
+    return sha256Hex(
+        JSON.stringify({
+            sessionNonce: attestation.sessionNonce,
+            sessionId: attestation.sessionId,
+            resolvedModel: attestation.resolvedModel,
+            streamDigest: attestation.streamDigest,
+            exitStatus: attestation.exitStatus,
+            exitCode: attestation.exitCode,
+        }),
+    );
+}
+
+function isHostAttestedProducer(producer: ProducerRecord): boolean {
+    return (
+        (typeof producer.hostSessionId === "string" ||
+            producer.hostSessionId === null) &&
+        typeof producer.streamDigest === "string" &&
+        SHA256_HEX_PATTERN.test(producer.streamDigest) &&
+        typeof producer.hostAttestationDigest === "string" &&
+        producer.hostAttestationDigest ===
+            digestHostAttestation({
+                sessionNonce: producer.sessionNonce,
+                sessionId: producer.hostSessionId,
+                resolvedModel: producer.model,
+                streamDigest: producer.streamDigest,
+                exitStatus: producer.hostExitStatus ?? "failed",
+                exitCode: producer.hostExitCode ?? null,
+            }) &&
+        (producer.hostExitStatus === "exited" ||
+            producer.hostExitStatus === "timeout" ||
+            producer.hostExitStatus === "failed") &&
+        (typeof producer.hostExitCode === "number" ||
+            producer.hostExitCode === null)
+    );
+}
+
+function unattestedRunError(runId: string): Error {
+    return new Error(
+        `Run ${runId} has no valid launcher-sealed producer record; only a decision-free replay may omit one`,
+    );
+}
+
+function isDecisionReceiptSummary(
+    value: unknown,
+): value is { count: number; digest: string } {
+    return (
+        isRecord(value) &&
+        typeof value.count === "number" &&
+        Number.isInteger(value.count) &&
+        value.count >= 0 &&
+        typeof value.digest === "string" &&
+        SHA256_HEX_PATTERN.test(value.digest)
+    );
+}
+
+/**
+ * Recompute both chains over a persisted ledger and return the terminal state
+ * of the receipt chain. `sessionNonce` is null for an unsealed run, whose
+ * ledger may then hold no decision or handoff event.
+ */
+function replayEventLedger(
+    runId: string,
+    startedAt: string,
+    sessionNonce: string | null,
+    events: readonly RunEvent[],
+): { count: number; digest: string } {
+    const receiptNonce = sessionNonce ?? "unsealed";
+    let eventChainHash = eventChainGenesis(runId, startedAt);
+    let receiptChainHash = receiptChainGenesis(runId, receiptNonce);
     let receiptCount = 0;
     const observations = new Map<number, string>();
     let previousProposal: Extract<RunEvent, { type: "proposal" }> | null = null;
 
     for (const [sequence, event] of events.entries()) {
-        const eventHash = createHash("sha256")
-            .update(
-                `${eventChainHash}|${String(sequence)}|${JSON.stringify(event)}`,
-            )
-            .digest("hex");
-        eventChainHash = eventHash;
+        eventChainHash = hashEvent(eventChainHash, sequence, event);
 
         if (event.type === "observation") {
-            observations.set(sequence, eventHash);
+            observations.set(sequence, eventChainHash);
             previousProposal = null;
             continue;
         }
 
-        if (!sealed && recordsDecision(event)) {
-            throw new Error(unattested);
+        if (sessionNonce === null && recordsDecision(event)) {
+            throw unattestedRunError(runId);
         }
 
         if (event.type === "proposal" || event.type === "decision-rejected") {
-            const receipt = event.receipt;
             verifyDecisionReceipt(
                 runId,
                 receiptNonce,
-                receipt,
+                event,
                 sequence,
                 observations,
-                event.action,
-                event.risk,
-                event.rationale,
                 receiptCount,
                 receiptChainHash,
             );
-            receiptChainHash = advanceReceiptChain(receiptChainHash, receipt);
+            receiptChainHash = advanceReceiptChain(
+                receiptChainHash,
+                event.receipt.receiptHash,
+            );
             receiptCount += 1;
             previousProposal = event.type === "proposal" ? event : null;
             continue;
         }
 
-        if (event.type === "action" && event.receipt !== undefined) {
-            if (
-                previousProposal === null ||
-                !sameDecisionReceipt(event.receipt, previousProposal.receipt) ||
-                JSON.stringify(event.action) !==
-                    JSON.stringify(previousProposal.action) ||
-                event.rationale !== previousProposal.rationale
-            ) {
-                throw new Error(
-                    `Run ${runId} action receipt does not match an earlier proposal`,
-                );
-            }
+        if (
+            event.type === "action" &&
+            event.receipt !== undefined &&
+            !matchesProposal(event, previousProposal)
+        ) {
+            throw new Error(
+                `Run ${runId} action receipt does not match an earlier proposal`,
+            );
         }
         previousProposal = null;
     }
 
-    if (!isDecisionReceiptSummary(decisionReceipts)) return;
-    if (receiptCount !== decisionReceipts.count) {
-        throw new Error(
-            `Run ${runId} receipt count does not match its manifest digest`,
-        );
-    }
-    if (receiptChainHash !== decisionReceipts.digest) {
-        throw new Error(`Run ${runId} decision receipt digest does not match`);
-    }
+    return { count: receiptCount, digest: receiptChainHash };
 }
 
 /** Whether a ledger event is a decision or handoff that a producer must attest. */
@@ -665,15 +750,13 @@ function recordsDecision(event: RunEvent): boolean {
 function verifyDecisionReceipt(
     runId: string,
     sessionNonce: string,
-    receipt: DecisionReceipt,
+    event: DecisionEvent,
     eventSequence: number,
     observations: ReadonlyMap<number, string>,
-    action: SurfaceAction,
-    risk: ActionRisk,
-    rationale: string,
     expectedSequence: number,
     previousChainHash: string,
 ): void {
+    const receipt = event.receipt;
     const priorObservationSequence = receipt.priorObservationSequence;
     if (
         priorObservationSequence === null &&
@@ -709,37 +792,26 @@ function verifyDecisionReceipt(
             `Run ${runId} decision receipt does not match the earlier observation it claims`,
         );
     }
-
-    const commandHash = createHash("sha256")
-        .update(JSON.stringify({ action, risk, rationale }))
-        .digest("hex");
-    if (commandHash !== receipt.commandHash) {
+    if (hashDecisionCommand(event) !== receipt.commandHash) {
         throw new Error(`Run ${runId} decision command digest does not match`);
     }
-
-    const expectedReceiptHash = createHash("sha256")
-        .update(
-            `${previousChainHash}|${JSON.stringify({
-                sessionNonce: receipt.sessionNonce,
-                priorObservationSequence: receipt.priorObservationSequence,
-                priorObservationHash: receipt.priorObservationHash,
-                commandHash: receipt.commandHash,
-                sequence: receipt.sequence,
-            })}`,
-        )
-        .digest("hex");
-    if (expectedReceiptHash !== receipt.receiptHash) {
+    if (hashReceipt(previousChainHash, receipt) !== receipt.receiptHash) {
         throw new Error(`Run ${runId} decision receipt chain is broken`);
     }
 }
 
-function advanceReceiptChain(
-    previousChainHash: string,
-    receipt: DecisionReceipt,
-): string {
-    return createHash("sha256")
-        .update(`${previousChainHash}|${receipt.receiptHash}`)
-        .digest("hex");
+/** Whether an executed action repeats the proposal it claims, receipt and all. */
+function matchesProposal(
+    action: Extract<RunEvent, { type: "action" }>,
+    proposal: Extract<RunEvent, { type: "proposal" }> | null,
+): boolean {
+    return (
+        proposal !== null &&
+        action.receipt !== undefined &&
+        sameDecisionReceipt(action.receipt, proposal.receipt) &&
+        JSON.stringify(action.action) === JSON.stringify(proposal.action) &&
+        action.rationale === proposal.rationale
+    );
 }
 
 function sameDecisionReceipt(
@@ -756,83 +828,79 @@ function sameDecisionReceipt(
     );
 }
 
+// --- Chain construction -----------------------------------------------------
+
+// Shared by the recorder and the validator. Every input string and object key
+// order here is part of the committed evidence format.
+
+function sha256Hex(text: string): string {
+    return createHash("sha256").update(text).digest("hex");
+}
+
+function eventChainGenesis(runId: string, startedAt: string): string {
+    return sha256Hex(`events:${runId}:${startedAt}`);
+}
+
+/** `sessionNonce` is `"unsealed"` for a run without a producer record. */
+function receiptChainGenesis(runId: string, sessionNonce: string): string {
+    return sha256Hex(`decision-receipts:${runId}:${sessionNonce}`);
+}
+
+function hashEvent(
+    previousChainHash: string,
+    sequence: number,
+    event: RunEvent,
+): string {
+    return sha256Hex(
+        `${previousChainHash}|${String(sequence)}|${JSON.stringify(event)}`,
+    );
+}
+
+function hashDecisionCommand(command: {
+    action: SurfaceAction;
+    risk: ActionRisk;
+    rationale: string;
+}): string {
+    return sha256Hex(
+        JSON.stringify({
+            action: command.action,
+            risk: command.risk,
+            rationale: command.rationale,
+        }),
+    );
+}
+
+/** The receipt hash, over every receipt field except the hash itself. */
+function hashReceipt(
+    previousChainHash: string,
+    receipt: Omit<DecisionReceipt, "receiptHash">,
+): string {
+    return sha256Hex(
+        `${previousChainHash}|${JSON.stringify({
+            sessionNonce: receipt.sessionNonce,
+            priorObservationSequence: receipt.priorObservationSequence,
+            priorObservationHash: receipt.priorObservationHash,
+            commandHash: receipt.commandHash,
+            sequence: receipt.sequence,
+        })}`,
+    );
+}
+
+function advanceReceiptChain(
+    previousChainHash: string,
+    receiptHash: string,
+): string {
+    return sha256Hex(`${previousChainHash}|${receiptHash}`);
+}
+
+// --- Ledger parsing ---------------------------------------------------------
+
 function parseEventLedger(source: string): readonly RunEvent[] {
     if (source.trim() === "") return [];
     return source.trimEnd().split("\n").map(parseRunEventLine);
 }
 
-function isLauncherSealedProducer(value: unknown): value is ProducerRecord {
-    if (value === null || typeof value !== "object" || Array.isArray(value)) {
-        return false;
-    }
-    const record = value as Record<string, unknown>;
-    return (
-        (record.kind === "external-llm" || record.kind === "human") &&
-        typeof record.provider === "string" &&
-        record.provider !== "" &&
-        (typeof record.model === "string" || record.model === null) &&
-        typeof record.sessionNonce === "string" &&
-        record.sessionNonce !== "" &&
-        typeof record.sealPath === "string" &&
-        record.sealPath !== ""
-    );
-}
-
-function digestHostAttestation(attestation: HostProducerAttestation): string {
-    return createHash("sha256")
-        .update(
-            JSON.stringify({
-                sessionNonce: attestation.sessionNonce,
-                sessionId: attestation.sessionId,
-                resolvedModel: attestation.resolvedModel,
-                streamDigest: attestation.streamDigest,
-                exitStatus: attestation.exitStatus,
-                exitCode: attestation.exitCode,
-            }),
-        )
-        .digest("hex");
-}
-
-function isHostAttestedProducer(producer: ProducerRecord): boolean {
-    return (
-        (typeof producer.hostSessionId === "string" ||
-            producer.hostSessionId === null) &&
-        typeof producer.streamDigest === "string" &&
-        /^[0-9a-f]{64}$/.test(producer.streamDigest) &&
-        typeof producer.hostAttestationDigest === "string" &&
-        producer.hostAttestationDigest ===
-            digestHostAttestation({
-                sessionNonce: producer.sessionNonce,
-                sessionId: producer.hostSessionId,
-                resolvedModel: producer.model,
-                streamDigest: producer.streamDigest,
-                exitStatus: producer.hostExitStatus ?? "failed",
-                exitCode: producer.hostExitCode ?? null,
-            }) &&
-        (producer.hostExitStatus === "exited" ||
-            producer.hostExitStatus === "timeout" ||
-            producer.hostExitStatus === "failed") &&
-        (typeof producer.hostExitCode === "number" ||
-            producer.hostExitCode === null)
-    );
-}
-
-function isDecisionReceiptSummary(
-    value: unknown,
-): value is { count: number; digest: string } {
-    if (value === null || typeof value !== "object" || Array.isArray(value)) {
-        return false;
-    }
-    const record = value as Record<string, unknown>;
-    return (
-        typeof record.count === "number" &&
-        Number.isInteger(record.count) &&
-        record.count >= 0 &&
-        typeof record.digest === "string" &&
-        /^[0-9a-f]{64}$/.test(record.digest)
-    );
-}
-
+/** This module's single `JSON.parse` site; every caller narrows the result. */
 function parseJson(source: string): unknown {
     return JSON.parse(source);
 }
@@ -910,25 +978,10 @@ function isRunEvent(value: unknown): value is RunEvent {
                 typeof value.satisfied === "boolean"
             );
         case "terminal":
-            return isTestRunOutcome(value.outcome);
+            return isRunOutcome(value.outcome);
         default:
             return false;
     }
-}
-
-function isTestRunOutcome(value: unknown): value is RunOutcome {
-    if (
-        !isRecord(value) ||
-        typeof value.status !== "string" ||
-        typeof value.summary !== "string"
-    ) {
-        return false;
-    }
-    return (
-        (value.status === "satisfied" &&
-            typeof value.checkpoint === "string") ||
-        (value.status === "error" && typeof value.code === "string")
-    );
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -940,18 +993,6 @@ function isObservation(value: unknown): value is Observation {
         isRecord(value) &&
         typeof value.url === "string" &&
         typeof value.title === "string"
-    );
-}
-
-function isEvidenceReference(value: unknown): value is EvidenceReference {
-    return (
-        isRecord(value) &&
-        (value.kind === "screenshot" ||
-            value.kind === "trace" ||
-            value.kind === "snapshot" ||
-            value.kind === "log") &&
-        typeof value.path === "string" &&
-        typeof value.redacted === "boolean"
     );
 }
 
@@ -980,6 +1021,22 @@ function isInterventionRequest(value: unknown): value is InterventionRequest {
     );
 }
 
+function isNonNegativeInteger(value: unknown): value is number {
+    return typeof value === "number" && Number.isInteger(value) && value >= 0;
+}
+
+function isEvidenceReference(value: unknown): value is EvidenceReference {
+    return (
+        isRecord(value) &&
+        (value.kind === "screenshot" ||
+            value.kind === "trace" ||
+            value.kind === "snapshot" ||
+            value.kind === "log") &&
+        typeof value.path === "string" &&
+        typeof value.redacted === "boolean"
+    );
+}
+
 function isControlLeaseState(value: unknown): value is ControlLeaseState {
     return (
         isRecord(value) &&
@@ -988,47 +1045,30 @@ function isControlLeaseState(value: unknown): value is ControlLeaseState {
     );
 }
 
-function isValidatedResumeDecision(value: unknown): value is
-    | { type: "resume"; stageId: string }
-    | {
-          type: "complete";
-          checkpoint: string;
-      } {
+function isValidatedResumeDecision(
+    value: unknown,
+): value is Exclude<ResumeDecision, { type: "reject" }> {
     if (!isRecord(value)) return false;
     if (value.type === "resume") return typeof value.stageId === "string";
     return value.type === "complete" && typeof value.checkpoint === "string";
 }
 
-function isNonNegativeInteger(value: unknown): value is number {
-    return typeof value === "number" && Number.isInteger(value) && value >= 0;
+function isRunOutcome(value: unknown): value is RunOutcome {
+    if (
+        !isRecord(value) ||
+        typeof value.status !== "string" ||
+        typeof value.summary !== "string"
+    ) {
+        return false;
+    }
+    return (
+        (value.status === "satisfied" &&
+            typeof value.checkpoint === "string") ||
+        (value.status === "error" && typeof value.code === "string")
+    );
 }
 
-function createRunId(startedAt: string): string {
-    const timestamp = startedAt.replaceAll(/[^0-9]/g, "").slice(0, 17);
-    return `${timestamp}-${randomUUID().slice(0, 8)}`;
-}
-
-/** Quote a block of text so it cannot break out of the surrounding document. */
-function quote(value: string): string {
-    return value
-        .split("\n")
-        .map((line) => `> ${line}`)
-        .join("\n");
-}
-
-function producerLine(manifest: RunManifest): string {
-    const producer = manifest.producer;
-    return producer === undefined
-        ? ""
-        : `- Producer: \`${producer.kind}/${producer.provider}\` model \`${producer.model ?? "not reported"}\` sealed nonce \`${producer.sessionNonce}\`\n`;
-}
-
-function receiptLine(manifest: RunManifest): string {
-    const receipts = manifest.decisionReceipts;
-    return receipts === undefined
-        ? ""
-        : `- Decision receipts: \`${String(receipts.count)}\` sealed, terminal digest \`${receipts.digest}\`\n`;
-}
+// --- README rendering -------------------------------------------------------
 
 function renderReadme(manifest: RunManifest): string {
     const outcome = manifest.outcome;
@@ -1044,7 +1084,7 @@ function renderReadme(manifest: RunManifest): string {
 - Status: \`${manifest.status}\`
 - Target: \`${manifest.targetProfile}\` \`${manifest.targetVersion}\`
 - Fixture: \`${manifest.fixtureId}\`
-${producerLine(manifest)}${receiptLine(manifest)}- Started: \`${manifest.startedAt}\`
+${renderProducerLine(manifest)}${renderReceiptLine(manifest)}- Started: \`${manifest.startedAt}\`
 ${manifest.finishedAt === undefined ? "" : `- Finished: \`${manifest.finishedAt}\`\n`}
 ## Goal
 
@@ -1065,4 +1105,26 @@ ${outcomeBody}
 - \`trace.zip\` — Playwright trace when capture completed
 - \`screenshots/\` — meaningful checkpoint or terminal screenshots when captured
 `;
+}
+
+function renderProducerLine(manifest: RunManifest): string {
+    const producer = manifest.producer;
+    return producer === undefined
+        ? ""
+        : `- Producer: \`${producer.kind}/${producer.provider}\` model \`${producer.model ?? "not reported"}\` sealed nonce \`${producer.sessionNonce}\`\n`;
+}
+
+function renderReceiptLine(manifest: RunManifest): string {
+    const receipts = manifest.decisionReceipts;
+    return receipts === undefined
+        ? ""
+        : `- Decision receipts: \`${String(receipts.count)}\` sealed, terminal digest \`${receipts.digest}\`\n`;
+}
+
+/** Quote a block of text so it cannot break out of the surrounding document. */
+function quote(value: string): string {
+    return value
+        .split("\n")
+        .map((line) => `> ${line}`)
+        .join("\n");
 }

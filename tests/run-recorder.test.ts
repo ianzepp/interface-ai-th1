@@ -27,7 +27,7 @@ const SEALED_PRODUCER: ProducerRecord = {
     sealPath: "tmp/discovery/lane-a/producer-seal.json",
 };
 
-test("persists a completed test run and its brief README", async (context) => {
+test("persists a completed run and its brief README", async (context) => {
     const rootDirectory = await mkdtemp(join(tmpdir(), "interface-ai-run-"));
     context.after(async () =>
         rm(rootDirectory, { recursive: true, force: true }),
@@ -361,6 +361,75 @@ test("seals the producer record and receipt chain into the finalized manifest", 
     assert.equal(proposal.receipt.sequence, 0);
     assert.match(proposal.receipt.receiptHash, /^[0-9a-f]{64}$/);
     assert.match(proposal.receipt.commandHash, /^[0-9a-f]{64}$/);
+});
+
+test("an action must carry its proposal's receipt, and a refused action leaves the proposal pending", async (context) => {
+    const rootDirectory = await mkdtemp(join(tmpdir(), "interface-ai-run-"));
+    context.after(async () =>
+        rm(rootDirectory, { recursive: true, force: true }),
+    );
+
+    const recorder = await FileRunRecorder.start({
+        rootDirectory,
+        runId: "run-003b",
+        goal: "Look up a third party by exact name",
+        situation: "Authenticated demo fixture",
+        targetProfile: "dolibarr",
+        targetVersion: "23.0.4",
+        fixtureId: "dolibarr/demo-install-smoke",
+        producer: SEALED_PRODUCER,
+    });
+    await recorder.append({
+        type: "observation",
+        recordedAt: "2026-09-16T14:00:00.000Z",
+        observation: { url: "http://127.0.0.1:8080/", title: "Home" },
+    });
+    const command = {
+        action: NAVIGATE_ACTION,
+        risk: "safe",
+        rationale: "Open the third-party list.",
+    } as const;
+    const receipt = recorder.buildDecisionReceipt(command);
+    await recorder.append({
+        type: "proposal",
+        recordedAt: "2026-09-16T14:00:05.000Z",
+        ...command,
+        policyDecision: { type: "allow" },
+        receipt,
+    });
+
+    await assert.rejects(
+        recorder.append({
+            type: "action",
+            recordedAt: "2026-09-16T14:00:06.000Z",
+            action: NAVIGATE_ACTION,
+            result: {
+                completed: true,
+                observation: { url: "http://127.0.0.1:8080/", title: "List" },
+            },
+            rationale: command.rationale,
+            receipt: { ...receipt, commandHash: "0".repeat(64) },
+        }),
+        /action receipt has no matching proposal/,
+    );
+    await recorder.append({
+        type: "action",
+        recordedAt: "2026-09-16T14:00:07.000Z",
+        action: NAVIGATE_ACTION,
+        result: {
+            completed: true,
+            observation: { url: "http://127.0.0.1:8080/", title: "List" },
+        },
+        rationale: command.rationale,
+        receipt,
+    });
+
+    const [, proposal, action] = await recorder.readAll();
+    assert.equal(proposal?.type, "proposal");
+    assert.equal(action?.type, "action");
+    // The action carries the sealed receipt, not the caller's unsealed copy.
+    assert.deepEqual(action.receipt, proposal.receipt);
+    assert.equal(action.receipt.sequence, 0);
 });
 
 test("a receipt is unbound until an observation is recorded", async (context) => {
