@@ -1,3 +1,23 @@
+/**
+ * Where the secret scan looks, and how it decides what would ship.
+ *
+ * Two surfaces. The working tree is what `git add -A` would pick up: the right
+ * surface for "does this machine carry credentials". The index is exactly the
+ * content a commit would create: the right surface for a commit hook, because
+ * content staged and then edited, or edited and not staged, differs between the
+ * two.
+ *
+ * Scope comes from `git ls-files` rather than from parsing `.gitignore`, because
+ * the ignore rules include negations, subdirectory files, and tracked files that
+ * a pattern also matches. Tracked plus untracked-but-not-excluded is exactly the
+ * set a clone would carry; everything else on disk is local-only.
+ *
+ * INVARIANTS
+ * - Paths are repository-relative with forward slashes on every platform.
+ * - A file that is not scanned is listed as binary, oversized, or unreadable, so
+ *   a clean result is never overstated.
+ */
+
 import { execFile, spawn } from "node:child_process";
 import { readFile, readdir } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
@@ -6,23 +26,6 @@ import { promisify } from "node:util";
 import type { ScanCandidate, ScanScope } from "./secret-scan.js";
 
 const execFileAsync = promisify(execFile);
-
-/**
- * Where the scan looks, and how it decides what would ship.
- *
- * Two surfaces matter. The working tree is what a `git add -A` would pick up, and
- * it is the right surface for "does this machine carry credentials". The index is
- * exactly the content a commit would create, and it is the right surface for a
- * commit hook, because the two differ: content staged and then edited in the
- * working tree is not what the commit contains, and content edited but not staged
- * is not either.
- *
- * Scope comes from Git rather than from parsing `.gitignore`, because the ignore
- * rules include negations, subdirectory files, and tracked files that are also
- * matched by a pattern. `git ls-files` already knows all of that: tracked plus
- * untracked-but-not-excluded is exactly the set a clone would carry, and
- * everything else on disk is local-only.
- */
 
 const EXCLUDED_DIRECTORIES = new Set([".git", "node_modules"]);
 
@@ -35,6 +38,9 @@ const MAX_SCANNED_BYTES = 8 * 1024 * 1024;
 /** Above this, reading the index stops rather than holding the repo in memory. */
 const MAX_INDEX_BYTES = 128 * 1024 * 1024;
 
+/** A resolved `git cat-file --batch` header: `<oid> <type> <size>`. */
+const BATCH_HEADER = /^[0-9a-f]+ [a-z]+ (\d+)$/u;
+
 export interface SecretScanCatalog {
     candidates: readonly ScanCandidate[];
     /** Files that are not text, so nothing here read their contents. */
@@ -45,6 +51,7 @@ export interface SecretScanCatalog {
     unreadable: readonly string[];
 }
 
+/** The working-tree surface: every file on disk, scoped by what a clone carries. */
 export async function collectScanCandidates(
     root: string,
 ): Promise<SecretScanCatalog> {
@@ -76,8 +83,11 @@ export async function collectScanCandidates(
         const scope: ScanScope = committable.has(filePath)
             ? "committable"
             : "local";
-        const buffer = await readIfReadable(join(root, filePath), unreadable);
-        if (buffer === null) continue;
+        const buffer = await readFileOrNull(join(root, filePath));
+        if (buffer === null) {
+            unreadable.push(filePath);
+            continue;
+        }
         if (buffer.length > MAX_SCANNED_BYTES) {
             skippedLarge.push(filePath);
             continue;
@@ -97,8 +107,7 @@ export async function collectScanCandidates(
  *
  * The index is read as blobs rather than from the working tree, because the two
  * disagree in both directions. Content staged and then edited again is still what
- * the commit would carry, and content edited without staging is not. A hook that
- * scanned the working tree would be wrong about both.
+ * the commit would carry, and content edited without staging is not.
  */
 export async function collectStagedCandidates(
     root: string,
@@ -136,6 +145,70 @@ export async function collectStagedCandidates(
     return { candidates, skippedBinary, skippedLarge, unreadable };
 }
 
+function isExcluded(relativePath: string): boolean {
+    return relativePath
+        .split("/")
+        .some((segment) => EXCLUDED_DIRECTORIES.has(segment));
+}
+
+/** Every path a clone would carry: tracked, plus untracked and not ignored. */
+async function readCommittablePaths(
+    root: string,
+): Promise<ReadonlySet<string>> {
+    const paths = new Set<string>();
+    for (const args of [
+        ["ls-files", "-z"],
+        ["ls-files", "--others", "--exclude-standard", "-z"],
+    ]) {
+        for (const path of await gitPaths(root, args)) {
+            paths.add(path);
+        }
+    }
+    return paths;
+}
+
+async function gitPaths(
+    root: string,
+    args: readonly string[],
+): Promise<readonly string[]> {
+    try {
+        const { stdout } = await execFileAsync("git", [...args], {
+            cwd: root,
+            encoding: "utf8",
+            maxBuffer: 64 * 1024 * 1024,
+        });
+        return stdout.split("\0").filter((entry) => entry.length > 0);
+    } catch (error) {
+        throw new Error(
+            `git ${args.join(" ")} failed in ${root}: ${describeTruncatedError(error)}`,
+            { cause: error },
+        );
+    }
+}
+
+/**
+ * The message of a thrown value, capped at 200 characters.
+ *
+ * Deliberately not the shared `describeError`: a failed `git` call can carry its
+ * whole stderr, and this message lands in a one-line CLI error.
+ */
+function describeTruncatedError(error: unknown): string {
+    const message = error instanceof Error ? error.message : String(error);
+    return message.length > 200 ? `${message.slice(0, 197)}...` : message;
+}
+
+async function readFileOrNull(path: string): Promise<Buffer | null> {
+    try {
+        return await readFile(path);
+    } catch {
+        return null;
+    }
+}
+
+function isBinary(buffer: Buffer): boolean {
+    return buffer.subarray(0, BINARY_SNIFF_BYTES).includes(0);
+}
+
 /** Read every index blob in one `git cat-file --batch` round trip. */
 async function readIndexBlobs(
     root: string,
@@ -149,34 +222,7 @@ async function readIndexBlobs(
         requests,
         root,
     );
-    return parseBatchOutput(stdout);
-}
-
-/**
- * Split `git cat-file --batch` output into per-request content.
- *
- * Frames are `<oid> <type> <size>` followed by that many bytes, and a request
- * that cannot be resolved answers with a single `<request> missing` line. Replies
- * come back in request order and carry no path, so callers pair them by index.
- */
-function parseBatchOutput(output: Buffer): readonly Buffer[] {
-    const contents: Buffer[] = [];
-    let cursor = 0;
-
-    while (cursor < output.length) {
-        const newline = output.indexOf(0x0a, cursor);
-        if (newline === -1) break;
-        const header = output.subarray(cursor, newline).toString("utf8");
-        cursor = newline + 1;
-        const size = Number.parseInt(header.split(" ")[2] ?? "", 10);
-        if (!Number.isInteger(size) || size < 0) {
-            contents.push(Buffer.alloc(0));
-            continue;
-        }
-        contents.push(output.subarray(cursor, cursor + size));
-        cursor += size + 1;
-    }
-    return contents;
+    return splitBatchOutput(stdout);
 }
 
 function runWithStdin(
@@ -223,64 +269,35 @@ function runWithStdin(
     });
 }
 
-function isExcluded(relativePath: string): boolean {
-    return relativePath
-        .split("/")
-        .some((segment) => EXCLUDED_DIRECTORIES.has(segment));
-}
+/**
+ * Split `git cat-file --batch` output into per-request content.
+ *
+ * Frames are `<oid> <type> <size>` followed by that many bytes, and a request
+ * that cannot be resolved answers with a single `<request> missing` line, read
+ * as empty content. Replies come back in request order and carry no path, so
+ * callers pair them by index.
+ *
+ * The header is matched whole rather than split on spaces, because an
+ * unresolved reply echoes the path, and a path such as `a 5 7` would otherwise
+ * read as a frame and consume the replies after it.
+ */
+function splitBatchOutput(output: Buffer): readonly Buffer[] {
+    const contents: Buffer[] = [];
+    let cursor = 0;
 
-function isBinary(buffer: Buffer): boolean {
-    return buffer.subarray(0, BINARY_SNIFF_BYTES).includes(0);
-}
-
-async function readIfReadable(
-    path: string,
-    unreadable: string[],
-): Promise<Buffer | null> {
-    try {
-        return await readFile(path);
-    } catch {
-        unreadable.push(path);
-        return null;
-    }
-}
-
-/** Every path a clone would carry: tracked, plus untracked and not ignored. */
-async function readCommittablePaths(
-    root: string,
-): Promise<ReadonlySet<string>> {
-    const paths = new Set<string>();
-    for (const args of [
-        ["ls-files", "-z"],
-        ["ls-files", "--others", "--exclude-standard", "-z"],
-    ]) {
-        for (const path of await gitPaths(root, args)) {
-            paths.add(path);
+    while (cursor < output.length) {
+        const newline = output.indexOf(0x0a, cursor);
+        if (newline === -1) break;
+        const header = output.subarray(cursor, newline).toString("utf8");
+        cursor = newline + 1;
+        const size = BATCH_HEADER.exec(header)?.[1];
+        if (size === undefined) {
+            contents.push(Buffer.alloc(0));
+            continue;
         }
+        const length = Number(size);
+        contents.push(output.subarray(cursor, cursor + length));
+        cursor += length + 1;
     }
-    return paths;
-}
-
-async function gitPaths(
-    root: string,
-    args: readonly string[],
-): Promise<readonly string[]> {
-    try {
-        const { stdout } = await execFileAsync("git", [...args], {
-            cwd: root,
-            encoding: "utf8",
-            maxBuffer: 64 * 1024 * 1024,
-        });
-        return stdout.split("\0").filter((entry) => entry.length > 0);
-    } catch (error) {
-        throw new Error(
-            `git ${args.join(" ")} failed in ${root}: ${describeError(error)}`,
-            { cause: error },
-        );
-    }
-}
-
-function describeError(error: unknown): string {
-    const message = error instanceof Error ? error.message : String(error);
-    return message.length > 200 ? `${message.slice(0, 197)}...` : message;
+    return contents;
 }

@@ -1,6 +1,30 @@
+/**
+ * The secret scan, as a gate.
+ *
+ * Rule behaviour: each rule catches what it claims to catch and stays quiet on
+ * values that sit in a secret's syntactic position without being one, because
+ * a noisy gate is one people learn to skip. Repository state: the committable
+ * surface carries no blocking finding, checked by scanning the real tree rather
+ * than a fixture.
+ *
+ * INVARIANTS
+ * - Probe values are assembled from fragments at runtime. A literal provider key
+ *   or PEM header in this source would be a real finding in a committable file,
+ *   and the repository-wide test here would fail on it.
+ * - Fixture-credential probes use a synthetic value through an injected rule
+ *   set, so the real declared credential never appears in the tests.
+ */
+
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import {
+    chmod,
+    mkdtemp,
+    readFile,
+    rm,
+    stat,
+    writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -22,31 +46,9 @@ import {
 
 const execFileAsync = promisify(execFile);
 
-/**
- * The secret scan, as a gate.
- *
- * Two jobs live here. The first is rule behaviour: each rule catches what it
- * claims to catch, and — just as important — stays quiet on the values that sit
- * in the same syntactic position as a secret without being one, because a noisy
- * gate is one people learn to skip. The second is the repository itself: the
- * committable surface carries no blocking finding, checked by running the same
- * scan over the real tree rather than over a fixture.
- *
- * PROBE VALUES ARE BUILT AT RUNTIME
- * The probes below are assembled from fragments. A literal provider key or PEM
- * header in this file's source would be a genuine finding in a committable file,
- * and the repository-wide test in this same file would fail on it. Building them
- * at runtime is what lets the tests demonstrate real detection without shipping
- * the thing being detected.
- *
- * The fixture-credential probes go further and use a synthetic value through an
- * injected rule set, so the real declared credential never appears in the tests
- * at all.
- */
-
 const SYNTHETIC_FIXTURE = "synthetic-fixture-sentinel";
 
-const RESPONSES: ScanRules = {
+const SYNTHETIC_RULES: ScanRules = {
     ...DEFAULT_RULES,
     fixtureValues: [SYNTHETIC_FIXTURE],
     fixtureValuePaths: ["targets/dolibarr/compose.yaml"],
@@ -63,12 +65,12 @@ function candidate(
     return { filePath, scope, text };
 }
 
-function rulesFor(
+function findingsFor(
     filePath: string,
     text: string,
     scope: ScanCandidate["scope"] = "committable",
 ): readonly SecretFinding[] {
-    return scanSecrets([candidate(filePath, text, scope)], RESPONSES);
+    return scanSecrets([candidate(filePath, text, scope)], SYNTHETIC_RULES);
 }
 
 function rulesOf(findings: readonly SecretFinding[]): readonly string[] {
@@ -99,7 +101,7 @@ const USER_SEGMENT = "Users";
 const HOME_PATH = `/${USER_SEGMENT}/example/`;
 
 test("flags a fixture credential that reached a run artifact", () => {
-    const findings = rulesFor(
+    const findings = findingsFor(
         "runs/20260101000000000-abcdef12/events.jsonl",
         `{"value":"${SYNTHETIC_FIXTURE}"}`,
         "local",
@@ -122,7 +124,7 @@ test("flags a fixture credential that reached a run artifact", () => {
 });
 
 test("accepts the fixture credential in the fixture configuration", () => {
-    const findings = rulesFor(
+    const findings = findingsFor(
         "targets/dolibarr/compose.yaml",
         `      MARIADB_PASSWORD: ${SYNTHETIC_FIXTURE}`,
     );
@@ -131,7 +133,7 @@ test("accepts the fixture credential in the fixture configuration", () => {
 });
 
 test("flags the fixture credential outside the fixture configuration", () => {
-    const findings = rulesFor(
+    const findings = findingsFor(
         "src/authoring/some-pilot.ts",
         `const PASSWORD = "${SYNTHETIC_FIXTURE}";`,
     );
@@ -143,7 +145,7 @@ test("flags the fixture credential outside the fixture configuration", () => {
 });
 
 test("downgrades the same finding to a warning in an ignored file", () => {
-    const findings = rulesFor(
+    const findings = findingsFor(
         "tmp/vivi/note.md",
         `the literal ${SYNTHETIC_FIXTURE} appears in older runs`,
         "local",
@@ -153,22 +155,23 @@ test("downgrades the same finding to a warning in an ignored file", () => {
 });
 
 test("flags each credential shape it claims to catch", () => {
-    assert.deepEqual(rulesOf(rulesFor("a.txt", PROVIDER_KEY)), [
+    assert.deepEqual(rulesOf(findingsFor("a.txt", PROVIDER_KEY)), [
         "provider-key",
     ]);
-    assert.deepEqual(rulesOf(rulesFor("a.txt", PRIVATE_KEY_HEADER)), [
+    assert.deepEqual(rulesOf(findingsFor("a.txt", PRIVATE_KEY_HEADER)), [
         "private-key-material",
     ]);
-    assert.deepEqual(rulesOf(rulesFor("a.txt", DSN)), [
+    assert.deepEqual(rulesOf(findingsFor("a.txt", DSN)), [
         "credential-bearing-url",
     ]);
-    assert.deepEqual(rulesOf(rulesFor("a.txt", `authorization: ${BEARER}`)), [
-        "authorization-header",
-    ]);
-    assert.deepEqual(rulesOf(rulesFor("a.txt", SESSION_COOKIE)), [
+    assert.deepEqual(
+        rulesOf(findingsFor("a.txt", `authorization: ${BEARER}`)),
+        ["authorization-header"],
+    );
+    assert.deepEqual(rulesOf(findingsFor("a.txt", SESSION_COOKIE)), [
         "session-cookie",
     ]);
-    assert.deepEqual(rulesOf(rulesFor("a.txt", CSRF)), ["csrf-token"]);
+    assert.deepEqual(rulesOf(findingsFor("a.txt", CSRF)), ["csrf-token"]);
 });
 
 test("flags an unquoted token whose value contains punctuation", () => {
@@ -176,7 +179,7 @@ test("flags an unquoted token whose value contains punctuation", () => {
     // under-matching here reports a clean file that is not clean. The backtick is
     // built from its code point so this file's own text stays matchable-clean.
     const punctuated = `YnQW)Wi}BkZaQf#P${String.fromCharCode(96)}oZi`;
-    const findings = rulesFor(
+    const findings = findingsFor(
         "runs/x/README.md",
         `navigated to "http://127.0.0.1:5762/setup.pl?csrf_token=${punctuated}"`,
         "local",
@@ -186,7 +189,7 @@ test("flags an unquoted token whose value contains punctuation", () => {
 });
 
 test("treats a redacted query token followed by a URL fragment as a placeholder", () => {
-    const findings = rulesFor(
+    const findings = findingsFor(
         "evidence/runs/x/events.jsonl",
         `"url":"http://127.0.0.1:5762/setup.pl?action=create_db&csrf_token=[REDACTED]#/"`,
     );
@@ -196,16 +199,19 @@ test("treats a redacted query token followed by a URL fragment as a placeholder"
 
 test("flags a literal under a credential key, including a suffixed key", () => {
     assert.deepEqual(
-        rulesOf(rulesFor("a.txt", `password: "${"p".repeat(12)}"`)),
+        rulesOf(findingsFor("a.txt", `password: "${"p".repeat(12)}"`)),
         ["credential-assignment"],
     );
     assert.deepEqual(
-        rulesOf(rulesFor("a.txt", `const PASSWORD = "${"q".repeat(12)}";`)),
+        rulesOf(findingsFor("a.txt", `const PASSWORD = "${"q".repeat(12)}";`)),
         ["credential-assignment"],
     );
     assert.deepEqual(
         rulesOf(
-            rulesFor("a.txt", `passwordHash: "${"$2y$10$" + "r".repeat(10)}"`),
+            findingsFor(
+                "a.txt",
+                `passwordHash: "${"$2y$10$" + "r".repeat(10)}"`,
+            ),
         ),
         ["credential-assignment"],
     );
@@ -229,7 +235,7 @@ test("stays quiet on placeholders, types, and references", () => {
 
     for (const line of quiet) {
         assert.deepEqual(
-            rulesFor("src/authoring/example.ts", line),
+            findingsFor("src/authoring/example.ts", line),
             [],
             `expected no finding for: ${line}`,
         );
@@ -237,7 +243,7 @@ test("stays quiet on placeholders, types, and references", () => {
 });
 
 test("reports a personal identifier as a warning, not a blocker", () => {
-    const findings = rulesFor(
+    const findings = findingsFor(
         "docs/note.md",
         `see ${HOME_PATH}skills for more`,
     );
@@ -247,7 +253,7 @@ test("reports a personal identifier as a warning, not a blocker", () => {
 });
 
 test("never carries a usable value in a finding", () => {
-    const findings = rulesFor("a.txt", `password: "${"z".repeat(16)}"`);
+    const findings = findingsFor("a.txt", `password: "${"z".repeat(16)}"`);
     const excerpt = findings[0]?.excerpt ?? "";
 
     assert.ok(
@@ -266,7 +272,7 @@ test("reports a ledger entry that stops carrying its pattern", () => {
             candidate("targets/dolibarr/compose.yaml", "no literal here"),
             candidate("AGENTS.md", "no personal identifier here"),
         ],
-        RESPONSES,
+        SYNTHETIC_RULES,
     );
 
     assert.deepEqual(rows, [
@@ -393,6 +399,43 @@ test("counts a staged binary file instead of reading it", async (t) => {
 
     assert.deepEqual(catalog.skippedBinary, ["bundle.bin"]);
     assert.deepEqual(catalog.candidates, []);
+});
+
+test("keeps staged blobs paired after an unresolvable index entry", async (t) => {
+    const repo = await makeRepository();
+    t.after(() => rm(repo, { recursive: true, force: true }));
+    await writeFile(
+        join(repo, "z.ts"),
+        `const apiKey = "${"k".repeat(24)}";\n`,
+    );
+    await git(repo, ["add", "z.ts"]);
+    // An entry whose object does not exist. cat-file echoes the path back as
+    // `:x 1 99 missing`, and a header split on spaces reads `99` as a size.
+    await git(repo, [
+        "update-index",
+        "--add",
+        "--cacheinfo",
+        `100644,${"1".repeat(40)},x 1 99`,
+    ]);
+
+    assert.deepEqual(await blockingStaged(repo), [
+        "credential-assignment z.ts:1",
+    ]);
+});
+
+test("lists an unreadable file by its repository-relative path", async (t) => {
+    if (process.getuid?.() === 0) {
+        t.skip("root can read a file with no permissions");
+        return;
+    }
+    const repo = await makeRepository();
+    t.after(() => rm(repo, { recursive: true, force: true }));
+    await writeFile(join(repo, "locked.txt"), "text\n");
+    await chmod(join(repo, "locked.txt"), 0o000);
+
+    const catalog = await collectScanCandidates(repo);
+
+    assert.deepEqual(catalog.unreadable, ["locked.txt"]);
 });
 
 test("the commit hook scans the index and is executable", async () => {
