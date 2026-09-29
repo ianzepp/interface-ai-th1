@@ -13,10 +13,11 @@ Two rules govern this file:
 
 ## Audit history
 
-| Date       | Revision           | Scope                                                                                 | Result                                                             |
-| ---------- | ------------------ | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
-| 2026-09-17 | `c97cd83` (`main`) | Tracked tree, full history, object store, local ignored artifacts                     | Shipped surface clean; local-disk credentials found (see findings) |
-| 2026-09-29 | pre-submission     | Scripted scan (`npm run audit:secrets`) of the committable tree only; lanes not rerun | New-evidence defect found and fixed at capture time (see addendum) |
+| Date       | Revision             | Scope                                                                                                            | Result                                                                                                                                            |
+| ---------- | -------------------- | ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-09-17 | `c97cd83` (`main`)   | Tracked tree, full history, object store, local ignored artifacts                                                | Shipped surface clean; local-disk credentials found (see findings)                                                                                |
+| 2026-09-29 | pre-submission       | Scripted scan (`npm run audit:secrets`) of the committable tree only; lanes not rerun                            | New-evidence defect found and fixed at capture time (see addendum)                                                                                |
+| 2026-09-29 | `c06c3f4` (pre-push) | Every blob and commit message reachable from `main` (679 blobs, 167 commits), machine secret values, screenshots | Clean: no machine secret, token, cookie, or live CSRF value; fixture literal only in allowed files and pre-2026-09-16 history already on `origin` |
 
 Append a row when rerunning. Keep prior rows: the history of what was found and
 when is part of the record.
