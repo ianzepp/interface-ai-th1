@@ -1,24 +1,31 @@
 #!/bin/sh
 set -eu
 
-# A scripted stand-in for the operator console the assignment lets us mock.
-#
-# It waits until the session on a lane hands control to a human, looks at the
-# live page, performs one recorded human action in that same browser, and asks
-# automation to validate the state and take control back. Everything it does
-# goes through `scripts/session`, so the ledger records it as human activity
-# under the human's lease epoch, exactly as a person at a console would be.
-#
+# A scripted stand-in for the operator console the assignment allows mocking.
 # Usage:
 #   scripts/mock-operator --lane <lane> --rationale <text> [--timeout <seconds>] \
 #       -- <human-act action flags>
-#
 # Example:
 #   scripts/mock-operator --lane demo --rationale "Open the caller's account" \
 #       -- --type navigate --url 'http://127.0.0.1:8080/societe/card.php?socid=58'
+#
+# Waits for the lane's session to hand control to a human, observes the live
+# page, performs one human action in that same browser, then asks automation to
+# validate the state and take control back.
+#
+# INVARIANTS
+# - Every step goes through scripts/session, so the ledger records it as human
+#   activity under the human's lease epoch, as it would for a person.
+#
+# EXIT CODES
+# - 1: no handoff within --timeout seconds.
+# - 2: usage error.
+# - Otherwise, the status of the first scripts/session step that failed.
 
 project_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$project_dir"
+
+say() { printf '[operator] %s\n' "$*"; }
 
 lane=""
 rationale=""
@@ -36,8 +43,6 @@ if [ -z "$lane" ] || [ -z "$rationale" ] || [ $# -eq 0 ]; then
     echo "usage: scripts/mock-operator --lane <lane> --rationale <text> [--timeout <seconds>] -- <human-act action flags>" >&2
     exit 2
 fi
-
-say() { printf '[operator] %s\n' "$*"; }
 
 say "waiting for lane $lane to hand control to a human"
 waited=0
