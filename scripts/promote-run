@@ -1,7 +1,12 @@
 #!/bin/sh
 set -eu
 
+# Build the project, then run evidence promotion for reviewed runs.
+# Usage: scripts/promote-run [arguments]
+# Arguments pass through unchanged to src/authoring/promote-run-cli.ts.
+
 project_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$project_dir"
+
 npm run build --silent
 exec node dist/src/authoring/promote-run-cli.js "$@"
