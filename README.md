@@ -53,7 +53,7 @@ scripts/target snapshot dolibarr demo-install-smoke
 npm run verify
 ```
 
-Typecheck, lint, format check, and 150 tests. It starts no Docker target, no
+Typecheck, lint, format check, and 159 tests. It starts no Docker target, no
 browser application, and no model. Everything the live runs produced is already
 committed under [`evidence/`](evidence/).
 
@@ -486,6 +486,12 @@ scripts/promote-run <run-id> [<run-id> ...]
 ```
 
 ### LedgerSMB initialization capture pilot
+
+**Known issue.** The four scripted LedgerSMB pilots currently perform every
+step but finalize as `sensitive-evidence-detected`. They log in as recorded
+steps, and the login submission carries the fixture password into the trace.
+The capture boundary refuses those runs as designed; the replay runner, which
+authenticates before tracing, is unaffected.
 
 Build the pilot, replace the current LedgerSMB volumes with a fresh install,
 and record the complete company-and-user initialization as one run:

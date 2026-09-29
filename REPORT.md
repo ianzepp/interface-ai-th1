@@ -8,7 +8,7 @@ author: Ian Zepp
 evidence: evidence/
 reviewed-artifacts: 3
 evidence-runs: 16
-verification: npm run verify (150 tests)
+verification: npm run verify (159 tests)
 repository: https://github.com/ianzepp/interface-ai-th1
 ---
 
@@ -312,15 +312,16 @@ neither are screenshot pixels. The fixture data is synthetic throughout.
 
 **Not done.**
 
-| Area                         | State                                                                                                                                                         |
-| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Recovery branch in use       | The engine contract is built and tested; no committed artifact declares a recovery, because no run has demonstrated one reaching its resume state.            |
-| Resume stage binding         | Resume validates against the artifact's detectors but not against the stage the request needed, and is bound to one artifact per target.                      |
-| Model attestation            | Codex reports its session id but not its resolved model, so attested runs record `model: null`. The requested model is in the lane's `session-metadata.json`. |
-| Run and action caps          | Stated to the model in the prompt; the harness does not enforce them.                                                                                         |
-| Older discovery corpus       | The 2026-09-15 Dolibarr discovery runs predate producer attestation. Only `20260929120114404-0aa09c9c` carries it.                                            |
-| Absolute paths in one ledger | The handoff run's intervention request records this machine's home path. It is not a credential, and the scanner reports it as a warning.                     |
-| Multi-tenant and drift       | Design only (see above).                                                                                                                                      |
+| Area                         | State                                                                                                                                                                                                                                                                       |
+| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Recovery branch in use       | The engine contract is built and tested; no committed artifact declares a recovery, because no run has demonstrated one reaching its resume state.                                                                                                                          |
+| Resume stage binding         | Resume validates against the artifact's detectors but not against the stage the request needed, and is bound to one artifact per target.                                                                                                                                    |
+| Model attestation            | Codex reports its session id but not its resolved model, so attested runs record `model: null`. The requested model is in the lane's `session-metadata.json`.                                                                                                               |
+| Scripted LedgerSMB pilots    | They complete every step but finalize `sensitive-evidence-detected`: they log in as recorded steps, and the login submission reaches the trace. The capture boundary correctly refuses them; the fix is to authenticate before tracing, as discovery and replay already do. |
+| Run and action caps          | Stated to the model in the prompt; the harness does not enforce them.                                                                                                                                                                                                       |
+| Older discovery corpus       | The 2026-09-15 Dolibarr discovery runs predate producer attestation. Only `20260929120114404-0aa09c9c` carries it.                                                                                                                                                          |
+| Absolute paths in one ledger | The handoff run's intervention request records this machine's home path. It is not a credential, and the scanner reports it as a warning.                                                                                                                                   |
+| Multi-tenant and drift       | Design only (see above).                                                                                                                                                                                                                                                    |
 
 **Next, in order.**
 

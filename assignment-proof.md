@@ -4,7 +4,7 @@ This maps each requirement in the assignment brief to the code and committed
 evidence that satisfy it. The brief itself (`assignment.md`, `assignment.pdf`)
 is kept local and is not in the repository. [`REPORT.md`](REPORT.md) is the
 design write-up; this file is the checklist behind it. Last verified
-2026-09-29 against `npm run verify` (150 tests) and `evidence/`.
+2026-09-29 against `npm run verify` (159 tests) and `evidence/`.
 
 Status meanings: **Satisfied** — implemented and proven by tests or committed
 evidence. **Partial** — part of the requirement is unproven. **Design-only** —
@@ -42,7 +42,7 @@ the live session and handed it back. Evidence for every step is committed.
 ## Reproducing the checks
 
 ```sh
-npm run verify                                           # typecheck, lint, format, 150 tests
+npm run verify                                           # typecheck, lint, format, 159 tests
 npm run audit:secrets                                    # credential scan over committable files
 find evidence/runs -name trace.zip | xargs git ls-files  # prints nothing: no trace is tracked
 jq -r '"\(.runId) \(.startedAt) \(.finishedAt)"' evidence/runs/*/run.json
