@@ -1,7 +1,6 @@
 # Local test runs
 
-Each fresh-environment LLM attempt creates one child directory here. A completed
-run has this shape:
+Every discovery session and every replay creates one child directory here:
 
 ```text
 runs/<run-id>/
@@ -9,21 +8,25 @@ runs/<run-id>/
 ├── run.json
 ├── events.jsonl
 ├── trace.zip
-└── screenshots/
+├── screenshots/
+└── result.json        # deterministic replays that emit a typed result
 ```
 
-Deterministic replays also write `result.json`, which carries the typed terminal
-value. The run manifest's `files` map records the shape.
+The run manifest's `files` map records the shape.
 
-The child directories are ignored by Git because traces and observations can be
-large or sensitive. After reviewing a completed run for sensitive data, promote
-one or more runs with:
+The child directories are ignored by Git, because traces and observations can
+be large or sensitive. Review a completed run for sensitive data, then promote
+it:
 
 ```sh
 scripts/promote-run <run-id> [<run-id> ...]
 ```
 
-Promotion copies them to `evidence/runs/<run-id>/` without changing the local
-runs or overwriting existing evidence. It accepts only a finalized run holding
-every required file, including `trace.zip`, and rejects a run whose outcome is
-`sensitive-evidence-detected`.
+Promotion copies the run to `evidence/runs/<run-id>/`. It never changes the
+local run or overwrites existing evidence. It accepts only a finalized run that
+holds every required file, including `trace.zip`. It rejects:
+
+- a `sensitive-evidence-detected` outcome;
+- a run that records decisions without an attested producer.
+
+See [`evidence/README.md`](../evidence/README.md).

@@ -2,281 +2,331 @@
 document: REPORT.md
 title: Computer-use automation for legacy bank back-office applications
 submission: interface.ai engineering take-home
-status: published
-report-version: 0.2.0
-date: 2026-09-17
+report-version: 1.0.0
+date: 2026-09-29
 author: Ian Zepp
-assignment: assignment.md
-tracking: assignment-proof.md
 evidence: evidence/
 reviewed-artifacts: 3
-corpus-runs: 11
-verification: npm run verify
+evidence-runs: 16
+verification: npm run verify (150 tests)
 repository: https://github.com/ianzepp/interface-ai-th1
 ---
 
 # Architecture
 
-Two planes, joined by one artifact.
+Two planes, joined by one reviewed artifact.
 
-**Authoring is probabilistic.** An external LLM loads
-`skills/capability-author/SKILL.md`, receives a goal and a reset Docker fixture, and
-drives a live browser one bounded action at a time through
-`src/authoring/interactive-playwright-session.ts`, writing one JSON command per line
-on stdin — `observe`, `act`, `checkpoint`, `finish` — and reading one JSON result per
-line back. Policy is evaluated and the verdict written to the ledger _before_ the
-action runs, so a refused action leaves evidence instead of a hole.
+**Discovery is probabilistic.** An external model host — the Codex CLI, with
+its configured default `gpt-6-sol` for the 2026-09-29 run — receives a goal
+and a reset Docker fixture. It drives a live
+browser one observed action at a time through `scripts/session`, a CLI over a
+Unix socket to a long-lived session process. The session holds the one
+Playwright context, the policy gate, the recorder, and the trace. Every action
+must cite the latest observation. Its proposal and policy verdict are written
+to the ledger _before_ it runs, so a refused action leaves evidence instead of
+a gap.
 
-The two promoted Dolibarr discovery runs preserve this observe/propose/action
-protocol, but their historical manifests carry no producer or decision-receipt
-attestation, so they are not independent proof of external-LLM authorship.
+**Replay is deterministic.** `src/runtime/engine.ts` walks a reviewed artifact
+and never asks a model anything. It binds inputs, refuses a runtime policy that
+differs from the artifact's, checks the origin, requires exactly one target
+match, acts, waits for a declared detector, extracts typed outputs, and follows
+one explicit transition.
 
-**Replay is deterministic.** `src/runtime/engine.ts` walks a reviewed artifact and
-never asks a model anything: bind inputs, refuse a runtime policy that differs from
-the artifact's, check the origin about to be touched, require a unique target match,
-act, wait for a declared detector, extract typed outputs, follow one explicit
-transition.
+Three decisions carry the rest.
 
-Three terms keep the planes from blurring. A **run** is one immutable
-reset-to-terminal attempt, saved whether it succeeded or not. A **corpus** is the runs
-behind one artifact — successes that establish what is stable, exceptions that
-establish what is real, replays that validate or refute. An **artifact** is the
-reviewed graph that replay executes.
+- **The model host stays outside the repository.** There is no model SDK and no
+  second agent loop. The repository owns what must be trustworthy — the policy
+  gate, the recorder, the lease, and the evidence — and the host owns the
+  judgment. A launcher seals a producer record before the host starts and folds
+  in the host's session id and a digest of its event stream afterwards.
+  Promotion refuses a discovery run without that attestation.
+- **Fixture lifecycle stays outside the graph.** Docker `fresh`, `snapshot`,
+  and `reset` are harness operations, never stages. A capability that reset its
+  own fixture could not run against another institution's data.
+- **Artifacts are reviewed code, not generated output.** `npm run
+draft:artifact` extracts a provisional linear graph from a run, with a warning
+  list. Which states are stable, which failures are business outcomes, and which
+  recoveries are safe is judgment that no single trace contains.
 
-Three decisions carry the rest. **The model host stays outside the repository**: no
-model-provider SDK and no second agent loop, so this repository is a system rather
-than a prompt. The repository ships the session controller and CLI, but still needs
-an external model host. **Fixture lifecycle stays outside the graph**: Docker `fresh`,
-`snapshot`, and `reset` are harness operations, never stages, because a capability that snapshotted
-its own fixture could not be replayed against another institution's data. **Artifacts
-are reviewed code, not generated output**: `npm run draft:artifact` extracts a
-provisional graph mechanically, but which states are stable, which failures are
-business outcomes, and which recoveries are safe is judgment no trace contains.
+A **run** is one immutable reset-to-terminal attempt, saved whether it
+succeeded or not. A **corpus** is the runs behind one artifact. An
+**artifact** is the reviewed graph that replay executes.
 
 # Artifact schema
 
-A `CapabilityArtifact` is a versioned **state graph**, and that is the schema's central
-claim. A transcript records one path through an application; a graph says what states
-replay recognizes and what each one means, which is the only way to answer what happens
-when the page is not where the recording left it.
+A `CapabilityArtifact` is a versioned **state graph**. A transcript records one
+path through an application. A graph says which states replay recognizes and
+what each one means, which is the only way to answer "what happens when the page
+is not where the recording left it?"
 
-Four review surfaces: **`contract`** — goal, typed inputs, outputs, and a prose
-`successCondition`, so a reviewer can judge the flow independently of its steps;
-**`stages`** — at most one action each, a risk class, detectors, typed extractions,
-explicit transitions, and a fail-closed `otherwise`; **`policy`** — allowed origins,
-allowed action types, irreversible-action treatment; and **`provenance`** — the
-discovery run, the supporting corpus, and the validating replays.
+It has four review surfaces:
 
-Targeting is schema, not driver detail. A `TargetDescriptor` holds an ordered candidate
-list and a `require: "exactly-one"` pin: zero matches is missing, several is ambiguous,
-and neither falls through to a convenient first match, because silently picking one of
-two identical records is worse than stopping. Candidates are ranked by meaning —
-accessible role and name, label, stable application-owned identifier, stable nearby
-text with structural context, CSS last — and the schema cannot enforce that order, which
-is why review exists.
+- **`contract`** — goal, typed inputs, typed outputs, and a prose
+  `successCondition`. A reviewer or a calling agent can judge the capability
+  without reading its steps.
+- **`stages`** — at most one action each, a risk class, detectors, typed
+  extractions, explicit transitions, and a fail-closed `otherwise`.
+- **`policy`** — allowed origins, allowed action types, and irreversible-action
+  treatment.
+- **`provenance`** — the discovery run, the supporting corpus, and the
+  validating replays, each resolvable in `evidence/runs/`.
 
-Detector `scope` (`runtime`, `target`, `capability`) is the reuse lever: a lost session
-belongs to the application and therefore to a shared target profile, while "results are
-visible" belongs to one capability.
+**Targeting is schema, not driver detail.** A `TargetDescriptor` holds an
+ordered candidate list and `require: "exactly-one"`. Zero matches is _missing_,
+several is _ambiguous_, and neither falls through to a convenient first match:
+silently picking one of two identical records is worse than stopping.
+Candidates are ranked by meaning. Accessible role and name come first, then
+label, a stable application-owned id, and nearby text with structure; CSS comes
+last. The schema cannot enforce that order, which is one reason review exists.
 
-**Enforcement.** `schemas/capability.schema.json` uses typed `$ref` definitions for
-the graph vocabulary, with `additionalProperties: false` on each object it defines.
-`tests/schemas.test.ts` uses an Ajv 2020 validator to check every committed artifact
-against the capability schema, every promoted replay result against the result schema,
-and the intervention fixture against the invocation schema. The current package suite
-passes 139 tests, including those checks. Reviewed artifacts are also exported as JSON
-under `evidence/capabilities/`; the tracked evidence retains manifests, ledgers,
-READMEs, screenshots, and typed replay results, but no trace archives.
+**Detector `scope`** (`runtime`, `target`, `capability`) is the reuse lever. A
+lost session belongs to the application, and so to a shared target profile.
+"Results are visible" belongs to one capability.
+
+`schemas/capability.schema.json` defines the vocabulary with typed `$ref`s and
+`additionalProperties: false`. The test suite validates every committed artifact
+against it, and every promoted replay result against `result.schema.json`. The
+three reviewed artifacts are exported as JSON to `evidence/capabilities/`.
 
 # Determinism & error handling
 
-Determinism comes from removing every choice: bind, verify policy, check origin, require
-one match, act, route on the first detector that fires. Every stage declares an
-`otherwise`, so an unrecognized state cannot continue by default.
+Determinism comes from removing every choice. Replay binds inputs, verifies
+policy, checks the origin, requires one match, acts, and routes on the first
+detector that fires. Every stage declares an `otherwise`, so an unrecognized
+state cannot continue by default. Waiting is detector-based, never a fixed
+sleep.
 
-The result contract's main job is separating a legitimate answer from a defect. "No such
-third party" is a fact the caller needs; a selector that matched nothing is a bug a
-maintainer debugs. Collapsing the two forces callers to read prose to tell them apart,
-and hides real outages behind routine-looking answers.
+The result contract separates a legitimate answer from a defect:
 
-| Result                  | Meaning                                                                                                   |
-| ----------------------- | --------------------------------------------------------------------------------------------------------- |
-| `success`               | Declared outputs, checkpoint verified.                                                                    |
-| `business-outcome`      | A real answer with a code. Not an error.                                                                  |
-| `intervention-required` | A live-session caller can hand off; the replay pilot records the typed result but does not hand off live. |
-| `failure`               | Unrecoverable. Carries stage, expected state, observed divergence, evidence.                              |
+| Result                  | Meaning                                                                                                       |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `success`               | Declared outputs; the success checkpoint was verified.                                                        |
+| `business-outcome`      | A real answer with a code, such as `third-party-not-found`. Not an error.                                     |
+| `intervention-required` | A person is needed: a declared state such as `authentication-required`, or an irreversible action to confirm. |
+| `failure`               | Unrecoverable. Carries the stage, what was expected, what was observed, and evidence.                         |
 
-The Dolibarr capability exercises this result contract end to end. Two happy replays
-returned identical outputs — `Book Keeping Company`, `CU1108-0004`, `SU1108-0004`,
-`EUR - Euros`, `Open`,
-`PCV` — byte-for-byte the same `result.json`, and each admitted exception has its own
-replayed run: `third-party-not-found`, `third-party-ambiguous` when two exact names
-compete, and `authentication-required` when a protected route redirects to login.
+Results from the current engine also carry a `recoveries` array, empty on a
+clean run.
 
-The saving is measurable. Discovery of that lookup took 25.6–42.5 seconds of browser
-time across five runs; deterministic replay took 0.127–0.858 seconds across six. The
-comparable happy path went from 42.5 seconds to 0.86, with no model in the loop.
+The Dolibarr lookup proves this end to end:
 
-One retained failure is worth more than the successes. Run
-`20260915202607595-f1eee304` failed with `stage-execution-failed` at `open-result`,
-observed as `Missing target [{"kind":"text","text":"{{input.name}}","exact":true}]`, with
-a screenshot attached. Strict resolution had rejected a placeholder the engine never
-substituted: input binding covered detector targets but not action targets. A lenient
-fallback would have absorbed the bug into a plausible-looking replay; instead the failure
-named its own stage, and the fix now has a test.
+- Two happy replays returned byte-identical six-field outputs.
+- `third-party-not-found` has its own replay.
+- `third-party-ambiguous` has its own replay, for two records with the same
+  exact name.
+- `authentication-required` has its own replay: a protected route redirects to
+  login, and replay stops instead of entering a credential.
+- Re-running the happy and ambiguous replays on 2026-09-29, fourteen days
+  later, returned the same outputs and outcome (`…c8587ea8`, `…e11cb309`).
 
-An earlier, unpromoted LedgerSMB replay failed from the same instinct in the other
-direction. The recorder had serialized the login control as `form button` while discovery
-actually resolved it by role and accessible name — the recorded locator and the executed
-locator were not the same thing. Both failures argue the same way:
-strictness is what turns a silent divergence into a named stage.
+Discovery of that lookup took 25.6–42.5 seconds across five runs. Replay took
+0.13–0.86 seconds across six.
 
-**Honest limit.** No committed artifact contains a recovery branch — an edge that takes a
-bounded corrective action and resumes. The skill's standard is that a recorded action
-must reach the declared resume state and a mutating action may not be retried while
-commit status is uncertain; no run in the corpus satisfies it, so recoverable conditions
-are described rather than demonstrated. Drift detection is absent too.
+**One retained failure is worth more than the successes.** Run
+`20260915202607595-f1eee304` failed with `stage-execution-failed` at
+`open-result`. It observed `Missing target [{"kind":"text","text":"{{input.name}}"…}]`
+and attached a screenshot: input binding covered detector targets but not
+action targets. A lenient first-match fallback would have absorbed the bug
+into a plausible replay. Instead the failure named its own stage, and the fix
+has a test.
+
+**Recoverable conditions** have a contract but no committed use. A transition
+may declare a `recovery` with a named condition, a source run, and a
+`maxAttempts` cap. The engine counts each declaration per run and reports it
+in `recoveries` and on the ledger. It fails with `recovery-exhausted` before
+repeating the action past the cap, and it never retries a mutating action
+whose commit is uncertain. Tests prove this against a test-local artifact. No
+committed artifact yet declares one, because no recorded run has shown a
+recovery reaching its resume state.
+
+**Drift** is detected only in the sense that it fails closed: a changed screen
+matches no detector and returns `failure` naming the stage.
 
 # Heterogeneity & multi-tenant
 
-`SurfaceDriver` is the seam, six operations wide: `observe`, `locate`, `act`, `waitFor`,
-`extract`, `captureEvidence`. A capability is recorded against a surface, never a browser,
-so a legacy frameset app, an accessibility-tree desktop client, or a
-screenshot-plus-coordinate controller can implement the same six operations without
-touching the artifact schema or the engine. Two properties matter more than the list:
-`waitFor` takes detectors rather than a duration, so "ready" means a recognized state and
-never an elapsed time; and `extract` is separate from `captureEvidence` because outputs
-are data the caller asked for while evidence is diagnostic material a human reads when
-something broke.
+`SurfaceDriver` is the seam: `observe`, `locate`, `act`, `waitFor`, `extract`,
+and `captureEvidence`. An artifact is recorded against a surface, never against
+a browser. A legacy frameset app, an accessibility-tree desktop client, or a
+screenshot-and-coordinates controller can implement those six operations
+without touching the schema or the engine.
 
-Multi-tenant reuse is why target knowledge is split out of capabilities. `TargetProfile`
-holds what is true of a whole application — supported versions, allowed origins, detectors
-for states any flow in that product can hit — so a version bump changes one profile
-instead of invalidating every recorded flow. A production registry would key a base
-artifact by vendor, product, and qualified version range, apply reviewed tenant overlays
-for origins, branding, labels, and locator alternatives, and qualify drift by replaying
-the existing corpus against a candidate tenant or version — promoting only what was
-checked and failing closed when no supported profile matches.
+Two properties matter more than the list:
 
-**Honest limit.** This section is design. One driver exists; the `relative` candidate kind
-throws; the LedgerSMB profile's global detector list is empty, so the two targets do not
-yet share a detector on equal footing. There is no overlay mechanism, no version-range
-matching, and no drift detection.
+- `waitFor` takes detectors rather than a duration, so "ready" means a
+  recognized state, never an elapsed time.
+- `extract` is separate from `captureEvidence`. Outputs are data the caller
+  asked for; evidence is what a person reads when something broke.
+
+Candidate kinds follow the same line. `role` and `label` exist on desktop
+accessibility trees too, and `css` is the one kind that is web-only.
+
+Multi-tenant reuse is why target knowledge is split out of capabilities. A
+`TargetProfile` holds what is true of a whole application: supported versions,
+allowed origins, and detectors for states any flow in that product can hit.
+So a version bump changes one profile instead of every flow.
+
+A production registry would work like this:
+
+- Key a base artifact by vendor, product, and version range.
+- Apply reviewed tenant overlays for origins, labels, and locator alternatives.
+- Qualify a new tenant or version by replaying the existing corpus against it.
+- Promote only what passed, and fail closed when no supported profile matches.
+
+The replay corpus is the drift detector. The fail-closed `otherwise` is what
+makes it safe to run.
+
+**Honest limit.** This section is design. One driver exists, and the `relative`
+candidate kind throws. There is no overlay mechanism and no version-range
+matching.
 
 # Escalation & handoff
 
-"Stuck" is declared in two places. The engine raises `intervention-required` when policy
-would need a person to confirm an irreversible action, and an artifact can route a
-recognized state to intervention as a declared outcome — the more interesting path,
-because it puts the judgment where the application knowledge already lives.
+"Stuck" is detected in three places:
 
-Routing is proved against a real condition rather than a mock. The `authentication-required`
-replay deliberately starts unauthenticated, the protected route redirects to login, and
-replay returns `intervention-required` naming `dolibarr.lookup-third-party:open-list`, the
-stage where it stopped — rather than entering a credential or continuing blindly.
+- **During discovery, by the model.** `scripts/session escalate --reason` lets
+  the automation say it cannot safely decide. The discovery prompt states this
+  as a general rule and never names a scenario.
+- **During replay, by the artifact.** A recognized state can route to a
+  declared `intervention-required` outcome, such as `authentication-required`.
+- **By policy, for irreversible actions.** Under
+  `riskyActionMode: "require-confirmation"`, the gate returns
+  `intervention-required` instead of acting.
 
-Two types carry the rest. `InterventionRequest` holds what an operator needs without
-reading logs — capability, goal, stage, reason, timestamp, evidence, and a live
-run/session reference from that moment. `ControlLease` gives the session one owner at a
-time and moves it by compare-and-swap with an incrementing epoch, so a resumed automation
-loop cannot write over a person who is still working.
+**Control is a lease.** `ControlLease` gives the session one owner at a time,
+`automation` or `human`, with an epoch that increases on every transfer. A
+transfer is a compare-and-swap, so a stale automation loop cannot act over a
+person who holds the session. Every transfer is a `control-transfer` ledger
+event.
 
-**Honest limit.** The handoff mechanism is implemented, but it is not demonstrated in
-promoted evidence. The Unix-socket `scripts/session` surface supports `take-control`,
-`human-observe`, `human-act`, and `resume`; `evaluateResume` returns `resume`, `complete`,
-or `reject` and is covered by tests; and `createInterventionRequest` is called by the
-interactive session. A local run records two control transfers and a validated resume,
-but no promoted run demonstrates the full manual sequence. The deterministic replay pilot
-records the typed intervention result and closes its browser rather than handing off live.
+On escalation, the session:
+
+1. Captures a screenshot.
+2. Records an `InterventionRequest`. It carries the goal, the reason, the
+   observation it refers to, the epoch, the live session's socket, and the
+   evidence.
+3. Moves the lease to `human`.
+
+The operator surface is the same socket, which the assignment lets us mock.
+`scripts/mock-operator` is that mock. `take-control`, `human-observe`, and
+`human-act` work only under the human's epoch, in the _same_ browser context.
+There is no fresh login and no second browser.
+
+**Handing back is validated, not trusted.** On `resume`, automation — not the
+person — checks the live page against the reviewed artifact's stage detectors:
+
+- A match records `resume-validated` and returns the lease to automation at the
+  matching stage.
+- A non-match records `resume-rejected` and leaves the person in control.
+
+The session refuses a `satisfied` finish unless every handoff ended in a
+validated resume.
+
+**Evidence.** Run `20260929120114404-0aa09c9c` is the whole sequence:
+
+1. Codex was asked for "the third party named exactly `aaa`". The demo data
+   shows two open records with that name.
+2. It searched, and escalated in its own words: "selecting either would be a
+   guess."
+3. The scripted operator opened the caller's record, `CU2506-00032`, in the
+   same browser.
+4. Resume validated at the lookup artifact's `extract-profile` stage (epoch
+   1 → 2).
+5. The model read the card and finished `satisfied`.
+
+The ledger holds the request, both transfers, the human action, and the
+validation. One disclosure: Codex's own memory notes from earlier work on this
+repository mention the ambiguous-lookup case.
+
+**Honest limits.**
+
+- Resume admits any stage of the bound artifact whose detector matches. It does
+  not check that this is the stage the request needed.
+- The session binds resume to the lookup artifact for every Dolibarr session.
+- A human action passes the origin check but not the action-type policy: the
+  person is the authority, and the lease records who acted.
+- Replay runners return `intervention-required` and exit. They have no live
+  handoff; only discovery sessions do.
 
 # Safety
 
-**Allowlists.** Every action is checked against an origin allowlist and an action
-allowlist, in the discovery session and in the engine. The engine also refuses a runtime
-policy that differs from the artifact's, so a capability cannot widen its own permissions
-by editing the caller.
+**Allowlists.** Every action is checked against an origin allowlist and an
+action-type allowlist, in the discovery session and in the engine. The engine
+refuses a runtime policy that differs from the artifact's, so a caller cannot
+widen a capability's permissions.
 
-**Risk classes.** Each stage declares `safe`, `reversible`, or `irreversible`. Irreversible
-actions are blocked outright or pause for a person per `riskyActionMode`; no configuration
-lets one run unattended.
+**Risk classes.** Each stage and each proposed action declares `safe`,
+`reversible`, or `irreversible`. Irreversible actions are either blocked or
+paused for a person, per `riskyActionMode`. No setting lets one run unattended.
+Discovery sessions block them outright, because a person can always act through
+a handoff instead. One limit: during discovery the model declares an action's
+risk, and a model that misclassifies is caught only by the action allowlist
+and by review.
 
-**Redaction.** Event payloads, the run manifest, and the README pass through recursive
-key-name and declared-value redaction on the way to disk, replacing values rather than
-dropping keys so a reviewer can tell "a credential was present and withheld" from "no
-credential was here". The discovery session also authenticates _before_ tracing starts,
-so a fixture credential cannot enter a trace at all.
+**Redaction at capture time.**
 
-The repository also ships `scripts/audit-secrets`, with `--staged`, `--all`, `--json`,
-and `--root` modes, plus `scripts/hooks/pre-commit`, installed by
-`scripts/install-hooks`. `SECURITY.md` records the gate's limits: binary traces,
-screenshot pixels, and Git history remain separate audit surfaces.
+- Fixture authentication happens before recording and tracing start.
+- Declared sensitive values are replaced with `[REDACTED]` anywhere in the
+  ledger, the manifest, and the README.
+- Credential-named keys are redacted, and so are token and session-id query
+  parameters inside recorded URLs.
+- Tracing is suspended around actions that carry a declared value. The finished
+  trace is scanned, and a match finalizes the run as
+  `sensitive-evidence-detected`, which promotion refuses.
 
-Auditing that last decision found a real defect on the other target:
+Values are replaced rather than dropped, so a reviewer can tell "withheld" from
+"absent".
 
-- The 11 surviving promoted Dolibarr event ledgers are clean.
-- The former six-run LedgerSMB capture corpus contained the fixture password in
-  both its event ledgers and binary traces.
-- Those six runs and every trace archive were permanently removed from the
-  repository and its history in the 2026-09-16 rewrite because the traces held a
-  credential-bearing request URL and local session cookies; text redaction cannot
-  reach inside a binary archive.
-- The surviving `README.md` files and `run.json` manifests are clean because
-  key-name and declared-value redaction works there.
+**Repository gate.** `scripts/audit-secrets` scans everything a clone would
+carry. It runs inside `npm test` and in a pre-commit hook.
 
-The historical defect was structural. A `fill` action stores its value under a generic
-`value` property, so key-name redaction cannot cover it; binary traces require a separate
-capture boundary. The current boundary redacts declared values, suspends tracing around
-declared sensitive actions, scans the finished trace, and discards a trace containing a
-match. Remaining gaps are undeclared values and credential-shaped strings in free text,
-screenshot pixels, and verification that covers only the trace rather than the whole run.
-The values were synthetic fixture data, and the removal is permanent in history; the
-capture-time guarantee remains incomplete, but the capture path is partial rather than an
-unresolved violation.
+**History.** On 2026-09-16 an audit of that gate found the fixture password in
+six earlier LedgerSMB capture runs, in both their ledgers and their traces. The
+cause was a generic `fill.value` that key-name redaction could not see. Those
+runs were removed from the repository and its history.
 
-**Honest limit.** The guardrails cover the discovery session, the four scripted
-LedgerSMB capture pilots, and both replay runners. The pilots now reference
-`ArtifactPolicy` and the common capture boundary, so they enforce policy but do not record
-interactive proposal and decision events. Their removed historical ledgers therefore show
-executed actions without proposal events, while the Dolibarr ledgers show proposal,
-decision, then action.
+On 2026-09-29, a fresh replay through the fixed boundary still persisted a
+CSRF token carried in a URL. The gate caught it before commit, and the redactor
+now scrubs such parameters. Traces also carry session cookies, which text
+redaction cannot reach. So traces stay local: promoted `trace.zip` files are
+ignored by Git.
+
+**Limits.** Undeclared sensitive values in free text are not caught, and
+neither are screenshot pixels. The fixture data is synthetic throughout.
 
 # Cuts
 
-**Deliberately left out.** The assignment asks for abstractions that could scale, not
-scaling infrastructure. The same reasoning removed queues, service decomposition, tenant
-plumbing, and fleet distribution (none would change a decision in the schema or the
-engine); a desktop driver (building one would show the seam works, not that it was designed
-correctly); automatic semantic failure merging (the meaning of an unseen failure is a
-judgment call, and a tool that guessed it would be indistinguishable from one that
-fabricated it — hence the extractor's marked draft and warning list); and open-ended LLM
-recovery during replay, where determinism is most valuable and least affordable to lose.
+**Deliberately left out.**
 
-**Not yet done.** Incomplete requirements, not choices:
+- **Scaling infrastructure** — queues, services, tenant plumbing, fleet
+  distribution. None of it would change a decision in the schema or the
+  engine.
+- **A desktop driver.** Building one would show the seam works, not that it was
+  designed well.
+- **Automatic semantic merging of failures into a graph.** The meaning of an
+  unseen failure is judgment; a tool that guessed it would be indistinguishable
+  from one that made it up.
+- **Open-ended LLM recovery during replay.** Replay is where determinism is
+  most valuable and least affordable to lose.
+- **A real operator console.** The socket CLI and `scripts/mock-operator`
+  stand in for it.
 
-| Area               | State                       | Missing                                                                                                                                                                                                      |
-| ------------------ | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Discovery inputs   | Partial                     | `scripts/author` accepts goal, target, fixture, and `--max-runs`, `--max-actions`, and `--timeout`; the older launcher still hard-codes goal/target, and caps are not harness-enforced.                      |
-| Recovery branches  | Described, not demonstrated | No artifact contains a bounded recovery edge reaching a declared resume state.                                                                                                                               |
-| Escalation handoff | Partial                     | The live session surface and resume validation are implemented and tested, but no promoted run demonstrates full same-session manual takeover.                                                               |
-| Evidence hygiene   | Partial                     | The removed six-run LedgerSMB corpus contained the fixture password in both ledger and trace; remaining capture gaps are undeclared values, credential-shaped text, screenshots, and whole-run verification. |
-| Artifact export    | Shipped                     | Three reviewed artifacts are exported as JSON under `evidence/capabilities/`.                                                                                                                                |
-| Schema enforcement | Shipped                     | The test suite validates committed artifacts and promoted results against `schemas/`; exported JSON demonstrates the artifact contract under `evidence/`.                                                    |
-| Publication        | Published                   | The repository is public at `https://github.com/ianzepp/interface-ai-th1`; the assignment still requires emailing the URL to `assignments@interface.ai`.                                                     |
+**Not done.**
 
-Two matter more than the rest. The escalation handoff mechanism is real, but its full
-manual sequence is not demonstrated in promoted evidence — the difference between a
-vertical slice that runs all the way through and one that stops a step short. Secret
-handling could still disqualify an otherwise working submission, and it is mechanical
-rather than architectural: the capture boundary protects declared values and scans traces,
-while remaining gaps cover undeclared values, credential-shaped text, screenshots, and
-whole-run verification. The affected runs were permanently removed from the repository and
-history; future captures still need those protections.
+| Area                         | State                                                                                                                                                         |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Recovery branch in use       | The engine contract is built and tested; no committed artifact declares a recovery, because no run has demonstrated one reaching its resume state.            |
+| Resume stage binding         | Resume validates against the artifact's detectors but not against the stage the request needed, and is bound to one artifact per target.                      |
+| Model attestation            | Codex reports its session id but not its resolved model, so attested runs record `model: null`. The requested model is in the lane's `session-metadata.json`. |
+| Run and action caps          | Stated to the model in the prompt; the harness does not enforce them.                                                                                         |
+| Older discovery corpus       | The 2026-09-15 Dolibarr discovery runs predate producer attestation. Only `20260929120114404-0aa09c9c` carries it.                                            |
+| Absolute paths in one ledger | The handoff run's intervention request records this machine's home path. It is not a credential, and the scanner reports it as a warning.                     |
+| Multi-tenant and drift       | Design only (see above).                                                                                                                                      |
 
-**Next, in order.** Record and promote a target-facing same-session takeover and validated
-resume. Close the remaining capture-time gaps before future capture. Keep the reviewed
-artifact exports under `evidence/capabilities/` synchronized with the source artifacts.
-Document the older launcher's hard-coded goal and target and its prompt-level limits, then
-email the public repository URL to `assignments@interface.ai`.
+**Next, in order.**
 
-Per-requirement status, gap detail, and evidence identifiers live in
-[`assignment-proof.md`](assignment-proof.md), the authority for what is done.
+1. Bind resume to the stage the intervention request named.
+2. Record a LedgerSMB run that shows the password-expiry interstitial as a
+   declared, capped recovery.
+3. Let the harness enforce run and action caps.
+4. Build a second surface driver — accessibility-tree desktop — to test the
+   seam against something that is not a browser.

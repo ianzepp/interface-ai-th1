@@ -13,9 +13,10 @@ Two rules govern this file:
 
 ## Audit history
 
-| Date       | Revision           | Scope                                                             | Result                                                             |
-| ---------- | ------------------ | ----------------------------------------------------------------- | ------------------------------------------------------------------ |
-| 2026-09-17 | `c97cd83` (`main`) | Tracked tree, full history, object store, local ignored artifacts | Shipped surface clean; local-disk credentials found (see findings) |
+| Date       | Revision           | Scope                                                                                 | Result                                                             |
+| ---------- | ------------------ | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| 2026-09-17 | `c97cd83` (`main`) | Tracked tree, full history, object store, local ignored artifacts                     | Shipped surface clean; local-disk credentials found (see findings) |
+| 2026-09-29 | pre-submission     | Scripted scan (`npm run audit:secrets`) of the committable tree only; lanes not rerun | New-evidence defect found and fixed at capture time (see addendum) |
 
 Append a row when rerunning. Keep prior rows: the history of what was found and
 when is part of the record.
@@ -283,6 +284,27 @@ from the LedgerSMB corpus. The defect was that `NOTES.md` omitted the later
 removal, so it read as current acceptance of archives that no longer exist.
 Corrected on 2026-09-17 in `NOTES.md`, which now records the removal; the three
 documents agree.
+
+## Addendum 2026-09-29: new evidence
+
+Four replays and one discovery run were promoted for submission. The scripted
+scan found two things:
+
+- **Blocking: CSRF tokens in a fresh LedgerSMB replay ledger.** LedgerSMB's
+  setup flow carries `csrf_token` in GET URLs, and recorded observations copy
+  URLs verbatim. The run was not committed. `src/authoring/redaction.ts` now
+  replaces token and session-id query parameter values at capture time, and the
+  replay was re-recorded (`20260929120812777-6d5315d1`) with the parameters
+  redacted. The scanner's CSRF rule now ends a value at `&` and `#`, so a
+  redacted token followed by a URL fragment is not misread as live.
+- **Warning, accepted: absolute home paths.** The handoff run
+  `20260929120114404-0aa09c9c` records this machine's home path in its
+  intervention request id, socket path, and producer seal path. These are not
+  credentials, and the committed evidence is kept as recorded.
+
+Promoted runs still copy `trace.zip` for local review, but `.gitignore` now
+excludes `evidence/runs/*/trace.zip`. New traces carry local session cookies,
+for the same reason recorded in the 2026-09-17 findings.
 
 ## Standing remediation
 

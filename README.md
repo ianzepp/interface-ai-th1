@@ -1,91 +1,160 @@
 # interface.ai Computer-Use Take-Home
 
-## Intent
+A small computer-use system for legacy back-office applications. An external
+LLM drives a real browser application one observed action at a time; a
+reviewed, typed capability artifact captures what it learned; a deterministic
+engine replays that artifact with no model in the loop; and when automation
+cannot safely proceed, a human takes over the same live browser session and
+hands it back.
 
-Build a small, complete computer-use automation system for the interface.ai
-engineering take-home assignment.
+[`REPORT.md`](REPORT.md) is the design write-up. [`evidence/`](evidence/) holds
+the runs that prove each step. The two proxy targets are
+[Dolibarr](https://www.dolibarr.org/) 23.0.4 and
+[LedgerSMB](https://ledgersmb.org/) 1.13.7, pinned and run locally in Docker
+with their own synthetic demo data.
 
-The required vertical slice is:
+## Setup
 
-1. An LLM discovers a workflow by operating a real local browser application.
-2. The successful run becomes a typed, versioned capability artifact.
-3. A deterministic executor replays that artifact without an LLM making decisions.
-4. The system reports typed outputs, business outcomes, recoverable conditions, and
-   hard failures.
-5. A human can take control of the same live session and return control to the
-   automation.
-6. Guardrails, redacted observability, and evidence cover discovery and replay.
+Requirements:
 
-## Current State
+- Node.js 24 or newer, and npm.
+- Docker Engine or Docker Desktop with Compose v2, running.
+- `curl` and `unzip`.
+- For discovery only: the [Codex CLI](https://github.com/openai/codex)
+  (`codex`), signed in with access to a model. The repository embeds no model
+  SDK and holds no API key; the model host is external by design. Replay and
+  the test suite need no model.
 
-The repository contains the complete skill-driven authoring loop and three
-reviewed deterministic vertical slices: `ledgersmb.initialize-company`,
-`dolibarr.lookup-third-party`, and `dolibarr.create-customer-with-contact`.
+```sh
+npm ci
+npx playwright install chromium
+npm run hooks:install        # optional: credential scan before every commit
+```
 
-[`assignment-proof.md`](assignment-proof.md) is the requirement-to-proof matrix
-for the original assignment; its implementation and status claims must be
-checked against live code, tests, and evidence. [`REPORT.md`](REPORT.md) is the
-shorter required submission write-up.
+The fixture credentials are synthetic, loopback-only values declared in the
+Compose files. Export them from there rather than copying them anywhere:
 
-Every reset-to-terminal discovery attempt is saved as one test run. A live run
-has a brief README, structured manifest, sanitized event ledger, and Playwright
-trace. Current promotion requires `trace.zip`; the trace-less tracked corpus is
-historical rewrite output, not the result of the current review procedure. Runs
-terminate as either `satisfied` or `error`; failed and exploratory runs are
-first-class evidence rather than discarded attempts.
+```sh
+export DOLIBARR_FIXTURE_PASSWORD=$(sed -n 's/^ *DOLI_ADMIN_PASSWORD: *//p' targets/dolibarr/compose.yaml)
+export LEDGERSMB_FIXTURE_PASSWORD=$(sed -n 's/^ *POSTGRES_PASSWORD: *//p' targets/ledgersmb/compose.yaml | head -1)
+```
 
-Raw runs live under `runs/<run-id>/` and are ignored by Git. The tracked
-[`runs/README.md`](runs/README.md) describes the layout.
-
-After review, one or more finalized successful or failed runs with every
-required file, valid producer attestation, and a valid decision-receipt chain
-can be promoted into tracked `evidence/runs/<run-id>/` copies with
-`scripts/promote-run <run-id> [<run-id> ...]`. Promotion refuses a
-`sensitive-evidence-detected` outcome and never overwrites existing evidence.
-
-The toolchain is in place and enforced by CI: strict TypeScript, type-aware
-ESLint, Prettier, and EditorConfig, all run by `npm run verify`.
-
-LedgerSMB and Dolibarr are both first-class local browser targets. Their
-versions, Docker images, local origins, and complete persistent state boundaries
-are pinned. The eleven promoted Dolibarr runs remain under `evidence/runs/`;
-their trace archives were later removed in the 2026-09-16 rewrite because they
-carried a credential-bearing request URL and local session cookies. The six
-LedgerSMB capture runs from the earlier corpus were permanently removed from the
-repository and its history during that rewrite.
-
-Both targets use one snapshot lifecycle:
+Snapshots are local and ignored by Git, so create the Dolibarr starting fixture
+once. `fresh` installs Dolibarr with its official demo data:
 
 ```sh
 scripts/target fresh dolibarr
-# Explore or arrange synthetic fixture data in the browser.
-scripts/target snapshot dolibarr demo-baseline
-scripts/target reset dolibarr demo-baseline
+scripts/target snapshot dolibarr demo-install-smoke
 ```
 
-Replace `dolibarr` with `ledgersmb` to use the same lifecycle there. `fresh` and
-`reset` are destructive only to the selected target's local Docker volumes.
-Named snapshots live under `snapshots/<target>/<name>/`, include a checksummed
-manifest, and are ignored by Git. Run `scripts/target --help` for non-destructive
-start, stop, status, URL, and snapshot-listing commands.
+### Without live services
 
-Earlier repeated discovery captures produced a reviewed state graph for
-LedgerSMB company initialization. The Playwright surface driver and
-deterministic engine now replay that artifact without an LLM, enforce exact
-target resolution and origin/action policy, bind invocation inputs, route on
-screen detectors, and save successful or failed replay runs in the same recorder
-shape as discovery.
+```sh
+npm run verify
+```
 
-For Dolibarr, an external LLM drove a long-lived Playwright session one action
-at a time. Two happy runs, three exception runs, and a useful failed replay were
-reviewed into `dolibarr.lookup-third-party`. Deterministic replays now return a
-typed six-field profile, `third-party-not-found`, `third-party-ambiguous`, or an
-`authentication-required` intervention without model decisions. A separate
-reviewed slice, `dolibarr.create-customer-with-contact`, deterministically
-creates a customer and its contact.
+Typecheck, lint, format check, and 150 tests. It starts no Docker target, no
+browser application, and no model. Everything the live runs produced is already
+committed under [`evidence/`](evidence/).
 
-The original assignment PDF is available locally as `assignment.pdf` and is
-intentionally ignored by Git.
+## Demo path
+
+### 1. Run the agent on a goal, with a human escalation
+
+The goal below is deliberately under-specified: Dolibarr's demo data has two
+open third parties named exactly `aaa`. The prompt gives the model a general
+rule — escalate rather than guess when a judgment is not yours — and never
+mentions this case.
+
+In one terminal, start the scripted operator. It waits for a handoff, then acts
+on out-of-band knowledge the model does not have: which customer the caller
+means. In Dolibarr 23.0.4's demo data that record is `socid=58`.
+
+```sh
+scripts/mock-operator --lane demo \
+  --rationale "The caller's account is customer code CU2506-00032; open that record." \
+  -- --type navigate --url 'http://127.0.0.1:8080/societe/card.php?socid=58'
+```
+
+In a second terminal, run one discovery session:
+
+```sh
+scripts/author --single-run --target dolibarr --fixture demo-install-smoke \
+  --lane demo --max-actions 25 \
+  --goal 'Look up the Dolibarr third party named exactly "aaa" and report its customer code, vendor code, currency, and status.'
+```
+
+Codex resets the fixture, starts a recorded session, and drives it through
+`scripts/session` (observe, then act, one action at a time). When it sees two
+matches it runs `scripts/session escalate`. That records an intervention request
+with a screenshot and hands the lease to the operator. The operator acts in the
+same browser and runs `scripts/session resume`. Automation then checks the page
+against the reviewed artifact's detectors before taking control back. It reads
+the record and finishes. The run lands in `runs/<run-id>/`. The committed
+instance of this run is
+[`20260929120114404-0aa09c9c`](evidence/runs/20260929120114404-0aa09c9c/).
+
+Drop the operator and use a unique name, such as `Book Keeping Company`, for a
+plain discovery run. Review a finished run, then promote it:
+
+```sh
+scripts/promote-run <run-id>
+npm run draft:artifact -- --run runs/<run-id> --id <capability-id> --out tmp/drafts/<capability-id>.json
+```
+
+The draft is a provisional linear graph with a warning list. A reviewed artifact
+is written by hand from the whole corpus: which states are stable, which
+failures are business outcomes. The committed lookup artifact,
+[`src/capabilities/dolibarr-third-party-lookup.ts`](src/capabilities/dolibarr-third-party-lookup.ts),
+is that review of the 2026-09-15 discovery corpus for this goal.
+
+### 2. Replay the artifact deterministically
+
+Each command resets the fixture, replays the reviewed artifact with no model,
+and writes the typed result to `runs/<run-id>/result.json`:
+
+```sh
+npm run replay:dolibarr:third-party
+DOLIBARR_LOOKUP_NAME="No Such Fixture Company" DOLIBARR_EXPECT_RESULT=third-party-not-found \
+  npm run replay:dolibarr:third-party
+DOLIBARR_LOOKUP_NAME=aaa DOLIBARR_EXPECT_RESULT=third-party-ambiguous \
+  npm run replay:dolibarr:third-party
+DOLIBARR_SKIP_AUTH=1 DOLIBARR_EXPECT_RESULT=authentication-required \
+  npm run replay:dolibarr:third-party
+```
+
+These give, in order:
+
+- `success`, with six typed outputs;
+- the `third-party-not-found` business outcome;
+- the `third-party-ambiguous` business outcome;
+- `intervention-required` / `authentication-required`, when the protected
+  route redirects to login.
+
+The other two artifacts replay the same way:
+
+```sh
+npm run replay:dolibarr:create-party
+npm run replay:ledgersmb:initialize
+```
+
+## Evidence map
+
+| What                                                  | Where                                                                                                                                                                                                                                                                                                                                    |
+| ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Reviewed artifacts as JSON                            | [`evidence/capabilities/`](evidence/capabilities/)                                                                                                                                                                                                                                                                                       |
+| LLM discovery with escalation and same-session resume | [`20260929120114404-0aa09c9c`](evidence/runs/20260929120114404-0aa09c9c/)                                                                                                                                                                                                                                                                |
+| LLM discovery corpus behind the lookup artifact       | [`…201727769-f02bcb33`](evidence/runs/20260915201727769-f02bcb33/), [`…201943054-c67afa9b`](evidence/runs/20260915201943054-c67afa9b/), plus exception runs [`…6995a2e8`](evidence/runs/20260915202031432-6995a2e8/), [`…97cf9873`](evidence/runs/20260915202113470-97cf9873/), [`…9abd1d52`](evidence/runs/20260915202202470-9abd1d52/) |
+| Replay: success (twice, byte-identical outputs)       | [`…004445ba`](evidence/runs/20260915202650455-004445ba/), [`…48b0cf0c`](evidence/runs/20260915202710527-48b0cf0c/); re-run 2026-09-29 with the same outputs: [`…c8587ea8`](evidence/runs/20260929121117013-c8587ea8/)                                                                                                                    |
+| Replay: business outcomes and intervention            | [`…7b93abd6`](evidence/runs/20260915202725488-7b93abd6/) not found, [`…769ba7f6`](evidence/runs/20260915202742493-769ba7f6/) ambiguous (re-run: [`…e11cb309`](evidence/runs/20260929121131073-e11cb309/)), [`…ed9759b5`](evidence/runs/20260915202758596-ed9759b5/) authentication required                                              |
+| Replay: a real failure, with its stage and screenshot | [`…f1eee304`](evidence/runs/20260915202607595-f1eee304/)                                                                                                                                                                                                                                                                                 |
+| Replays of the other two artifacts                    | [`…05d43891`](evidence/runs/20260915215946224-05d43891/) create customer and contact, [`…6d5315d1`](evidence/runs/20260929120812777-6d5315d1/) LedgerSMB initialization                                                                                                                                                                  |
+
+Each run holds `README.md` (a short human account), `run.json` (manifest,
+outcome, and producer attestation where a model decided), `events.jsonl` (every
+observation, proposal, policy verdict, action, intervention, and control
+transfer), `screenshots/`, and `result.json` for Dolibarr replays. Trace
+archives stay local; [`evidence/README.md`](evidence/README.md) explains why.
 
 ## Project Scripts
 
@@ -205,6 +274,7 @@ launcher steps through, several can run at once, each on its own lane.
 | `--model <model>`            | Model passed to `codex exec`.                                                           |
 | `--reasoning-effort <level>` | Reasoning effort passed to `codex exec`.                                                |
 | `--codex-sandbox <mode>`     | `read-only`, `workspace-write`, or `danger-full-access`.                                |
+| `--single-run`               | Capture one recorded discovery run toward the goal instead of authoring a capability.   |
 | `--preflight`                | Verify the transport only, without authoring anything.                                  |
 | `--print-prompt`             | Print the prompt and exit.                                                              |
 
@@ -222,6 +292,16 @@ Start with `--preflight`. It asks the model for one round trip against the
 session and exits, so a transport problem is diagnosed in seconds instead of
 being inferred from a long run that never got anywhere.
 
+`--single-run` is the demo path's discovery step: one reset, one session, one
+run, and a general instruction to escalate instead of guessing. Without it the
+session works the skill's whole corpus loop.
+
+The launcher seals a producer record before Codex starts and folds Codex's own
+session id (`thread_id`) and stream digest into every run it produced, which is
+what promotion checks. Codex does not report the model it resolved, so the
+attested model is `null`; the requested model is in
+`tmp/discovery/<lane>/session-metadata.json`.
+
 ### `scripts/session` — the browser hand
 
 The long-lived side of discovery. A session holds one Playwright context, the run
@@ -234,6 +314,8 @@ scripts/session observe [--screenshot]
 scripts/session act --type navigate --url <url> --rationale "<why>"
 scripts/session act --type activate --role button --name Create --rationale "<why>"
 scripts/session act --type fill --css '#username' --value <value> --rationale "<why>"
+scripts/session escalate --reason "<what you see and why you stopped>"
+scripts/session wait-for-control [--timeout <ms>]
 scripts/session take-control
 scripts/session human-observe [--screenshot]
 scripts/session human-act --type activate --role button --name Save --rationale "<why>"
@@ -257,6 +339,25 @@ The session enforces the target's origin and action allowlists and records a
 proposal before every action, so a refused action leaves evidence rather than a
 gap. Authentication happens before tracing starts, so a fixture credential
 reaches neither the trace nor the ledger.
+
+Control is a lease with an epoch. `escalate` (automation) or `take-control`
+(operator) moves it to a human; `human-observe` and `human-act` then work only
+under the human's epoch, and automation's `act` is refused. `resume` asks
+automation to check the live page against the reviewed artifact's detectors:
+a match returns the lease to automation at the matching stage, and anything
+else is recorded as `resume-rejected` and leaves the human in control.
+
+### `scripts/mock-operator` — the scripted operator console
+
+The assignment lets the operator console be mocked; this is that mock. It waits
+until a lane's session hands control to a human, observes the live page,
+performs one recorded `human-act`, and runs `resume` — all through
+`scripts/session`, so the ledger records it exactly as it would a person.
+
+```sh
+scripts/mock-operator --lane <lane> --rationale "<why>" [--timeout <seconds>] \
+  -- <human-act action flags>
+```
 
 ### `scripts/audit-secrets` — scan for credential values
 
@@ -373,9 +474,12 @@ npm run export:artifact
 
 Copies one or more reviewed, completed local runs into the tracked evidence
 directory without modifying the originals or overwriting existing evidence. A
-run must contain `README.md`, `run.json`, `events.jsonl`, and `trace.zip`, and
-must pass producer-attestation and decision-receipt validation. A
-`sensitive-evidence-detected` outcome is refused.
+run must contain `README.md`, `run.json`, `events.jsonl`, and `trace.zip`. A run
+that records model or human decisions must carry a launcher-sealed, attested
+producer and a valid decision-receipt chain. A deterministic replay may omit the
+producer only if its ledger holds no decision or handoff event. A
+`sensitive-evidence-detected` outcome is refused. The copied `trace.zip` is
+ignored by Git; see [`evidence/README.md`](evidence/README.md).
 
 ```sh
 scripts/promote-run <run-id> [<run-id> ...]
@@ -442,32 +546,14 @@ LEDGERSMB_FIXTURE_PASSWORD=<fixture-password> \
 The command stops at the first failed phase and leaves one run directory per
 attempted phase under `runs/`.
 
-### Dolibarr interactive discovery and replay
+### Dolibarr replays
 
-Reset the demo snapshot, then start an external-controller capture session:
-
-```sh
-scripts/target reset dolibarr demo-install-smoke
-DOLIBARR_FIXTURE_PASSWORD=<fixture-password> \
-  npm run discover:dolibarr:third-party
-```
-
-The process exchanges JSONL commands and observations over stdin/stdout while
-recording one Playwright trace. The external LLM chooses each action; the repo
-does not embed a model SDK.
-
-Replay the reviewed artifact from the same reset snapshot:
+The demo path above covers discovery. The reviewed Dolibarr artifacts replay
+with:
 
 ```sh
-DOLIBARR_FIXTURE_PASSWORD=<fixture-password> \
-  npm run replay:dolibarr:third-party
-```
-
-Replay the reviewed customer-and-contact creation slice:
-
-```sh
-DOLIBARR_FIXTURE_PASSWORD=<fixture-password> \
-  npm run replay:dolibarr:create-party
+npm run replay:dolibarr:third-party
+npm run replay:dolibarr:create-party
 ```
 
 Use `DOLIBARR_LOOKUP_NAME`, `DOLIBARR_EXPECT_RESULT`, and
@@ -505,12 +591,3 @@ serves both the build and the linter, so the two can never disagree.
 
 When a TypeScript 7 release exposes a programmatic API supported by
 `typescript-eslint`, reconsider this pin; any move remains a dependency decision.
-
-## Next Actions
-
-- Capture, review, and promote the same-session human handoff and validated-resume
-  acceptance run.
-- Author and replay the reviewed LedgerSMB inventory-lifecycle recovery branch,
-  then promote the verified run.
-- Keep `assignment-proof.md` and `REPORT.md` in step with the code and evidence
-  as the remaining items land.

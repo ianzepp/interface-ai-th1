@@ -157,7 +157,6 @@ export const DEFAULT_RULES: ScanRules = {
         "targets/dolibarr/compose.yaml",
         "targets/ledgersmb/compose.yaml",
         // Documents that name the literal as a pattern to scan for.
-        "assignment-proof.md",
         "SECURITY.md",
         "docs/goals/capture-time-sensitive-data-guarantee.md",
     ],
