@@ -1,14 +1,12 @@
 /**
  * The surface seam: everything this system perceives, and every way it acts.
  *
- * A capability is recorded against a surface, never against a browser API. The
- * discovery agent and the replay engine both drive one `SurfaceDriver`, and a
- * human handoff takes over that same live session rather than a fresh one. The
- * effect is that a recorded flow outlives the technology that recorded it.
- * Playwright is the first adapter, not the assumption: a legacy web app behind
- * framesets, a desktop accessibility tree, or screenshot-plus-coordinate control
- * can implement this interface without touching the artifact schema or the
- * replay engine.
+ * A capability is recorded against a surface, never against a browser API.
+ * Discovery, replay, and a human handoff all drive one `SurfaceDriver` over the
+ * same live session. Playwright is the first adapter, not the assumption: a
+ * frameset-era web app, a desktop accessibility tree, or screenshot-plus-
+ * coordinate control can implement this interface without touching the
+ * artifact schema or the replay engine.
  *
  * INVARIANTS
  * - Targets are described by ordered candidate locators, never by position.
@@ -23,11 +21,11 @@
  * One way of finding a control.
  *
  * The capability-author skill ranks target information from user-visible
- * identity down to raw structure, and treats CSS as a last resort. These kinds
- * cover the user-visible families and structural relationships; the test
- * identifier the skill ranks third has no kind here yet. Ordering is a property
- * of `TargetDescriptor.candidates` rather than of this union, and a candidate
- * has to be recorded from a run that actually resolved it.
+ * identity down to raw structure, with CSS as a last resort. These kinds cover
+ * the user-visible families and structural relationships; the test identifier
+ * the skill ranks third has no kind here. Ordering is a property of
+ * `TargetDescriptor.candidates`, and a candidate has to be recorded from a run
+ * that actually resolved it.
  */
 export type LocatorCandidate =
     | { kind: "role"; role: string; name: string }
@@ -49,7 +47,7 @@ export interface TargetDescriptor {
 }
 
 /**
- * How much damage an action can do if the surface is not where we think it is.
+ * How much damage an action can do if the surface is not in the recorded state.
  *
  * `safe` and `reversible` actions may proceed unattended; `irreversible` is the
  * only class policy treats specially.
@@ -135,10 +133,9 @@ export type DetectorSignal =
  *
  * `scope` is the reuse lever. `runtime` states such as session expiry or a
  * failed load belong to the engine, `target` states belong to one application
- * and version, and `capability` states belong to one recorded flow. Recording
- * capabilities against shared target detectors is what lets a second
- * institution running the same vendor product inherit a flow instead of
- * re-recording it.
+ * and version, and `capability` states belong to one recorded flow. Target
+ * detectors shared across capabilities let a second deployment of the same
+ * vendor product inherit a flow instead of re-recording it.
  */
 export interface StateDetector {
     id: string;
@@ -147,6 +144,7 @@ export interface StateDetector {
     signals: readonly DetectorSignal[];
 }
 
+/** The detector a wait recognized, with an ISO-8601 observation time. */
 export interface StateMatch {
     detectorId: string;
     observedAt: string;
