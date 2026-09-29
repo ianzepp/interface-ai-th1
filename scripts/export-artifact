@@ -1,7 +1,12 @@
 #!/bin/sh
 set -eu
 
+# Build the project, then run the capability artifact export.
+# Usage: scripts/export-artifact [arguments]
+# Arguments pass through unchanged to src/authoring/export-artifact-cli.ts.
+
 project_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$project_dir"
+
 npm run build --silent
 exec node dist/src/authoring/export-artifact-cli.js "$@"
