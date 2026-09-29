@@ -1,6 +1,10 @@
 #!/bin/sh
 set -eu
 
+# Build the project, then run one authoring session.
+# Usage: scripts/author [arguments]
+# Arguments pass through unchanged to src/authoring/author-cli.ts.
+
 project_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$project_dir"
 
