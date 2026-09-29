@@ -4,12 +4,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
+import type { SessionCommand } from "../src/authoring/interactive-playwright-session.js";
 import {
     SessionControlServer,
     parseControlResponse,
     requestSessionControl,
 } from "../src/authoring/session-control.js";
-import type { SessionCommand } from "../src/authoring/interactive-playwright-session.js";
 
 test("sends a command to a session and returns the record it emitted", async (context) => {
     const directory = await mkdtemp(join(tmpdir(), "interface-ai-control-"));

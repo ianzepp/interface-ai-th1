@@ -1,48 +1,43 @@
-import { mkdir, rm } from "node:fs/promises";
-import { dirname } from "node:path";
-import { createServer, connect, type Server, type Socket } from "node:net";
+/**
+ * How a separate process drives a live discovery session.
+ *
+ * A session holds the one browser context, run recorder, policy gate, and
+ * trace, so it cannot be restarted per action; every caller (operator, shell
+ * script, or an LLM's shell tool) reaches the same session over a Unix stream
+ * socket carrying one JSON line per request. A request *is* a
+ * `SessionCommand`, validated by `parseSessionCommand`. Only the response has
+ * an envelope, because it must carry failure as well as a record.
+ *
+ * REJECTED ALTERNATIVES
+ * - A request envelope: a second parse and a second place for the accepted
+ *   vocabulary to drift.
+ * - A FIFO or polled file: a socket correlates request to response for free and
+ *   fails fast when nothing is listening.
+ *
+ * INVARIANTS
+ * - One request in flight per session. Requests are serialized through a single
+ *   chain, so a control message never interleaves with a running action.
+ * - Every request resolves. A dispatch that overruns its budget fails that
+ *   request rather than leaving the caller blocked forever.
+ * - "Nothing is listening" and "the session refused me" are reported
+ *   differently, because the caller's next move depends on which happened.
+ */
 
+import { mkdir, rm } from "node:fs/promises";
+import { connect, createServer, type Server, type Socket } from "node:net";
+import { dirname } from "node:path";
+
+import { describeError } from "../common/errors.js";
 import {
     parseSessionCommand,
     type SessionCommand,
 } from "./interactive-playwright-session.js";
-import { describeError } from "../common/errors.js";
 
-/**
- * How a separate process drives a live discovery session.
- *
- * A session holds the one Playwright browser context, the run recorder, the
- * policy gate, and the trace, so it cannot be restarted per action. It therefore
- * needs a control channel that outlives any single caller, and every caller — an
- * operator, a shell script, or an LLM's shell tool — has to reach the same
- * session.
- *
- * The channel is a Unix stream socket carrying one JSON line per request. A
- * request *is* a `SessionCommand`, parsed by `parseSessionCommand`, the one
- * validator for what a session accepts. There is deliberately no request
- * envelope: a wrapper would add a second parse and a
- * second place for the accepted vocabulary to drift. Only the response needs an
- * envelope, because it has to carry failure as well as a record.
- *
- * Unix sockets were chosen over a FIFO or a polled file because they correlate
- * request to response for free and fail fast when nothing is listening, which is
- * the condition a caller most needs to see immediately.
- *
- * INVARIANTS
- * - One request in flight per session. Requests are serialized through a single
- *   chain, so a control message can never interleave with an action already
- *   running in the browser.
- * - Every request resolves. A dispatch that overruns its budget fails that request
- *   rather than leaving the caller blocked forever.
- * - "Nothing is listening" and "the session refused me" are reported differently,
- *   because the caller's next move depends on which one happened.
- */
+const DEFAULT_TIMEOUT_MS = 120_000;
 
 /** The session's answer. `record` is the session's own emitted JSON record. */
 export type SessionControlResponse =
     { ok: true; record: unknown } | { ok: false; error: string };
-
-const DEFAULT_TIMEOUT_MS = 120_000;
 
 export interface SessionControlServerOptions {
     socketPath: string;
@@ -77,6 +72,7 @@ export class SessionControlServer {
         });
     }
 
+    /** Stop listening, remove the socket, and let the in-flight request end. */
     public async close(): Promise<void> {
         const server = this.#server;
         this.#server = undefined;
@@ -92,10 +88,8 @@ export class SessionControlServer {
     }
 
     /**
-     * Answer one connection, which carries exactly one request.
-     *
-     * Serialization is by chaining onto the previous request, so an action
-     * already running in the browser finishes before the next one starts.
+     * Answer one connection, which carries exactly one request. Chaining onto
+     * the previous request lets a running action finish before the next starts.
      */
     #serveConnection(socket: Socket): void {
         let buffer = "";
@@ -121,6 +115,7 @@ export class SessionControlServer {
         });
     }
 
+    /** Parse, dispatch under the timeout, and answer one request line. */
     async #handle(socket: Socket, line: string): Promise<void> {
         let command: SessionCommand;
         try {
