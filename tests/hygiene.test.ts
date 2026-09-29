@@ -82,17 +82,38 @@ const BANNED_PATTERNS: readonly BannedPattern[] = [
     },
     {
         label: "unvalidated parse",
-        budget: 10,
+        budget: 8,
         pattern: /JSON\.parse\s*\(/,
         rationale:
-            "Every one is a boundary read whose result is narrowed before use: draft-artifact reads a run manifest, event ledger lines, and trace entries; codex-run reads host JSON event-stream lines; discovery-session-cli reads the launcher-sealed producer record; run-recorder reads its own event ledger lines; interactive-playwright-session reads external controller commands; evidence-promotion reads a run manifest; session-state reads the session state file; and session-control reads the control-channel response envelope. The budget is a ceiling, not an endorsement: it was raised from eight to ten to admit the host-stream and recorder-ledger boundaries, and an eleventh call site should have to argue for itself the same way.",
+            "Every one is a boundary read whose result is narrowed before use: draft-artifact reads manifests, ledger lines, and trace entries through one helper; codex-run reads host event-stream lines; discovery-session-cli reads the launcher-sealed producer record; run-recorder reads its own ledger lines; interactive-playwright-session reads controller commands; evidence-promotion reads a run manifest; session-state reads the session state file; and session-control reads the control-channel response envelope. A ninth call site should have to argue for itself.",
     },
     {
         label: "console output",
-        budget: 21,
+        budget: 0,
         pattern: /console\.(log|info|warn|error|debug|trace|table|dir)\s*\(/,
         rationale:
-            "Every one is operator-facing output in a process entry point: the capture pilots, the draft CLI, the replay runners, and the export-artifact CLI. Library modules under src/ print nothing. The budget includes the two output lines in the customer-with-contact replay entry point; a new call outside those entry points is the change this budget exists to catch.",
+            "Entry points write through print in src/common/cli.ts, so every CLI fails and reports the same way. Library modules under src/ print nothing.",
+    },
+    {
+        label: "direct stdout write",
+        budget: 2,
+        pattern: /process\.stdout\.write\s*\(/,
+        rationale:
+            "One is print itself in src/common/cli.ts. The other is codex-run passing the host's raw event-stream bytes through unchanged, which a line-oriented print cannot do.",
+    },
+    {
+        label: "local error-message helper",
+        budget: 0,
+        pattern: /^function describeError\b/,
+        rationale:
+            "describeError lives once in src/common/errors.ts. Ten modules once carried their own copy; a helper with a different job needs a name that says so.",
+    },
+    {
+        label: "raw credential environment read",
+        budget: 0,
+        pattern: /process\.env\.[A-Z_]*(PASSWORD|TOKEN|SECRET|API_KEY)\b/,
+        rationale:
+            "Credentials are read through requireEnv in src/common/env.ts, which rejects a missing or blank value with one message instead of seven hand-written ones.",
     },
 ];
 
@@ -125,6 +146,31 @@ for (const banned of BANNED_PATTERNS) {
         );
     });
 }
+
+/**
+ * Every production module above a trivial size opens with a file charter.
+ *
+ * Several authors placed the charter after the imports, or wrote none; the
+ * house style is one `/** ... *\/` block as the first thing in the file. Tiny
+ * data modules (a profile, a detector list) may skip it.
+ */
+const CHARTER_EXEMPT_MAX_LINES = 15;
+
+test("production modules open with a file charter", () => {
+    const missing = productionFiles
+        .filter(
+            (file) =>
+                file.lines.length > CHARTER_EXEMPT_MAX_LINES &&
+                !file.source.trimStart().startsWith("/**"),
+        )
+        .map((file) => relocatable(file.filePath));
+
+    assert.deepEqual(
+        missing,
+        [],
+        "Open each module with a /** ... */ charter before its imports.",
+    );
+});
 
 test("production source contains no inline tests", () => {
     const offending = productionFiles
