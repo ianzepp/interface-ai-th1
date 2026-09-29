@@ -1,0 +1,12 @@
+{
+  "src/common/cli.ts": "2026-09-29T13:01:50.606554+00:00",
+  "src/common/env.ts": "2026-09-29T13:01:50.606554+00:00",
+  "src/common/errors.ts": "2026-09-29T13:01:50.606554+00:00",
+  "src/targets/dolibarr/detectors.ts": "2026-09-29T13:01:42.902776+00:00",
+  "src/targets/dolibarr/profile.ts": "2026-09-29T13:01:42.902776+00:00",
+  "src/targets/ledgersmb/profile.ts": "2026-09-29T13:01:42.902776+00:00",
+  "tests/control-lease.test.ts": "2026-09-29T13:01:42.902776+00:00",
+  "tests/dolibarr-create-customer-with-contact.test.ts": "2026-09-29T13:01:42.902776+00:00",
+  "tests/policy.test.ts": "2026-09-29T13:01:42.902776+00:00",
+  "tests/target-profiles.test.ts": "2026-09-29T13:01:42.902776+00:00"
+}

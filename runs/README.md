@@ -1,4 +1,4 @@
-# Local test runs
+# Local runs
 
 Every discovery session and every replay creates one child directory here:
 
