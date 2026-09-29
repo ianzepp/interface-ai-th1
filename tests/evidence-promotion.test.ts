@@ -491,6 +491,93 @@ async function createUnboundRun(
     });
 }
 
+test("promotes a decision-free deterministic replay recorded without a producer", async (context) => {
+    const rootDirectory = await mkdtemp(
+        join(tmpdir(), "interface-ai-evidence-"),
+    );
+    context.after(async () =>
+        rm(rootDirectory, { recursive: true, force: true }),
+    );
+    const runsDirectory = join(rootDirectory, "runs");
+    const evidenceDirectory = join(rootDirectory, "evidence");
+    const recorder = await FileTestRunRecorder.start({
+        rootDirectory: runsDirectory,
+        runId: "replay-run",
+        goal: "Replay a reviewed artifact",
+        situation: "Deterministic replay; the artifact made every decision.",
+        targetProfile: "dolibarr",
+        targetVersion: "23.0.4",
+        fixtureId: "dolibarr/demo-install-smoke",
+    });
+    await recorder.append({
+        type: "action",
+        recordedAt: new Date().toISOString(),
+        action: NAVIGATE_ACTION,
+        result: {
+            completed: true,
+            observation: {
+                url: NAVIGATE_ACTION.url,
+                title: "Third parties",
+            },
+        },
+        rationale: "Artifact stage open-list.",
+    });
+    await writeFile(recorder.tracePath, "trace for replay-run", "utf8");
+    await recorder.finalize({
+        status: "satisfied",
+        summary: "The artifact returned success.",
+        checkpoint: "success",
+    });
+
+    const promoted = await promoteTestRuns({
+        runsDirectory,
+        evidenceDirectory,
+        runIds: ["replay-run"],
+    });
+    assert.equal(promoted.length, 1);
+});
+
+test("refuses a producer-less run whose ledger records a handoff", async (context) => {
+    const rootDirectory = await mkdtemp(
+        join(tmpdir(), "interface-ai-evidence-"),
+    );
+    context.after(async () =>
+        rm(rootDirectory, { recursive: true, force: true }),
+    );
+    const runsDirectory = join(rootDirectory, "runs");
+    const evidenceDirectory = join(rootDirectory, "evidence");
+    const recorder = await FileTestRunRecorder.start({
+        rootDirectory: runsDirectory,
+        runId: "unattested-handoff",
+        goal: "Replay a reviewed artifact",
+        situation: "A handoff was spliced into an unsealed ledger.",
+        targetProfile: "dolibarr",
+        targetVersion: "23.0.4",
+        fixtureId: "dolibarr/demo-install-smoke",
+    });
+    await recorder.append({
+        type: "control-transfer",
+        recordedAt: new Date().toISOString(),
+        from: { controller: "automation", epoch: 0 },
+        to: { controller: "human", epoch: 1 },
+    });
+    await writeFile(recorder.tracePath, "trace", "utf8");
+    await recorder.finalize({
+        status: "satisfied",
+        summary: "Claimed success.",
+        checkpoint: "success",
+    });
+
+    await assert.rejects(
+        promoteTestRuns({
+            runsDirectory,
+            evidenceDirectory,
+            runIds: ["unattested-handoff"],
+        }),
+        /only a decision-free replay may omit one/,
+    );
+});
+
 async function readManifest(path: string): Promise<Record<string, unknown>> {
     return JSON.parse(await readFile(path, "utf8")) as Record<string, unknown>;
 }

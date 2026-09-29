@@ -537,19 +537,35 @@ export function validateRunAttestation(
     if (typeof runId !== "string" || typeof startedAt !== "string") {
         throw new Error("Run manifest is missing its recorder identity");
     }
-    if (!isLauncherSealedProducer(producer)) {
+    // A producer attests model and human decisions. A deterministic replay
+    // makes none — the reviewed artifact decided everything — so it may omit
+    // one, but only if it carries no receipt summary and its ledger holds no
+    // decision or handoff event that would need attesting.
+    const sealed = isLauncherSealedProducer(producer);
+    if (!sealed && producer !== undefined && producer !== null) {
         throw new Error(
             `Run ${runId} has no valid launcher-sealed producer record`,
         );
     }
-    if (producer.kind === "external-llm" && !isHostAttestedProducer(producer)) {
+    const unattested = `Run ${runId} has no valid launcher-sealed producer record; only a decision-free replay may omit one`;
+    if (
+        sealed &&
+        producer.kind === "external-llm" &&
+        !isHostAttestedProducer(producer)
+    ) {
         throw new Error(
             `Run ${runId} has no valid host attestation for its external discovery producer`,
         );
     }
 
+    // The recorder writes no receipt summary for a producer-less run, because
+    // it has no decisions to summarize; an unsealed run carrying one was sealed
+    // once and had its producer removed.
     const decisionReceipts = manifest.decisionReceipts;
-    if (!isDecisionReceiptSummary(decisionReceipts)) {
+    if (!sealed && decisionReceipts !== undefined) {
+        throw new Error(unattested);
+    }
+    if (sealed && !isDecisionReceiptSummary(decisionReceipts)) {
         throw new Error(`Run ${runId} has no valid decision receipt summary`);
     }
 
@@ -557,9 +573,11 @@ export function validateRunAttestation(
     let eventChainHash = createHash("sha256")
         .update(`events:${runId}:${startedAt}`)
         .digest("hex");
+    const receiptNonce = sealed ? producer.sessionNonce : "unsealed";
     let receiptChainHash = createHash("sha256")
-        .update(`decision-receipts:${runId}:${producer.sessionNonce}`)
+        .update(`decision-receipts:${runId}:${receiptNonce}`)
         .digest("hex");
+
     let receiptCount = 0;
     const observations = new Map<number, string>();
     let previousProposal: Extract<DiscoveryEvent, { type: "proposal" }> | null =
@@ -579,11 +597,15 @@ export function validateRunAttestation(
             continue;
         }
 
+        if (!sealed && recordsDecision(event)) {
+            throw new Error(unattested);
+        }
+
         if (event.type === "proposal" || event.type === "decision-rejected") {
             const receipt = event.receipt;
             verifyDecisionReceipt(
                 runId,
-                producer.sessionNonce,
+                receiptNonce,
                 receipt,
                 sequence,
                 observations,
@@ -615,6 +637,7 @@ export function validateRunAttestation(
         previousProposal = null;
     }
 
+    if (!isDecisionReceiptSummary(decisionReceipts)) return;
     if (receiptCount !== decisionReceipts.count) {
         throw new Error(
             `Run ${runId} receipt count does not match its manifest digest`,
@@ -622,6 +645,24 @@ export function validateRunAttestation(
     }
     if (receiptChainHash !== decisionReceipts.digest) {
         throw new Error(`Run ${runId} decision receipt digest does not match`);
+    }
+}
+
+/** Whether a ledger event is a decision or handoff that a producer must attest. */
+function recordsDecision(event: DiscoveryEvent): boolean {
+    switch (event.type) {
+        case "proposal":
+        case "decision-rejected":
+        case "intervention-request":
+        case "control-transfer":
+        case "control-rejected":
+        case "resume-validated":
+        case "resume-rejected":
+            return true;
+        case "action":
+            return event.receipt !== undefined;
+        default:
+            return false;
     }
 }
 
