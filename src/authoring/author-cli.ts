@@ -1,72 +1,88 @@
+/**
+ * Launch one self-contained Codex authoring session: `scripts/author`.
+ *
+ * The launcher writes a prompt, runs Codex once, and reports what came back.
+ * Every authoring decision — which fixture to reset, how many runs to capture,
+ * whether a branch is real, what the artifact says — is made by the model inside
+ * that one execution, following the repository's authoring skill. Because a
+ * session sequences itself, several can run at once, each on its own fixture
+ * instance and lane, with nothing for the launcher to arbitrate.
+ *
+ * INVARIANTS
+ * - The launcher never performs a fixture operation or a browser action.
+ * - The prompt is written to the lane directory before the session starts, so
+ *   what the model was asked is part of the evidence.
+ * - The producer seal exists before the host starts; the attestation written
+ *   afterwards binds its nonce to the captured stream digest and exit status.
+ * - A session that overruns its budget is killed, not left running.
+ *
+ * SANDBOX
+ * - Codex runs with `danger-full-access` by default: fixture resets invoke
+ *   Docker and the session CLI connects over a Unix socket, and neither
+ *   survives a restricted sandbox.
+ * - The model therefore has this machine's permissions inside the repository,
+ *   so review the diff before committing anything. `--codex-sandbox` narrows it
+ *   when a flow does not need Docker.
+ *
+ * EXIT CODES
+ * - 1 when setup fails, the session times out, or codex cannot be started.
+ */
+
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import process from "node:process";
-import { runCodexSessionWithCapture } from "./codex-run.js";
 
+import { print, runMain } from "../common/cli.js";
 import { getTargetProfile } from "../targets/index.js";
 import { buildAuthorPrompt, buildDiscoveryRunPrompt } from "./author-prompt.js";
-import { parseFlags, requireFlag } from "./flag-args.js";
-import { attestDiscoveryRuns } from "./run-recorder.js";
-import { print } from "../common/cli.js";
-import { describeError } from "../common/errors.js";
+import {
+    runCodexSessionWithCapture,
+    type CodexRunStatus,
+} from "./codex-run.js";
+import { parseFlags, requireFlag, requireNumberFlag } from "./flag-args.js";
+import {
+    attestDiscoveryRuns,
+    type HostProducerAttestation,
+} from "./run-recorder.js";
 
-/**
- * Launch one self-contained authoring session.
- *
- * This script owns nothing about the work. It writes a prompt, runs Codex once,
- * and reports what came back. Every decision — which fixture to reset, how many
- * runs to capture, whether a branch is real, what the artifact should say — is
- * made by the model inside that single execution, following the repository's own
- * authoring skill.
- *
- * Keeping the launcher thin is what makes concurrency possible. Because a
- * session is one self-contained execution rather than a step the launcher
- * sequences, several can run at once, each bound to its own fixture instance and
- * its own lane, and the launcher never has to arbitrate between them.
- *
- * INVARIANTS
- * - The launcher never performs a fixture operation or a browser action. It has
- *   no browser, no socket, and no Docker access of its own.
- * - The prompt is written to the lane directory before the session starts, so what
- *   the model was asked is part of the evidence.
- * - A session that overruns its budget is killed, not left running.
- *
- * SANDBOX
- * Codex runs with full access by default, because the harness genuinely needs it:
- * resetting a fixture invokes Docker, and driving the browser means connecting to
- * a Unix socket. Neither survives a restricted sandbox. The trade-off is that the
- * model has this machine's permissions inside this repository, so review the diff
- * before committing anything. `--codex-sandbox` narrows it when a flow does not
- * need Docker.
- */
+/** What the launcher records when codex resolves a setting itself. */
+const CODEX_DEFAULT = "codex default (global config)";
 
-const flags = parseFlags(process.argv.slice(2));
-
-if (flags.has("help")) {
-    printUsage();
-} else {
-    await author();
+interface AuthorSessionOptions {
+    prompt: string;
+    goal: string;
+    target: string;
+    fixtureId: string;
+    lane: string;
+    maxRuns: number;
+    maxActions: number;
+    timeoutMs: number;
+    sandbox: string;
+    model: string | undefined;
+    reasoningEffort: string | undefined;
+    repoRoot: string;
+    laneDirectory: string;
 }
 
-/**
- * Build the prompt and run one Codex session.
- *
- * Everything below is deferred out of module scope so that `--help` can be
- * answered without first demanding the flags a real run needs.
- */
-async function author(): Promise<void> {
+await runMain(main);
+
+async function main(): Promise<void> {
+    const flags = parseFlags(process.argv.slice(2));
+    if (flags.has("help")) {
+        printUsage();
+        return;
+    }
+
     const goal = requireFlag(flags, "goal");
     const target = requireFlag(flags, "target");
     const fixtureName = requireFlag(flags, "fixture");
     const lane = flags.get("lane") ?? `author-${String(Date.now())}`;
-    const maxRuns = Number(flags.get("max-runs") ?? 12);
-    const maxActions = Number(flags.get("max-actions") ?? 60);
+    const maxRuns = requireNumberFlag(flags, "max-runs", 12);
+    const maxActions = requireNumberFlag(flags, "max-actions", 60);
+    const timeoutMs = requireNumberFlag(flags, "timeout", 3_600_000);
+    const fixtureId = `${target}/${fixtureName}`;
     const repoRoot = process.cwd();
-
-    const laneDirectory = join(repoRoot, "tmp", "discovery", lane);
-    const promptPath = join(laneDirectory, "prompt.md");
-    const lastMessagePath = join(laneDirectory, "last-message.md");
 
     // A lane answers on its own port, so the origin is supplied by the wrapper
     // that provisioned it and falls back to the profile for the default instance.
@@ -76,237 +92,58 @@ async function author(): Promise<void> {
         throw new Error(`Target profile ${target} declares no origin`);
     }
 
+    const promptOptions = {
+        goal,
+        target,
+        fixtureId,
+        lane,
+        origin,
+        maxRuns,
+        maxActionsPerRun: maxActions,
+    };
     const prompt = flags.has("preflight")
         ? buildPreflightPrompt(target, fixtureName, lane, origin)
         : flags.has("single-run")
-          ? buildDiscoveryRunPrompt({
-                goal,
-                target,
-                fixtureId: `${target}/${fixtureName}`,
-                lane,
-                origin,
-                maxActionsPerRun: maxActions,
-            })
-          : buildAuthorPrompt({
-                goal,
-                target,
-                fixtureId: `${target}/${fixtureName}`,
-                lane,
-                origin,
-                maxRuns,
-                maxActionsPerRun: maxActions,
-            });
+          ? buildDiscoveryRunPrompt(promptOptions)
+          : buildAuthorPrompt(promptOptions);
 
     if (flags.has("print-prompt")) {
         print(prompt);
         return;
     }
 
-    try {
-        await run({
-            prompt,
-            goal,
-            target,
-            fixtureName,
-            lane,
-            maxRuns,
-            maxActions,
-            timeoutMs: Number(flags.get("timeout") ?? 3_600_000),
-            sandbox: flags.get("codex-sandbox") ?? "danger-full-access",
-            repoRoot,
-            laneDirectory,
-            promptPath,
-            lastMessagePath,
-        });
-    } catch (error) {
-        print(`error: ${describeError(error)}`);
-        process.exitCode = 1;
-    }
-}
-
-interface AuthorRunOptions {
-    prompt: string;
-    goal: string;
-    target: string;
-    fixtureName: string;
-    lane: string;
-    maxRuns: number;
-    maxActions: number;
-    timeoutMs: number;
-    sandbox: string;
-    repoRoot: string;
-    laneDirectory: string;
-    promptPath: string;
-    lastMessagePath: string;
-}
-
-async function run(options: AuthorRunOptions): Promise<void> {
-    const {
+    await runAuthorSession({
         prompt,
         goal,
         target,
-        fixtureName,
+        fixtureId,
         lane,
         maxRuns,
         maxActions,
         timeoutMs,
-        sandbox,
+        sandbox: flags.get("codex-sandbox") ?? "danger-full-access",
+        // Passed only when asked for; codex otherwise resolves them from the
+        // operator's global configuration. These are requests: what the host
+        // actually resolved is sealed into producer-attestation.json.
+        model: flags.get("model"),
+        reasoningEffort: flags.get("reasoning-effort"),
         repoRoot,
-        laneDirectory,
-        promptPath,
-        lastMessagePath,
-    } = options;
-
-    if (!Number.isFinite(maxRuns) || !Number.isFinite(maxActions)) {
-        throw new Error("--max-runs and --max-actions must be numbers");
-    }
-    await mkdir(laneDirectory, { recursive: true });
-    await writeFile(promptPath, `${prompt}\n`, "utf8");
-
-    print(`lane: ${lane}`);
-    print(`target: ${target} (fixture ${target}/${fixtureName})`);
-    print(`prompt: ${promptPath}`);
-    print(`sandbox: ${sandbox}`);
-    print(
-        `model: ${flags.get("model") ?? "codex default (global config)"} at ${flags.get("reasoning-effort") ?? "codex default effort"}`,
-    );
-    print(`timeout: ${String(timeoutMs)}ms`);
-    print("");
-
-    // Model and reasoning effort are passed only when asked for. Leaving them out
-    // lets codex resolve them from the operator's global configuration. What is
-    // recorded here is only the request: the model the host actually resolved is
-    // captured from its own JSON event stream after the run and sealed into
-    // producer-attestation.json, next to the producer seal written below.
-    const model = flags.get("model");
-    const reasoningEffort = flags.get("reasoning-effort");
-
-    await writeFile(
-        join(laneDirectory, "session-metadata.json"),
-        `${JSON.stringify(
-            {
-                lane,
-                target,
-                fixtureId: `${target}/${fixtureName}`,
-                goal,
-                model: model ?? "codex default (global config)",
-                reasoningEffort:
-                    reasoningEffort ?? "codex default (global config)",
-                sandbox,
-                maxRuns,
-                maxActions,
-                promptPath,
-            },
-            null,
-            2,
-        )}\n`,
-        "utf8",
-    );
-
-    // The seal exists before the host starts, so every session the model opens
-    // reads a producer record this launcher wrote and nothing else. The nonce is
-    // generated here, and the attestation completed after the run binds it to
-    // the captured stream digest and exit status.
-    const sessionNonce = randomUUID();
-    const producerSealPath = join(laneDirectory, "producer-seal.json");
-    await writeFile(
-        producerSealPath,
-        `${JSON.stringify(
-            {
-                kind: "external-llm",
-                provider: "codex",
-                // The requested model, when one was named. What the host
-                // actually resolved is sealed separately in the attestation.
-                model: model ?? null,
-                sessionNonce,
-                lane,
-                sealedAt: new Date().toISOString(),
-            },
-            null,
-            2,
-        )}\n`,
-        "utf8",
-    );
-    print(`producer seal: ${producerSealPath}`);
-
-    const result = await runCodexSessionWithCapture({
-        prompt,
-        workingDirectory: repoRoot,
-        outputPath: lastMessagePath,
-        sandbox,
-        model,
-        reasoningEffort,
-        timeoutMs,
-        extraEnv: { CAPABILITY_PRODUCER_SEAL: producerSealPath },
+        laneDirectory: join(repoRoot, "tmp", "discovery", lane),
     });
-
-    const attestationPath = join(laneDirectory, "producer-attestation.json");
-    await writeFile(
-        attestationPath,
-        `${JSON.stringify(
-            {
-                sessionNonce,
-                sessionId: result.capture.identity.sessionId,
-                resolvedModel: result.capture.identity.resolvedModel,
-                streamDigest: result.capture.streamDigest,
-                exitStatus: result.status,
-                exitCode: result.exitCode,
-                attestedAt: new Date().toISOString(),
-            },
-            null,
-            2,
-        )}\n`,
-        "utf8",
-    );
-    print(`producer attestation: ${attestationPath}`);
-    const attestedRuns = await attestDiscoveryRuns(join(repoRoot, "runs"), {
-        sessionNonce,
-        sessionId: result.capture.identity.sessionId,
-        resolvedModel: result.capture.identity.resolvedModel,
-        streamDigest: result.capture.streamDigest,
-        exitStatus: result.status,
-        exitCode: result.exitCode,
-    });
-    print(`attested runs: ${attestedRuns.join(", ") || "none"}`);
-
-    if (result.status === "timeout") {
-        print("");
-        print(
-            `error: the session exceeded ${String(timeoutMs)}ms and was stopped`,
-        );
-        process.exitCode = 1;
-    } else if (result.status === "failed") {
-        print("");
-        print("error: codex could not be started");
-        process.exitCode = 1;
-    }
-
-    print("");
-    print(`codex status: ${result.status}`);
-    print(`final message: ${lastMessagePath}`);
-    print("");
-    print(await tail(lastMessagePath, 60));
-
-    const report = join(laneDirectory, "report.md");
-    if ((await readIfPresent(report)) !== null) {
-        print("");
-        print(`authoring report: ${report}`);
-    }
 }
 
 /**
  * Prove the transport before spending a full authoring session on it.
  *
- * The thing most likely to fail is not the model's reasoning but whether Codex's
- * shell can reach the session: sandbox rules, environment filtering, and socket
- * visibility all sit between the two. This asks for exactly that round trip, so a
- * failure is diagnosed in seconds instead of inferred from a long run that never
- * got anywhere.
+ * The likeliest failure is not the model's reasoning but whether Codex's shell
+ * can reach the session: sandbox rules, environment filtering, and socket
+ * visibility all sit between the two. This asks for exactly that round trip,
+ * so a failure is diagnosed in seconds.
  */
 function buildPreflightPrompt(
-    targetId: string,
-    fixture: string,
-    laneName: string,
+    target: string,
+    fixtureName: string,
+    lane: string,
     origin: string,
 ): string {
     return [
@@ -315,9 +152,9 @@ function buildPreflightPrompt(
         "",
         "Perform exactly these three shell commands and report their raw output:",
         "",
-        `1. \`scripts/session start --lane ${laneName} --target ${targetId} --fixture ${fixture} --origin ${origin} --goal "Transport preflight."\``,
-        `2. \`scripts/session observe --lane ${laneName}\``,
-        `3. \`scripts/session stop --lane ${laneName}\``,
+        `1. \`scripts/session start --lane ${lane} --target ${target} --fixture ${fixtureName} --origin ${origin} --goal "Transport preflight."\``,
+        `2. \`scripts/session observe --lane ${lane}\``,
+        `3. \`scripts/session stop --lane ${lane}\``,
         "",
         "Then answer in one short paragraph: did all three succeed, and if not,",
         "which one failed and what did it say? If `scripts/session` is missing or the",
@@ -326,18 +163,127 @@ function buildPreflightPrompt(
     ].join("\n");
 }
 
+/** Seal, run, and attest one Codex session, then report how it ended. */
+async function runAuthorSession(options: AuthorSessionOptions): Promise<void> {
+    const { lane, laneDirectory, model } = options;
+    const promptPath = join(laneDirectory, "prompt.md");
+    const lastMessagePath = join(laneDirectory, "last-message.md");
+
+    await mkdir(laneDirectory, { recursive: true });
+    await writeFile(promptPath, `${options.prompt}\n`, "utf8");
+
+    print(`lane: ${lane}`);
+    print(`target: ${options.target} (fixture ${options.fixtureId})`);
+    print(`prompt: ${promptPath}`);
+    print(`sandbox: ${options.sandbox}`);
+    print(
+        `model: ${model ?? CODEX_DEFAULT} at ${options.reasoningEffort ?? "codex default effort"}`,
+    );
+    print(`timeout: ${String(options.timeoutMs)}ms`);
+    print("");
+
+    await writeJson(join(laneDirectory, "session-metadata.json"), {
+        lane,
+        target: options.target,
+        fixtureId: options.fixtureId,
+        goal: options.goal,
+        model: model ?? CODEX_DEFAULT,
+        reasoningEffort: options.reasoningEffort ?? CODEX_DEFAULT,
+        sandbox: options.sandbox,
+        maxRuns: options.maxRuns,
+        maxActions: options.maxActions,
+        promptPath,
+    });
+
+    // Every session the model opens reads this launcher-written seal and
+    // nothing else, so it must exist before the host starts.
+    const sessionNonce = randomUUID();
+    const producerSealPath = join(laneDirectory, "producer-seal.json");
+    await writeJson(producerSealPath, {
+        kind: "external-llm",
+        provider: "codex",
+        // The requested model; the resolved one is sealed in the attestation.
+        model: model ?? null,
+        sessionNonce,
+        lane,
+        sealedAt: new Date().toISOString(),
+    });
+    print(`producer seal: ${producerSealPath}`);
+
+    const result = await runCodexSessionWithCapture({
+        prompt: options.prompt,
+        workingDirectory: options.repoRoot,
+        outputPath: lastMessagePath,
+        sandbox: options.sandbox,
+        model,
+        reasoningEffort: options.reasoningEffort,
+        timeoutMs: options.timeoutMs,
+        extraEnv: { CAPABILITY_PRODUCER_SEAL: producerSealPath },
+    });
+
+    const attestation: HostProducerAttestation = {
+        sessionNonce,
+        sessionId: result.capture.identity.sessionId,
+        resolvedModel: result.capture.identity.resolvedModel,
+        streamDigest: result.capture.streamDigest,
+        exitStatus: result.status,
+        exitCode: result.exitCode,
+    };
+    const attestationPath = join(laneDirectory, "producer-attestation.json");
+    await writeJson(attestationPath, {
+        ...attestation,
+        attestedAt: new Date().toISOString(),
+    });
+    print(`producer attestation: ${attestationPath}`);
+    const attestedRuns = await attestDiscoveryRuns(
+        join(options.repoRoot, "runs"),
+        attestation,
+    );
+    print(`attested runs: ${attestedRuns.join(", ") || "none"}`);
+
+    printSessionFailure(result.status, options.timeoutMs);
+    print("");
+    print(`codex status: ${result.status}`);
+    print(`final message: ${lastMessagePath}`);
+    print("");
+    print(await readTail(lastMessagePath, 60));
+
+    const reportPath = join(laneDirectory, "report.md");
+    if ((await readIfPresent(reportPath)) !== null) {
+        print("");
+        print(`authoring report: ${reportPath}`);
+    }
+}
+
+async function writeJson(path: string, value: unknown): Promise<void> {
+    await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+}
+
+/** Report a session that did not exit on its own, and fail the process. */
+function printSessionFailure(status: CodexRunStatus, timeoutMs: number): void {
+    if (status === "exited") return;
+    print("");
+    print(
+        status === "timeout"
+            ? `error: the session exceeded ${String(timeoutMs)}ms and was stopped`
+            : "error: codex could not be started",
+    );
+    process.exitCode = 1;
+}
+
+/** The last `lines` lines of a file, or a placeholder when it is absent. */
+async function readTail(path: string, lines: number): Promise<string> {
+    const content = await readIfPresent(path);
+    if (content === null) return "(no final message was written)";
+    return content.trimEnd().split("\n").slice(-lines).join("\n");
+}
+
 async function readIfPresent(path: string): Promise<string | null> {
     try {
         return await readFile(path, "utf8");
     } catch {
         return null;
     }
-}
-
-async function tail(path: string, lines: number): Promise<string> {
-    const content = await readIfPresent(path);
-    if (content === null) return "(no final message was written)";
-    return content.trimEnd().split("\n").slice(-lines).join("\n");
 }
 
 function printUsage(): void {
