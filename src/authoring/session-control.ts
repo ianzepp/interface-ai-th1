@@ -17,9 +17,9 @@ import {
  * session.
  *
  * The channel is a Unix stream socket carrying one JSON line per request. A
- * request *is* a `SessionCommand`, parsed by the same validator the stdin
- * transport uses, so the two transports cannot diverge in what they accept. There
- * is deliberately no request envelope: a wrapper would add a second parse and a
+ * request *is* a `SessionCommand`, parsed by `parseSessionCommand`, the one
+ * validator for what a session accepts. There is deliberately no request
+ * envelope: a wrapper would add a second parse and a
  * second place for the accepted vocabulary to drift. Only the response needs an
  * envelope, because it has to carry failure as well as a record.
  *

@@ -375,30 +375,25 @@ automatically.
 
 ### LLM-driven interactive capture
 
-For a genuine external-LLM discovery run, the current path is `scripts/author`
-(or `scripts/author-lane`) driving `scripts/session`. The older stdin JSONL
-launcher for the Dolibarr lookup still exists:
+For a genuine external-LLM discovery run, the path is `scripts/author`
+(`--single-run` for one run toward a goal, or the full authoring loop without
+it) or `scripts/author-lane`, with the model driving `scripts/session`. The
+launcher seals the producer record the session requires; a session started
+without one refuses to open.
 
-```sh
-scripts/target reset dolibarr demo-install-smoke
-DOLIBARR_FIXTURE_PASSWORD=<fixture-password> \
-  npm run discover:dolibarr:third-party
-```
+`scripts/session` commands are `observe`, `act`, `escalate`,
+`wait-for-control`, `checkpoint`, `finish`, `status`, `stop`, plus the
+operator's `take-control`, `human-observe`, `human-act`, and `resume`. `act`,
+`escalate`, and the human-control commands require the current control lease
+epoch; `scripts/session` supplies it. The LLM must observe the returned state
+before choosing the next `act`. Every proposal and policy verdict is recorded
+before execution; every successful action records its result. A controller
+disconnect finalizes the run as an error. `scripts/mock-operator` is the
+scripted operator for a handoff.
 
-The process authenticates before trace capture, prints a `ready` record, and
-then accepts one JSON command per line on stdin. `scripts/session` commands are
-`observe`, `act`, `checkpoint`, `finish`, `status`, `stop`, plus
-`take-control`, `human-observe`, `human-act`, and `resume`. `act` and the
-human-control commands require the current control lease epoch;
-`scripts/session` supplies it. The stdin launcher accepts the same session
-commands except `status` and `stop`, and the controller must send
-`controlEpoch` on `act`. The LLM must observe the returned state before
-choosing the next `act`. Every proposal and policy verdict is recorded before
-execution; every successful action records its result. A controller disconnect
-finalizes the run as an error.
-
-Use `DOLIBARR_SKIP_AUTH=1` to capture the authentication-required condition
-without entering a credential. Never put login actions inside a durable trace.
+Use `DOLIBARR_SKIP_AUTH=1` with the replay runner to capture the
+authentication-required condition without entering a credential. Never put
+login actions inside a durable trace.
 `src/authoring/interactive-playwright-session.ts` is the shared session seam;
 do not replace it with a fixed pilot and call that LLM discovery.
 

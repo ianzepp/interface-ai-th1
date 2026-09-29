@@ -1,5 +1,4 @@
 import { basename, join } from "node:path";
-import { createInterface } from "node:readline";
 
 import {
     chromium,
@@ -20,11 +19,7 @@ import {
     type InterventionRequest,
 } from "../intervention/request.js";
 import { PlaywrightBrowserDriver } from "../surfaces/playwright-driver.js";
-import type {
-    ActionRisk,
-    Observation,
-    SurfaceAction,
-} from "../surfaces/surface-driver.js";
+import type { ActionRisk, SurfaceAction } from "../surfaces/surface-driver.js";
 import { PlaywrightTestRunCapture } from "./playwright-run-capture.js";
 import type {
     DecisionReceipt,
@@ -110,8 +105,8 @@ export interface SessionCommandOutcome {
  * The session's decisions — policy gate, origin check, target resolution,
  * recording, finalization — belong to exactly one implementation, and the only
  * thing that legitimately varies is how commands arrive. Separating setup from
- * transport is what lets a stdin loop and a control socket drive the identical
- * code path instead of two implementations that drift apart.
+ * transport keeps the control socket a thin carrier of commands rather than a
+ * second implementation of what they mean.
  *
  * INVARIANTS
  * - `handle` never rejects. A failed command comes back as a `command-error`
@@ -122,16 +117,6 @@ export interface SessionCommandOutcome {
 export interface InteractiveSession {
     runId: string;
     runDirectory: string;
-    /**
-     * What the surface looked like once the session was ready.
-     *
-     * Captured here rather than by each transport because it is part of the
-     * protocol a stdio controller already depends on, and a controller that had
-     * to ask for it separately would be making a second round trip for something
-     * the session already knows.
-     */
-    initialObservation: Observation;
-    initialObservationIdentity: ObservationIdentity;
     handle(command: SessionCommand): Promise<SessionCommandOutcome>;
     /** Stop tracing and the browser, finalizing the run if it is still open. */
     close(): Promise<void>;
@@ -219,8 +204,6 @@ export async function createInteractiveSession(
         return {
             runId: basename(recorder.directory),
             runDirectory: recorder.directory,
-            initialObservation,
-            initialObservationIdentity,
 
             async handle(
                 command: SessionCommand,
@@ -861,53 +844,6 @@ async function rejectDecision(
 }
 
 /**
- * Run one browser attempt while an external LLM supplies each next action.
- *
- * The host process writes one JSON command per line and receives one JSON
- * observation in response. This keeps discovery decisions outside the repo
- * while preserving a single Playwright context, trace, policy gate, and event
- * ledger for the complete attempt.
- */
-export async function runInteractivePlaywrightSession(
-    options: SessionOptions,
-): Promise<void> {
-    const session = await createInteractiveSession(options);
-
-    try {
-        emit({
-            type: "ready",
-            runId: session.runId,
-            runDirectory: session.runDirectory,
-            observation: session.initialObservation,
-            observationIdentity: session.initialObservationIdentity,
-        });
-
-        const lines = createInterface({
-            input: process.stdin,
-            crlfDelay: Infinity,
-        });
-        for await (const line of lines) {
-            if (line.trim() === "") continue;
-            let command: SessionCommand;
-            try {
-                command = parseSessionCommand(line);
-            } catch (error) {
-                emit({ type: "command-error", error: describeError(error) });
-                continue;
-            }
-            const outcome = await session.handle(command);
-            emit(outcome.record);
-            if (outcome.terminal) {
-                lines.close();
-                break;
-            }
-        }
-    } finally {
-        await session.close();
-    }
-}
-
-/**
  * Producer provenance is sealed by the launcher, so commands carrying these
  * fields are refused before they can touch the ledger or the manifest.
  */
@@ -987,10 +923,6 @@ function blockedOrigin(
     return allowedOrigins.includes(origin)
         ? null
         : `Origin ${origin} is not allowlisted`;
-}
-
-function emit(value: unknown): void {
-    process.stdout.write(`${JSON.stringify(value)}\n`);
 }
 
 function describeError(error: unknown): string {
