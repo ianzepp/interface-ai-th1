@@ -2,15 +2,12 @@
  * The one argument parser the harness CLIs share.
  *
  * These CLIs accept `--flag value` pairs and bare `--flag` switches, and they
- * pass flags to each other: the launcher builds a prompt naming the flags the
- * model must use, and the session CLI forwards some of its own flags to the
- * session process it spawns. That means a flag's spelling is a contract between
- * files, and a reader and writer that disagree about the key never fail loudly —
- * they silently fall back to a default.
- *
- * That is exactly what happened once, so the key convention now lives in one
- * place: keys are stored bare, without the leading dashes the caller typed.
- * Everything looks up `lane`, never `--lane`.
+ * pass flags to each other: the launcher names flags in the prompt it builds,
+ * and the session CLI forwards some of its own flags to the session process.
+ * A flag's spelling is therefore a contract between files, and a reader and
+ * writer that disagree about the key never fail loudly; they silently fall back
+ * to a default. Keys are stored bare: everything looks up `lane`, never
+ * `--lane`.
  *
  * INVARIANTS
  * - A flag with no following value is a switch, recorded as `"true"`.
@@ -43,6 +40,7 @@ export function parseFlags(argv: readonly string[]): Map<string, string> {
     return parsed;
 }
 
+/** The value of a flag, or `undefined` when it was not given. */
 export function flagValue(
     flags: Map<string, string>,
     name: string,
@@ -50,11 +48,15 @@ export function flagValue(
     return flags.get(name);
 }
 
+/** Whether a flag or switch was given. */
 export function hasFlag(flags: Map<string, string>, name: string): boolean {
     return flags.has(name);
 }
 
-/** Read a required flag, or explain which one is missing. */
+/**
+ * Read a required flag, or explain which one is missing. When `options` is
+ * given, the flag is read from it instead of `flags`.
+ */
 export function requireFlag(
     flags: Map<string, string>,
     name: string,
@@ -65,7 +67,7 @@ export function requireFlag(
     return value;
 }
 
-/** Read a required numeric flag, rejecting a value that is not a number. */
+/** Read an optional numeric flag with a fallback, rejecting a non-number. */
 export function requireNumberFlag(
     flags: Map<string, string>,
     name: string,
