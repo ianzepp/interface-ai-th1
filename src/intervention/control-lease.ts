@@ -8,8 +8,8 @@
  * increments on every transfer so a holder that was displaced can be detected
  * after the fact.
  *
- * This type models ownership only. What a paused run does next lives in
- * `request`, and whether the session is safe to continue from lives in
+ * This module models ownership only. What a stuck run asks of a person lives
+ * in `request`, and whether the session is safe to continue from lives in
  * `resume`.
  */
 
