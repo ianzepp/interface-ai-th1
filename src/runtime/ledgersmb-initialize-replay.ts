@@ -27,8 +27,9 @@ import { ledgerSmbInitializeArtifact } from "../capabilities/ledgersmb-initializ
 import { print, runMain } from "../common/cli.js";
 import { requireEnv } from "../common/env.js";
 import { PlaywrightBrowserDriver } from "../surfaces/playwright-driver.js";
-import { DeterministicEngine, type EngineObserver } from "./engine.js";
+import { DeterministicEngine } from "./engine.js";
 import { ArtifactPolicy } from "./policy.js";
+import { createRecordingObserver } from "./recording-observer.js";
 
 const BASE_URL = "http://127.0.0.1:5762";
 
@@ -114,26 +115,3 @@ async function main(): Promise<void> {
 }
 
 await runMain(main);
-
-/** Translate engine progress into the run's event ledger. */
-function createRecordingObserver(recorder: FileRunRecorder): EngineObserver {
-    return {
-        async actionCompleted(stageId, action, result) {
-            await recorder.append({
-                type: "action",
-                recordedAt: new Date().toISOString(),
-                action,
-                result,
-                rationale: `Deterministic artifact stage: ${stageId}`,
-            });
-        },
-        async checkpoint(_stageId, detectorId) {
-            await recorder.append({
-                type: "checkpoint",
-                recordedAt: new Date().toISOString(),
-                name: detectorId,
-                satisfied: true,
-            });
-        },
-    };
-}
