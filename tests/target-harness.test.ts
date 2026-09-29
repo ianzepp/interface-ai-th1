@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { createServer } from "node:net";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
@@ -39,7 +42,6 @@ test("rejects unsafe snapshot names before invoking Docker", async () => {
 });
 
 test("derives an isolated port for a lane", async () => {
-    const targetScript = join(process.cwd(), "scripts", "target");
     const defaultPort = await execFileAsync(targetScript, ["port", "dolibarr"]);
     const alpha = await execFileAsync(targetScript, [
         "port",
@@ -63,7 +65,6 @@ test("derives an isolated port for a lane", async () => {
 });
 
 test("applies the lane port to the origin the session will allow", async () => {
-    const targetScript = join(process.cwd(), "scripts", "target");
     const { stdout } = await execFileAsync(targetScript, [
         "url",
         "--lane",
@@ -81,7 +82,6 @@ test("applies the lane port to the origin the session will allow", async () => {
 });
 
 test("accepts an explicit lane port and rejects an unusable one", async () => {
-    const targetScript = join(process.cwd(), "scripts", "target");
     const { stdout } = await execFileAsync(targetScript, [
         "port",
         "--lane",
@@ -106,8 +106,6 @@ test("accepts an explicit lane port and rejects an unusable one", async () => {
 });
 
 test("rejects a lane name that would break a container or volume name", async () => {
-    const targetScript = join(process.cwd(), "scripts", "target");
-
     // A lane name becomes part of a Compose project, container, and volume name,
     // so anything outside lowercase letters, digits, and hyphens is refused.
     for (const lane of ["Bad_Lane", "-lead", "has.dot", "_under"]) {
@@ -126,4 +124,47 @@ test("rejects a lane name that would break a container or volume name", async ()
         "dolibarr",
     ]);
     assert.match(stdout.trim(), /^[0-9]+$/);
+});
+
+test("reports a failed port reservation after probing a busy port", async () => {
+    // A busy-port probe must leave stderr intact, or the failure below would
+    // exit 1 without saying why.
+    const lockRoot = await mkdtemp(join(tmpdir(), "target-harness-"));
+    const lockDirectory = join(lockRoot, "interface-ai-lane-ports");
+    const lane = "busy-probe";
+    const { stdout } = await execFileAsync(targetScript, [
+        "port",
+        "--lane",
+        lane,
+        "dolibarr",
+    ]);
+    const firstCandidate = Number(stdout.trim());
+
+    // The first candidate is bound by a listener; every later one is locked by
+    // this live process, so the search runs out.
+    await mkdir(lockDirectory);
+    for (let port = firstCandidate + 1; port < firstCandidate + 400; port++) {
+        await writeFile(
+            join(lockDirectory, String(port)),
+            `${String(process.pid)}\n`,
+        );
+    }
+    const listener = createServer();
+    await new Promise<void>((resolve) => {
+        listener.listen(firstCandidate, "127.0.0.1", resolve);
+    });
+
+    try {
+        await assert.rejects(
+            execFileAsync(
+                targetScript,
+                ["reserve-port", "--lane", lane, "dolibarr"],
+                { env: { ...process.env, TMPDIR: lockRoot } },
+            ),
+            /no free port within 400 of 8080 for lane 'busy-probe'/,
+        );
+    } finally {
+        listener.close();
+        await rm(lockRoot, { recursive: true, force: true });
+    }
 });

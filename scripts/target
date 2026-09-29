@@ -1,12 +1,35 @@
 #!/usr/bin/env bash
-
 set -Eeuo pipefail
 
-ROOT_DIRECTORY="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Manage the pinned Docker fixture targets: lifecycle, snapshots, and lanes.
+# Usage: scripts/target --help
+#
+# INVARIANTS
+# - The default instance keeps the pinned Compose project, volumes, and port.
+#   A lane (--lane) gets its own of each and never shares volumes.
+# - A snapshot is restored only after its manifest matches this target, its
+#   version, the pinned images, the archive set, and every archive's sha256.
+# - fresh, snapshot, reset, and destroy refuse while a discovery session is
+#   live on the same lane.
+# - A lane port reservation is an exclusive lock file naming LANE_OWNER_PID.
+#
+# ENVIRONMENT
+# - TARGET_START_TIMEOUT_SECONDS: readiness deadline, default 300.
+# - LANE_OWNER_PID: the process that owns lane port reservations. A wrapper
+#   that owns a lane's whole lifetime exports its own pid; without that the
+#   lock names this short-lived script and looks stale on the next call.
+
+ROOT_DIRECTORY="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 SNAPSHOTS_DIRECTORY="${ROOT_DIRECTORY}/snapshots"
 RUNTIME_DIRECTORY="${ROOT_DIRECTORY}/tmp/targets"
 SNAPSHOT_HELPER_IMAGE="alpine:3.22.1@sha256:4bcff63911fcb4448bd4fdacec207030997caf25e9bea4045fa6c8c44de311d1"
 START_TIMEOUT_SECONDS="${TARGET_START_TIMEOUT_SECONDS:-300}"
+LANE_OWNER_PID="${LANE_OWNER_PID:-$$}"
+LANE_PORT_LOCK_DIRECTORY="${TMPDIR:-/tmp}/interface-ai-lane-ports"
+
+# Set by apply_lane when --lane is given; empty for the default instance.
+LANE_NAME=""
+LANE_PORT=""
 
 usage() {
     cat <<'EOF'
@@ -84,9 +107,9 @@ validate_lane_name() {
 }
 
 # A stable offset derived from the lane name, so a lane's port is reproducible
-# from its name alone. FNV-1a over a wide range, because the character sum this
-# replaced put two of four real lane names on the same port.
-lane_port_offset() {
+# from its name alone. FNV-1a over a wide range: a plain character sum put two
+# of four real lane names on the same port.
+derive_lane_port_offset() {
     local lane_name="$1" index character hash=2166136261
     for ((index = 0; index < ${#lane_name}; index++)); do
         printf -v character '%d' "'${lane_name:index:1}"
@@ -95,26 +118,23 @@ lane_port_offset() {
     printf '%d' "$(((hash % 400) + 1))"
 }
 
-port_is_free() {
+# A port is free when nothing accepts a connection on it. The probe connects in
+# a subshell, so the descriptor closes with it.
+is_port_free() {
     local port="$1"
-    if (exec 3<>"/dev/tcp/127.0.0.1/${port}") 2>/dev/null; then
-        exec 3>&- 2>/dev/null || true
-        return 1
-    fi
-    return 0
+    ! (exec 3<>"/dev/tcp/127.0.0.1/${port}") 2>/dev/null
 }
 
-# Claim a host port for this lane, exclusively.
+# Claim a host port for this lane, exclusively, and print it.
 #
-# The derived offset is a starting point and not a guarantee: any hash can collide,
-# and probing for a free port then starting later loses a race between two lanes
-# that begin together. The reservation is therefore an exclusive file create, which
-# is atomic, and the search walks up from the derived offset so a collision resolves
-# into the next free port instead of failing at bind time.
+# The derived offset is a starting point, not a guarantee: any hash can collide,
+# and probing for a free port then binding later races two lanes that start
+# together. The reservation is therefore an atomic exclusive file create, and the
+# search walks up from the derived offset so a collision resolves into the next
+# free port instead of failing at bind time.
 #
-# The lock directory is under the system temporary directory rather than the
-# repository, because ports belong to the machine while lanes each have their own
-# worktree: a lock inside one lane's tree could not exclude another lane.
+# The lock directory is under the system temporary directory, not the repository,
+# because ports belong to the machine while each lane has its own worktree.
 reserve_lane_port() {
     local lane_name="$1" start_offset="$2"
     local lock_directory="${LANE_PORT_LOCK_DIRECTORY}"
@@ -124,7 +144,7 @@ reserve_lane_port() {
     for ((offset = start_offset; offset < start_offset + 400; offset++)); do
         candidate=$((TARGET_DEFAULT_PORT + offset))
         if claim_port_lock "${lock_directory}/${candidate}" &&
-            port_is_free "${candidate}"; then
+            is_port_free "${candidate}"; then
             printf '%d' "${candidate}"
             return 0
         fi
@@ -132,8 +152,8 @@ reserve_lane_port() {
     fail "no free port within 400 of ${TARGET_DEFAULT_PORT} for lane '${lane_name}'"
 }
 
-# Take the reservation, or report that somebody living holds it. A lock whose owner
-# is gone is stale, so a crashed lane cannot reserve a port for the rest of the day.
+# Take the reservation, or fail when a live process holds it. A lock whose owner
+# is gone is stale, so a crashed lane cannot hold a port indefinitely.
 claim_port_lock() {
     local lock="$1" owner
     if (set -C; printf '%s\n' "${LANE_OWNER_PID}" >"${lock}") 2>/dev/null; then
@@ -159,6 +179,7 @@ release_lane_port() {
 apply_lane() {
     local lane_name="$1"
     local lane_port="$2"
+    local index
 
     [[ -n "${TARGET_DEFAULT_PORT:-}" ]] ||
         fail "target ${TARGET_ID} does not declare a base port for lanes"
@@ -168,14 +189,12 @@ apply_lane() {
 
     COMPOSE_PROJECT="${TARGET_VOLUME_BASE}-${lane_name}"
     TARGET_URL="${TARGET_URL_SCHEME}://127.0.0.1:${lane_port}"
-    TARGET_HEALTH_URL="${TARGET_HEALTH_PATH:+${TARGET_URL}${TARGET_HEALTH_PATH}}"
-    [[ -n "${TARGET_HEALTH_URL}" ]] || TARGET_HEALTH_URL="${TARGET_URL}/"
+    TARGET_HEALTH_URL="${TARGET_URL}${TARGET_HEALTH_PATH:-/}"
 
     LANE_NAME="${lane_name}"
     LANE_PORT="${lane_port}"
     RUNTIME_DIRECTORY="${RUNTIME_DIRECTORY}/${lane_name}"
 
-    local index
     for index in "${!VOLUME_KEYS[@]}"; do
         VOLUME_NAMES[$index]="${TARGET_VOLUME_BASE}-${lane_name}-${VOLUME_KEYS[$index]}"
     done
@@ -225,7 +244,7 @@ wait_until_ready() {
     fail "${TARGET_DISPLAY_NAME} did not become ready within ${START_TIMEOUT_SECONDS}s"
 }
 
-volume_exists() {
+has_volume() {
     docker volume inspect "$1" >/dev/null 2>&1
 }
 
@@ -257,7 +276,7 @@ restore_volume() {
         tar -C /restore -xzpf "/backup/${archive_name}"
 }
 
-resolved_image_id() {
+require_image_id() {
     local service="$1"
     local container_id
     container_id="$(compose ps --all --quiet "${service}")"
@@ -470,16 +489,123 @@ list_snapshots_for_target() {
         -exec basename {} \; | sort | sed "s#^#${requested_target}/#"
 }
 
-# Lane flags are accepted anywhere so every command can be lane-scoped without
-# each command re-implementing the parsing. They are removed before positional
-# handling, which leaves the existing command grammar untouched.
-LANE_NAME=""
-LANE_PORT=""
-# The reservation must outlive this process. A wrapper that owns the lane's whole
-# lifetime exports its own pid; without that the lock would name a script that has
-# already exited, look stale on the next call, and protect nothing.
-LANE_OWNER_PID="${LANE_OWNER_PID:-$$}"
-LANE_PORT_LOCK_DIRECTORY="${TMPDIR:-/tmp}/interface-ai-lane-ports"
+require_lane_port_free() {
+    [[ -n "${LANE_NAME}" ]] || return 0
+    is_port_free "${LANE_PORT}" ||
+        fail "port ${LANE_PORT} was taken after lane '${LANE_NAME}' claimed it; retire the lane and start again"
+}
+
+# Refuse to mutate the fixture while a discovery session holds it.
+#
+# The rule is "never during an active capture", enforced here rather than left
+# to the model's discipline. A session publishes its pid in its state file, so
+# its liveness is decidable, and the guard fails closed.
+require_no_live_session() {
+    local lane_label="${LANE_NAME:-default}"
+    local state_path="${ROOT_DIRECTORY}/tmp/session/${lane_label}.json"
+    local session_pid
+    [[ -f "${state_path}" ]] || return 0
+
+    session_pid="$(sed -n 's/.*"pid": *\([0-9][0-9]*\).*/\1/p' "${state_path}" |
+        head -1)"
+    [[ -n "${session_pid}" ]] || return 0
+
+    if kill -0 "${session_pid}" 2>/dev/null; then
+        fail "a discovery session is live on lane '${lane_label}' (pid ${session_pid}); finish or stop it before touching the fixture"
+    fi
+}
+
+# Stop the target, archive every volume into a new snapshot, and restart it.
+# The snapshot is assembled in a temporary directory and moved into place only
+# when complete, and the target is restarted whether or not archiving worked.
+create_snapshot() {
+    local snapshot_name="$1"
+    local destination="${SNAPSHOTS_DIRECTORY}/${TARGET_ID}/${snapshot_name}"
+    local volume_name index app_image_id database_image_id temporary_directory
+    local snapshot_status=0
+
+    validate_snapshot_name "${snapshot_name}"
+    require_docker
+    require_no_live_session
+    require_command node
+    ensure_image "${SNAPSHOT_HELPER_IMAGE}"
+
+    [[ ! -e "${destination}" ]] || fail "snapshot already exists: ${TARGET_ID}/${snapshot_name}"
+    for volume_name in "${VOLUME_NAMES[@]}"; do
+        has_volume "${volume_name}" || fail "target volume does not exist: ${volume_name}"
+    done
+
+    app_image_id="$(require_image_id "${APP_SERVICE}")"
+    database_image_id="$(require_image_id "${DATABASE_SERVICE}")"
+    mkdir -p "${SNAPSHOTS_DIRECTORY}/${TARGET_ID}"
+    temporary_directory="$(mktemp -d "${SNAPSHOTS_DIRECTORY}/${TARGET_ID}/.snapshot-${snapshot_name}.XXXXXX")"
+
+    compose stop
+    set +e
+    for index in "${!VOLUME_NAMES[@]}"; do
+        archive_volume \
+            "${VOLUME_NAMES[$index]}" \
+            "${temporary_directory}" \
+            "${VOLUME_FILES[$index]}"
+        snapshot_status=$?
+        ((snapshot_status == 0)) || break
+    done
+
+    if ((snapshot_status == 0)); then
+        write_manifest \
+            "${temporary_directory}" \
+            "${snapshot_name}" \
+            "${app_image_id}" \
+            "${database_image_id}"
+        snapshot_status=$?
+    fi
+    if ((snapshot_status == 0)); then
+        mv "${temporary_directory}" "${destination}"
+        snapshot_status=$?
+    fi
+    set -e
+
+    rm -rf "${temporary_directory}"
+
+    compose up --detach --remove-orphans
+    wait_until_ready
+    ((snapshot_status == 0)) || fail "snapshot creation failed; the target was restarted unchanged"
+    printf 'Created snapshot %s/%s\n' "${TARGET_ID}" "${snapshot_name}"
+}
+
+# Replace the target's volumes with a verified snapshot and restart it.
+reset_to_snapshot() {
+    local snapshot_name="$1"
+    local source_directory="${SNAPSHOTS_DIRECTORY}/${TARGET_ID}/${snapshot_name}"
+    local index
+
+    validate_snapshot_name "${snapshot_name}"
+    require_docker
+    require_command node
+    require_lane_port_free
+    require_no_live_session
+
+    [[ -d "${source_directory}" ]] || fail "snapshot does not exist: ${TARGET_ID}/${snapshot_name}"
+    verify_manifest "${source_directory}"
+    ensure_target_images
+    ensure_image "${SNAPSHOT_HELPER_IMAGE}"
+    compose config --quiet
+
+    compose down --volumes --remove-orphans
+    for index in "${!VOLUME_NAMES[@]}"; do
+        restore_volume \
+            "${VOLUME_NAMES[$index]}" \
+            "${VOLUME_KEYS[$index]}" \
+            "${source_directory}" \
+            "${VOLUME_FILES[$index]}"
+    done
+    compose up --detach --remove-orphans
+    wait_until_ready
+    write_reset_receipt "${source_directory}" "${snapshot_name}"
+}
+
+# Lane flags are accepted anywhere, so every command can be lane-scoped without
+# its own parsing. They are removed before the positional command grammar.
 lane_requested=""
 port_requested=""
 filtered_arguments=()
@@ -509,11 +635,7 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
-if [[ ${#filtered_arguments[@]} -gt 0 ]]; then
-    set -- "${filtered_arguments[@]}"
-else
-    set --
-fi
+set -- ${filtered_arguments[@]+"${filtered_arguments[@]}"}
 
 command="${1:-help}"
 case "${command}" in
@@ -522,9 +644,7 @@ case "${command}" in
         exit 0
         ;;
     list)
-        if [[ $# -gt 2 ]]; then
-            fail "list accepts at most one target"
-        fi
+        [[ $# -le 2 ]] || fail "list accepts at most one target"
         if [[ $# -eq 2 ]]; then
             load_target "$2"
             list_snapshots_for_target "${TARGET_ID}"
@@ -548,38 +668,10 @@ if [[ -n "${lane_requested}" ]]; then
             fail "--port must be a number (received '${port_requested}')"
         LANE_PORT="${port_requested}"
     else
-        LANE_PORT="$((TARGET_DEFAULT_PORT + $(lane_port_offset "${lane_requested}")))"
+        LANE_PORT="$((TARGET_DEFAULT_PORT + $(derive_lane_port_offset "${lane_requested}")))"
     fi
     apply_lane "${lane_requested}" "${LANE_PORT}"
 fi
-
-require_lane_port_free() {
-    [[ -n "${LANE_NAME}" ]] || return 0
-    port_is_free "${LANE_PORT}" ||
-        fail "port ${LANE_PORT} was taken after lane '${LANE_NAME}' claimed it; retire the lane and start again"
-}
-
-# Refuse to mutate the fixture while a discovery session holds it.
-#
-# The rule is not "never touch the fixture" but "never during an active capture",
-# and it is checked here rather than left to the model's discipline. A session
-# publishes its pid in its state file, so its liveness is decidable, and a guard
-# that fails closed is the same pattern as the origin allowlist: enforced, not
-# instructed.
-require_no_live_session() {
-    local lane_label="${LANE_NAME:-default}"
-    local state_path="${ROOT_DIRECTORY}/tmp/session/${lane_label}.json"
-    [[ -f "${state_path}" ]] || return 0
-
-    local session_pid
-    session_pid="$(sed -n 's/.*"pid": *\([0-9][0-9]*\).*/\1/p' "${state_path}" |
-        head -1)"
-    [[ -n "${session_pid}" ]] || return 0
-
-    if kill -0 "${session_pid}" 2>/dev/null; then
-        fail "a discovery session is live on lane '${lane_label}' (pid ${session_pid}); finish or stop it before touching the fixture"
-    fi
-}
 
 case "${command}" in
     url)
@@ -588,11 +680,7 @@ case "${command}" in
         ;;
     port)
         [[ $# -eq 2 ]] || fail "port accepts exactly one target"
-        if [[ -n "${LANE_NAME}" ]]; then
-            printf '%s\n' "${LANE_PORT}"
-        else
-            printf '%s\n' "${TARGET_DEFAULT_PORT}"
-        fi
+        printf '%s\n' "${LANE_PORT:-${TARGET_DEFAULT_PORT}}"
         ;;
     reserve-port)
         # Allocate this lane's host port and hold it, once. A wrapper takes the
@@ -600,7 +688,7 @@ case "${command}" in
         # port cannot move under a caller that already recorded it.
         [[ $# -eq 2 ]] || fail "reserve-port accepts exactly one target"
         [[ -n "${LANE_NAME}" ]] || fail "reserve-port requires --lane"
-        reserve_lane_port "${LANE_NAME}" "$(lane_port_offset "${LANE_NAME}")"
+        reserve_lane_port "${LANE_NAME}" "$(derive_lane_port_offset "${LANE_NAME}")"
         printf '\n'
         ;;
     config)
@@ -651,86 +739,11 @@ case "${command}" in
         ;;
     snapshot)
         [[ $# -eq 3 ]] || fail "snapshot requires a target and name"
-        snapshot_name="$3"
-        validate_snapshot_name "${snapshot_name}"
-        require_docker
-        require_no_live_session
-        require_command node
-        ensure_image "${SNAPSHOT_HELPER_IMAGE}"
-
-        destination="${SNAPSHOTS_DIRECTORY}/${TARGET_ID}/${snapshot_name}"
-        [[ ! -e "${destination}" ]] || fail "snapshot already exists: ${TARGET_ID}/${snapshot_name}"
-        for volume_name in "${VOLUME_NAMES[@]}"; do
-            volume_exists "${volume_name}" || fail "target volume does not exist: ${volume_name}"
-        done
-
-        app_image_id="$(resolved_image_id "${APP_SERVICE}")"
-        database_image_id="$(resolved_image_id "${DATABASE_SERVICE}")"
-        mkdir -p "${SNAPSHOTS_DIRECTORY}/${TARGET_ID}"
-        temporary_directory="$(mktemp -d "${SNAPSHOTS_DIRECTORY}/${TARGET_ID}/.snapshot-${snapshot_name}.XXXXXX")"
-
-        compose stop
-        snapshot_status=0
-        set +e
-        for index in "${!VOLUME_NAMES[@]}"; do
-            archive_volume \
-                "${VOLUME_NAMES[$index]}" \
-                "${temporary_directory}" \
-                "${VOLUME_FILES[$index]}"
-            snapshot_status=$?
-            ((snapshot_status == 0)) || break
-        done
-
-        if ((snapshot_status == 0)); then
-            write_manifest \
-                "${temporary_directory}" \
-                "${snapshot_name}" \
-                "${app_image_id}" \
-                "${database_image_id}"
-            snapshot_status=$?
-        fi
-        if ((snapshot_status == 0)); then
-            mv "${temporary_directory}" "${destination}"
-            snapshot_status=$?
-        fi
-        set -e
-
-        if [[ -d "${temporary_directory}" ]]; then
-            rm -rf "${temporary_directory}"
-        fi
-
-        compose up --detach --remove-orphans
-        wait_until_ready
-        ((snapshot_status == 0)) || fail "snapshot creation failed; the target was restarted unchanged"
-        printf 'Created snapshot %s/%s\n' "${TARGET_ID}" "${snapshot_name}"
+        create_snapshot "$3"
         ;;
     reset)
         [[ $# -eq 3 ]] || fail "reset requires a target and name"
-        snapshot_name="$3"
-        validate_snapshot_name "${snapshot_name}"
-        require_docker
-        require_command node
-        require_lane_port_free
-        require_no_live_session
-
-        source_directory="${SNAPSHOTS_DIRECTORY}/${TARGET_ID}/${snapshot_name}"
-        [[ -d "${source_directory}" ]] || fail "snapshot does not exist: ${TARGET_ID}/${snapshot_name}"
-        verify_manifest "${source_directory}"
-        ensure_target_images
-        ensure_image "${SNAPSHOT_HELPER_IMAGE}"
-        compose config --quiet
-
-        compose down --volumes --remove-orphans
-        for index in "${!VOLUME_NAMES[@]}"; do
-            restore_volume \
-                "${VOLUME_NAMES[$index]}" \
-                "${VOLUME_KEYS[$index]}" \
-                "${source_directory}" \
-                "${VOLUME_FILES[$index]}"
-        done
-        compose up --detach --remove-orphans
-        wait_until_ready
-        write_reset_receipt "${source_directory}" "${snapshot_name}"
+        reset_to_snapshot "$3"
         ;;
     *)
         fail "unknown command '${command}' (run scripts/target --help)"
