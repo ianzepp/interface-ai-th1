@@ -1,3 +1,21 @@
+/**
+ * The capability artifact: what a discovered flow becomes.
+ *
+ * An artifact is a state graph, not a transcript. Each stage says what it
+ * intends to do, which states count as success or trouble, and where control
+ * goes in every case, and the engine walks that graph with no model in the
+ * loop. A transcript has no answer for a page that is not where the recording
+ * left it, and a linear step list would push every runtime condition into the
+ * engine as a special case.
+ *
+ * INVARIANTS
+ * - Every stage declares an `otherwise` destination, so an unrecognized state
+ *   can never fall through to "continue anyway".
+ * - `risk` is declared per stage, making the guardrail decision reviewable
+ *   before the capability ever runs.
+ * - The graph is versioned and traceable to the run that produced it.
+ */
+
 import type {
     ActionRisk,
     ExtractionSpec,
@@ -7,35 +25,10 @@ import type {
 import type { PolicyConfiguration } from "./policy.js";
 
 /**
- * The capability artifact: what a discovered flow becomes.
- *
- * The first reviewed artifact uses this shape and the deterministic engine now
- * walks it. Automatic synthesis and formal approval remain future work;
- * artifacts are currently reviewed TypeScript values grounded in run evidence.
- *
- * An artifact is a state graph, not a transcript. Each stage says what it
- * intends to do, which states count as success or trouble, and where control
- * goes in every case, and the engine is to walk that graph with no model in the
- * loop. A transcript cannot do this: it has no answer for a page that is not
- * where the recording left it.
- *
- * INVARIANTS
- * - Every stage declares an `otherwise` destination, so an unrecognized state
- *   can never fall through to "continue anyway".
- * - `risk` is declared per stage, making the guardrail decision reviewable
- *   before the capability ever runs.
- * - The graph is versioned and traceable to the run that produced it.
- *
- * The graph is deliberately the artifact rather than a linear step list,
- * because a step list pushes every runtime condition into the engine as a
- * special case.
- */
-
-/**
  * The ways a capability can stop.
  *
- * Mirrors the invocation result, and is declared here so a transition can name
- * an ending without the artifact depending on the runtime.
+ * Mirrors `RunResult`, and is declared here so a transition can name an ending
+ * without the artifact depending on the result module.
  */
 export type TerminalOutcome =
     | { type: "success" }
@@ -43,6 +36,7 @@ export type TerminalOutcome =
     | { type: "intervention-required"; code: string }
     | { type: "failure"; code: string };
 
+/** Where control goes next: another stage, or an ending. */
 export type StageDestination =
     | { type: "stage"; stageId: string }
     | { type: "terminal"; outcome: TerminalOutcome };

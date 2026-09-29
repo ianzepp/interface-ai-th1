@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { evaluateResume } from "../src/intervention/resume.js";
 import {
     selectDestination,
     type CapabilityStage,
@@ -23,22 +24,6 @@ const stage: CapabilityStage = {
         outcome: { type: "intervention-required", code: "unknown-state" },
     },
 };
-
-test("selects the declared transition for a known state", () => {
-    assert.deepEqual(selectDestination(stage, "customer-found"), {
-        type: "stage",
-        stageId: "customer-detail",
-    });
-});
-
-test("routes an unknown state to the declared fallback", () => {
-    assert.deepEqual(
-        selectDestination(stage, "unexpected-dialog"),
-        stage.otherwise,
-    );
-});
-
-import { evaluateResume } from "../src/intervention/resume.js";
 
 const observation = {
     url: "http://127.0.0.1:8080/customers",
@@ -63,6 +48,20 @@ const resumeStage: CapabilityStage = {
         },
     ],
 };
+
+test("selects the declared transition for a known state", () => {
+    assert.deepEqual(selectDestination(stage, "customer-found"), {
+        type: "stage",
+        stageId: "customer-detail",
+    });
+});
+
+test("routes an unknown state to the declared fallback", () => {
+    assert.deepEqual(
+        selectDestination(stage, "unexpected-dialog"),
+        stage.otherwise,
+    );
+});
 
 test("resumes only through a detector admitted by the reviewed checkpoint", async () => {
     assert.deepEqual(
