@@ -4,7 +4,7 @@ This maps each requirement in the assignment brief to the code and committed
 evidence that satisfy it. The brief itself (`assignment.md`, `assignment.pdf`)
 is kept local and is not in the repository. [`REPORT.md`](REPORT.md) is the
 design write-up; this file is the checklist behind it. Last verified
-2026-09-29 against `npm run verify` (159 tests) and `evidence/`.
+2026-09-29 against `npm run verify` (160 tests) and `evidence/`.
 
 Status meanings: **Satisfied** — implemented and proven by tests or committed
 evidence. **Partial** — part of the requirement is unproven. **Design-only** —
@@ -37,12 +37,12 @@ the live session and handed it back. Evidence for every step is committed.
 | **6.1 Source and README**    | **Satisfied** | [`README.md`](README.md): setup (keys and config), running without live services, and the exact demo path from goal to replay.                                             |
 | **6.2 Seven-section report** | **Satisfied** | [`REPORT.md`](REPORT.md), with the seven required headings in order.                                                                                                       |
 | **6.3 Evidence**             | **Satisfied** | [`evidence/`](evidence/): exported artifacts; logs from discovery and replay runs; replays that return `not-found`, `ambiguous`, `authentication-required`, and a failure. |
-| **11 Submission**            | **Operator**  | Push `main` to the public repository, then email the URL to `assignments@interface.ai` from the address used to apply, with the URL on its own line.                       |
+| **11 Submission**            | **Submitted** | Pushed to `github.com/ianzepp/interface-ai-th1` (`main` at `6c37445`) and emailed to `assignments@interface.ai` on 2026-09-29.                                             |
 
 ## Reproducing the checks
 
 ```sh
-npm run verify                                           # typecheck, lint, format, 159 tests
+npm run verify                                           # typecheck, lint, format, 160 tests
 npm run audit:secrets                                    # credential scan over committable files
 find evidence/runs -name trace.zip | xargs git ls-files  # prints nothing: no trace is tracked
 jq -r '"\(.runId) \(.startedAt) \(.finishedAt)"' evidence/runs/*/run.json

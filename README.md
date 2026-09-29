@@ -53,7 +53,7 @@ scripts/target snapshot dolibarr demo-install-smoke
 npm run verify
 ```
 
-Typecheck, lint, format check, and 159 tests. It starts no Docker target, no
+Typecheck, lint, format check, and 160 tests. It starts no Docker target, no
 browser application, and no model. Everything the live runs produced is already
 committed under [`evidence/`](evidence/).
 

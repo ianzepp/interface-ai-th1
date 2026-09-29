@@ -8,8 +8,11 @@ author: Ian Zepp
 evidence: evidence/
 reviewed-artifacts: 3
 evidence-runs: 16
-verification: npm run verify (159 tests)
+verification: npm run verify (160 tests)
 repository: https://github.com/ianzepp/interface-ai-th1
+status: submitted
+submitted: 2026-09-29
+submitted-revision: 6c37445
 ---
 
 # Architecture
